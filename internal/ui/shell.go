@@ -32,6 +32,10 @@ func (a *App) WindowView(c *ui.Context) {
 		})
 	})
 	a.dialogs(c)
+	if c.Shortcut(ui.Cmd, ui.KeyN) && a.editor == nil && a.scene(a.sceneID) != nil {
+		a.page = "rules"
+		a.openEditor(a.sceneID, -1)
+	}
 	for i, p := range []string{"rules", "activity", "network", "settings"} {
 		if c.Shortcut(ui.Cmd, ui.Key1+ui.Key(i)) {
 			a.page = p

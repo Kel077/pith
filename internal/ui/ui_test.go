@@ -110,9 +110,15 @@ func TestSnapshots(t *testing.T) {
 		if dark {
 			mode = "dark"
 		}
-		for _, page := range []string{"rules", "activity", "network", "settings"} {
+		for _, page := range []string{"rules", "activity", "apps", "traffic", "network", "settings"} {
 			a, _ := testApp(t, mock.Options{Sample: true, HelperInstalled: true, Running: true})
 			a.page = page
+			switch page {
+			case "apps":
+				a.page, a.activity.view = "activity", 1
+			case "traffic":
+				a.page, a.activity.view, a.activity.span = "activity", 2, 1
+			}
 			if page == "network" {
 				a.probes["en0"] = api.Probe{Interface: "en0", OK: true, Latency: 21 * time.Millisecond, PublicIPv4: "203.0.113.24"}
 			}

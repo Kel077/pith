@@ -13,7 +13,7 @@ type service = api.Service
 // useMock an in-memory backend that simulates routing.
 func newService(useMock bool) (service, error) {
 	if useMock {
-		return mock.New(mock.Options{Sample: true, Live: true}), nil
+		return mock.New(mock.Options{Sample: true, Live: true, HelperInstalled: true, Running: true}), nil
 	}
 	res, err := mygo.App.Path(mygo.PathResources)
 	if err != nil {

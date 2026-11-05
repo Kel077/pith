@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
+	"math"
 	"math/rand/v2"
 	"net/netip"
 	"slices"
@@ -44,6 +45,7 @@ type Service struct {
 	ticker *time.Ticker
 	done   chan struct{}
 	since  time.Time
+	born   time.Time // when the mock started: traffic before it is made up
 	series []api.TrafficSample
 }
 
@@ -70,6 +72,7 @@ func New(o Options) *Service {
 	if s.clock.IsZero() && !o.Live {
 		s.clock = time.Date(2026, 11, 4, 9, 30, 0, 0, time.Local)
 	}
+	s.born = s.now()
 	if o.Sample {
 		s.cfg = SampleConfig()
 	}
@@ -337,11 +340,7 @@ func (s *Service) Traffic(ctx context.Context, q api.TrafficQuery) (api.Traffic,
 		return int(int64(b.Sent+b.Received) - int64(a.Sent+a.Received))
 	})
 	if q.Step > 0 {
-		for _, p := range s.series {
-			if !p.At.Before(q.Since) {
-				t.Series = append(t.Series, p)
-			}
-		}
+		t.Series = s.seriesLocked(q.Since, q.Step)
 	}
 	return t, nil
 }
@@ -381,6 +380,69 @@ func (s *Service) Check(ctx context.Context, in api.CheckInput) (api.CheckResult
 		res.RuleID = rule.ID
 	}
 	return res, nil
+}
+
+// seriesLocked returns the traffic since a time in steps: the simulated
+// seconds, summed per step, and before the mock started, made-up traffic
+// that follows the hours of a day.
+func (s *Service) seriesLocked(since time.Time, step time.Duration) []api.TrafficSample {
+	if step <= time.Second {
+		var out []api.TrafficSample
+		for _, p := range s.series {
+			if !p.At.Before(since) {
+				out = append(out, p)
+			}
+		}
+		return out
+	}
+	type key struct {
+		at    int64
+		iface string
+	}
+	sums := map[key]*api.TrafficSample{}
+	var order []key
+	add := func(at time.Time, iface string, sent, recv uint64) {
+		b := since.Add(at.Sub(since) / step * step)
+		k := key{b.Unix(), iface}
+		p := sums[k]
+		if p == nil {
+			p = &api.TrafficSample{At: b, Interface: iface}
+			sums[k] = p
+			order = append(order, k)
+		}
+		p.Sent += sent
+		p.Received += recv
+	}
+	for at := since; at.Before(s.born) && at.Before(s.now()); at = at.Add(step) {
+		for _, iface := range []string{"en0", "en7"} {
+			base := 1_800_000.0
+			if iface == "en7" {
+				base = 140_000
+			}
+			h := float64(at.Hour()) + float64(at.Minute())/60
+			day := 0.12 + 0.88*max(0, math.Sin(math.Pi*(h-7)/16))
+			noise := 0.6 + float64(hash(iface+at.Format(time.RFC3339))%800)/1000
+			secs := min(step, s.born.Sub(at)).Seconds()
+			recv := base * secs * day * noise
+			add(at, iface, uint64(recv*0.08), uint64(recv))
+		}
+	}
+	for _, p := range s.series {
+		if !p.At.Before(since) {
+			add(p.At, p.Interface, p.Sent, p.Received)
+		}
+	}
+	slices.SortFunc(order, func(x, y key) int {
+		if x.at != y.at {
+			return int(x.at - y.at)
+		}
+		return strings.Compare(x.iface, y.iface)
+	})
+	out := make([]api.TrafficSample, len(order))
+	for i, k := range order {
+		out[i] = *sums[k]
+	}
+	return out
 }
 
 // ---- simulation -------------------------------------------------------------

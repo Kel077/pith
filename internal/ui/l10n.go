@@ -14,6 +14,10 @@ var lang = "zh-Hans"
 
 func zh() bool { return lang == "zh-Hans" }
 
+// Tr returns the string in the interface's language, for the parts of the
+// app outside this package: menus of the menu bar icon.
+func Tr(en, zhs string) string { return tr(en, zhs) }
+
 // tr returns the string in the interface's language.
 func tr(en, zhs string) string {
 	if zh() {

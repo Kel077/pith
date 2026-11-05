@@ -14,12 +14,16 @@ import (
 
 // activityPage is the state of the activity page.
 type activityPage struct {
-	view   int // 0 connections, 1 apps
-	query  string
-	paused bool
-	frozen []*api.Connection // what shows while paused
-	conns  ui.ListState
-	apps   ui.ListState
+	view        int // 0 connections, 1 apps, 2 traffic
+	span        int // of the traffic: 0 an hour, 1 a day, 2 a week
+	history     api.Traffic
+	historyKey  string // the span and minute history was read for
+	historyBusy bool
+	query       string
+	paused      bool
+	frozen      []*api.Connection // what shows while paused
+	conns       ui.ListState
+	apps        ui.ListState
 }
 
 // activityView shows what Pith routes: the speed through each interface,
@@ -28,7 +32,10 @@ func (a *App) activityView(c *ui.Context) {
 	t := c.Theme()
 	p := &a.activity
 	pageHeader(c, tr("Activity", "活动"), func() {
-		ui.Segmented(c, &p.view, tr("Connections", "连接"), tr("Apps", "应用")).Label(tr("Show", "显示"))
+		ui.Segmented(c, &p.view, tr("Connections", "连接"), tr("Apps", "应用"), tr("Traffic", "流量")).Label(tr("Show", "显示"))
+		if p.view == 2 {
+			return
+		}
 		ui.SearchField(c.Key("activity-search"), &p.query).Label(tr("Filter", "筛选")).Placeholder(tr("Filter", "筛选")).Width(200)
 		ic, label := icPause, tr("Pause", "暂停")
 		if p.paused {
@@ -45,6 +52,10 @@ func (a *App) activityView(c *ui.Context) {
 			a.clearConnections()
 		}
 	})
+	if p.view == 2 {
+		a.trafficView(c)
+		return
+	}
 	if !a.isRunning() {
 		ui.Row(c).Margin(0, 24, 12).Padding(10, 14).Gap(10).Radius(10).Background(subtle(t, 0.05)).Shrink(0).Children(func() {
 			ui.Icon(c, icInfo).TextColor(t.TextMuted)
@@ -56,12 +67,11 @@ func (a *App) activityView(c *ui.Context) {
 	} else {
 		a.ifaceStrip(c)
 	}
-	switch p.view {
-	case 1:
+	if p.view == 1 {
 		a.appsTable(c)
-	default:
-		a.connectionsTable(c)
+		return
 	}
+	a.connectionsTable(c)
 }
 
 // ifaceStrip shows, for each interface that carried traffic in the last
@@ -200,6 +210,8 @@ func (a *App) connectionsTable(c *ui.Context) {
 			}
 		}
 	})
+	// Newest first: at the top, the list stays there as connections come.
+	a.activity.conns.KeepOffset = true
 	a.activity.conns.Key = func(i int) any {
 		if i < len(conns) {
 			return conns[i].ID

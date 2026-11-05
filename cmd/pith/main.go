@@ -20,6 +20,9 @@ var version = "0.1.0"
 
 func main() {
 	useMock := flag.Bool("mock", false, "use an in-memory backend that simulates routing")
+	page := flag.String("page", "", "open the window on this page: rules, activity, network or settings")
+	language := flag.String("lang", "", "speak this language (en or zh-Hans) instead of the setting's")
+	showPanel := flag.Bool("panel", false, "show the menu bar panel at launch")
 	flag.Parse()
 	if !mygo.App.RequestSingleInstanceLock() {
 		return // the Pith that runs shows itself
@@ -33,7 +36,10 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		s.ready(svc)
+		s.ready(svc, *page, *language)
+		if *showPanel {
+			s.togglePanel()
+		}
 	})
 	mygo.App.OnSecondInstance(func([]string, string) { s.showWindow() })
 	mygo.App.OnActivate(func(bool) { s.showWindow() })
@@ -58,11 +64,13 @@ type shell struct {
 	quitting bool
 }
 
-func (s *shell) ready(svc service) {
+func (s *shell) ready(svc service, page, language string) {
 	s.app = pithui.New(pithui.Options{
-		Service: svc,
-		Desktop: desktop{},
-		Version: version,
+		Page:     page,
+		Language: language,
+		Service:  svc,
+		Desktop:  desktop{},
+		Version:  version,
 		Post: func(fn func()) {
 			s.panel.Update(func() {
 				fn()
@@ -120,7 +128,7 @@ func (s *shell) ready(svc service) {
 	tray.OnRightClick(func() {
 		s.panel.Hide()
 		menu := mygo.NewMenu([]*mygo.MenuItem{
-			{Label: "Open Pith…", Click: func(*mygo.MenuItem, *mygo.Window) { s.showWindow() }},
+			{Label: pithui.Tr("Open Pith…", "打开橘核…"), Click: func(*mygo.MenuItem, *mygo.Window) { s.showWindow() }},
 			mygo.Separator(),
 			{Role: mygo.RoleQuit},
 		})

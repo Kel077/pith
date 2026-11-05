@@ -5,6 +5,7 @@
 package ui
 
 import (
+	"cmp"
 	"context"
 	"slices"
 	"sync/atomic"
@@ -50,6 +51,9 @@ type Options struct {
 	OpenWindow, ClosePanel func()
 	// ResizePanel gives the menu bar panel the height its content needs.
 	ResizePanel func(height int)
+	// Page is the page the window opens on, and Language the language of
+	// the interface instead of the setting's: for screenshots.
+	Page, Language string
 }
 
 // maxConns is how many connections the activity keeps.
@@ -118,7 +122,7 @@ func New(o Options) *App {
 		probes:  map[string]api.Probe{},
 		probing: map[string]bool{},
 		icons:   map[string]*appIcon{},
-		page:    "rules",
+		page:    cmp.Or(o.Page, "rules"),
 	}
 }
 
@@ -283,7 +287,7 @@ func (a *App) setConfig(cfg api.Config) {
 	if a.scene(a.sceneID) == nil {
 		a.sceneID = cfg.Selected
 	}
-	lang = resolveLanguage(cfg.Settings.Language, a.Desktop.PreferredLanguages())
+	lang = resolveLanguage(cmp.Or(a.Language, cfg.Settings.Language), a.Desktop.PreferredLanguages())
 	a.updateTray()
 }
 
