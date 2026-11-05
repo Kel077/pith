@@ -31,6 +31,8 @@ type checkOptions struct {
 	auth         authorization
 	observe      time.Duration
 	renewHotspot bool
+	udpDNS       bool
+	udpDNSBatch  bool
 }
 
 type tlsEvidence struct {
@@ -48,6 +50,7 @@ type checkCase struct {
 	Name          string         `json:"name"`
 	Connection    api.Connection `json:"connection"`
 	TLS           tlsEvidence    `json:"tls"`
+	DNS           []dnsEvidence  `json:"dns,omitempty"`
 	ExpectedIP    string         `json:"expectedPublicIP,omitempty"`
 	ExitIPDrift   bool           `json:"exitIPDrift,omitempty"`
 	EvidenceNote  string         `json:"evidenceNote,omitempty"`
@@ -90,13 +93,13 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		return errors.New("check requires recorded cancellation or a managed skip, and this session's reviewed installation")
 	}
 	choices := 0
-	for _, selected := range []bool{opts.batch, opts.safeFailure, opts.preserve, opts.appBypass, opts.crash, opts.observe != 0} {
+	for _, selected := range []bool{opts.batch, opts.safeFailure, opts.preserve, opts.appBypass, opts.crash, opts.observe != 0, opts.udpDNS, opts.udpDNSBatch} {
 		if selected {
 			choices++
 		}
 	}
 	if choices > 1 || opts.observe < 0 || opts.observe > 90*time.Second {
-		return errors.New("choose at most one of --batch, --safe-failure, --preserve, --app-bypass, --crash, or --observe with a duration in (0,90s]")
+		return errors.New("choose one check mode: batch, safe-failure, preserve, app-bypass, crash, udp-dns, udp-dns-batch, or observe with a duration in (0,90s]")
 	}
 	if opts.renewHotspot && opts.observe == 0 {
 		return errors.New("--renew-hotspot requires an explicit --observe duration")
@@ -106,6 +109,14 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 	}
 	if choices != 0 && !s.SmokePassed {
 		return errors.New("run the default smoke check successfully before additional checks")
+	}
+	if opts.udpDNS || opts.udpDNSBatch {
+		if err := s.reviewedDNSPlan(); err != nil {
+			return err
+		}
+		if opts.udpDNSBatch && !s.DNSPassed {
+			return errors.New("run --udp-dns successfully before --udp-dns-batch")
+		}
 	}
 	if opts.appBypass || opts.renewHotspot {
 		if err := appBypassPreflight(s); err != nil {
@@ -130,6 +141,10 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 	}
 	if opts.batch {
 		report.Mode = "batch"
+	} else if opts.udpDNS {
+		report.Mode = "udp-dns"
+	} else if opts.udpDNSBatch {
+		report.Mode = "udp-dns-batch"
 	} else if opts.safeFailure {
 		report.Mode = "safe-failure"
 	} else if opts.preserve {
@@ -166,6 +181,9 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 	}
 	if choices == 0 {
 		s.SmokePassed = false
+	}
+	if choices == 0 || opts.udpDNS {
+		s.DNSPassed = false
 	}
 	// Read-only admission failures preserve the last cleanup proof, so an
 	// approved mode switch followed by an accidental check can still rebaseline.
@@ -206,6 +224,9 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		}
 		if resultErr == nil && choices == 0 {
 			s.SmokePassed = true
+		}
+		if resultErr == nil && opts.udpDNS {
+			s.DNSPassed = true
 		}
 		// A test assertion and cleanup are separate results. A failed case must
 		// stay failed, but verified rollback remains valid evidence for rebaseline.
@@ -363,6 +384,12 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 	if err := runCase(ctx, "system routing after SafeStart", nil, api.System, system, "", nil); err != nil {
 		return err
 	}
+	if opts.udpDNS || opts.udpDNSBatch {
+		if err := runDNSChecks(ctx, s, c, cfg, status, &report, opts.udpDNSBatch, liveDNSChecks()); err != nil {
+			return err
+		}
+		return collectTraffic(ctx, c, &report)
+	}
 	if opts.crash {
 		err := crashCapture(ctx, s, c, opts.auth, ops)
 		entry := checkCase{Name: "crash removes owned capture and helper restarts idle"}
@@ -480,7 +507,12 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 			return err
 		}
 	}
+	return collectTraffic(ctx, c, &report)
+}
+
+func collectTraffic(ctx context.Context, c api.Service, report *checkReport) error {
 	since := report.Started.Truncate(time.Second)
+	var err error
 	report.Traffic, err = c.Traffic(ctx, api.TrafficQuery{Since: since, Step: time.Second})
 	if err != nil {
 		return err

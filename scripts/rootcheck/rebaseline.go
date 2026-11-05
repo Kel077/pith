@@ -160,8 +160,9 @@ func (s *session) cleanupBinding() string {
 		UID                                                           int
 		Installation                                                  *installationID
 		Ownership                                                     captureHistory
+		DNSPlanSHA256                                                 string `json:",omitempty"`
 	}{s.Dir, s.Helper, s.HelperSHA256, s.InstallScriptSHA256, s.Version,
-		s.Target, s.ServerName, s.DNSTarget, s.baselineDigest(), s.UID, s.Installation, s.Ownership})
+		s.Target, s.ServerName, s.DNSTarget, s.baselineDigest(), s.UID, s.Installation, s.Ownership, s.DNSPlanSHA256})
 	return hashBytes(data)
 }
 
@@ -473,6 +474,7 @@ func rebaselineWithOps(parent context.Context, s *session, c api.Service, label 
 	next.SkippedDNS = report.SkippedDNS
 	next.BaselineLabel, next.BaselineFile = label, name
 	next.SmokePassed, next.Cleanup = false, nil
+	next.DNSPassed = false
 	if err := ops.save(&next); err != nil {
 		return err
 	}

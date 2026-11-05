@@ -31,18 +31,22 @@ import (
 )
 
 type session struct {
-	Dir          string                 `json:"directory"`
-	UID          int                    `json:"uid"`
-	Helper       string                 `json:"helper"`
-	HelperSHA256 string                 `json:"helperSHA256"`
-	Version      string                 `json:"version"`
-	Target       string                 `json:"target"`
-	ServerName   string                 `json:"serverName"`
-	DNSTarget    string                 `json:"dnsTarget,omitempty"`
-	Interfaces   [2]api.InterfaceRef    `json:"interfaces"`
-	Preflight    []preflight            `json:"preflight"`
-	TestProfile  *testprofile.Profile   `json:"testProfile,omitempty"`
-	SkippedDNS   []capture.DNSExclusion `json:"skippedDNS,omitempty"`
+	Dir             string                 `json:"directory"`
+	UID             int                    `json:"uid"`
+	Helper          string                 `json:"helper"`
+	HelperSHA256    string                 `json:"helperSHA256"`
+	Version         string                 `json:"version"`
+	Target          string                 `json:"target"`
+	ServerName      string                 `json:"serverName"`
+	DNSTarget       string                 `json:"dnsTarget,omitempty"`
+	ExtraDNSTargets []string               `json:"extraDNSTargets,omitempty"`
+	DNSName         string                 `json:"dnsName,omitempty"`
+	DNSPlanSHA256   string                 `json:"dnsPlanSHA256,omitempty"`
+	DNSPassed       bool                   `json:"dnsPassed,omitempty"`
+	Interfaces      [2]api.InterfaceRef    `json:"interfaces"`
+	Preflight       []preflight            `json:"preflight"`
+	TestProfile     *testprofile.Profile   `json:"testProfile,omitempty"`
+	SkippedDNS      []capture.DNSExclusion `json:"skippedDNS,omitempty"`
 	// Original is the active rollback baseline; original.json is never replaced.
 	Original               snapshot        `json:"original"`
 	BaselineLabel          string          `json:"baselineLabel"`
@@ -90,7 +94,15 @@ func prepare(ctx context.Context, args []string) error {
 	fs.StringVar(&names[1], "interface-b", "", "second interface BSD name, chosen by the user")
 	fs.StringVar(&s.Target, "target", "", "public literal TLS IP:port in the selected capture mode")
 	fs.StringVar(&s.ServerName, "server-name", "", "DNS name on the test endpoint's TLS certificate")
-	fs.StringVar(&s.DNSTarget, "dns-target", "", "optional public DNS test IPv4:53, for manual checks")
+	fs.Func("dns-target", "optional public DNS test IPv4:53; repeat for at most two reviewed resolvers", func(value string) error {
+		if s.DNSTarget == "" {
+			s.DNSTarget = value
+		} else {
+			s.ExtraDNSTargets = append(s.ExtraDNSTargets, value)
+		}
+		return nil
+	})
+	fs.StringVar(&s.DNSName, "dns-name", "", "reviewed lowercase DNS question name; enables the explicit UDP/DNS stage")
 	mode := fs.String("capture-mode", "host-ipv4", "reviewed installation mode: host-ipv4, full-ipv4 or host-ipv6")
 	lease := fs.Duration("test-lease", 0, "profile lease: default/max 120s for full-ipv4, 60s for host-ipv6; minimum 30s")
 	if err := fs.Parse(args); err != nil {
@@ -202,6 +214,9 @@ func prepare(ctx context.Context, args []string) error {
 	if err := s.save(); err != nil {
 		return err
 	}
+	if err := s.writeDNSPlan(); err != nil {
+		return err
+	}
 	if err := writeJSON(filepath.Join(s.Dir, "install-plan.json"), plan); err != nil {
 		return err
 	}
@@ -242,6 +257,9 @@ func prepare(ctx context.Context, args []string) error {
 }
 
 func (s *session) scopes() ([]netip.Prefix, error) {
+	if err := s.validateDNS(); err != nil {
+		return nil, err
+	}
 	parsed, err := api.ParseTarget(s.ServerName)
 	if err != nil || !parsed.IsDomain() || parsed.Subdomains || parsed.String() != s.ServerName {
 		return nil, errors.New("server-name must be a plain, lowercase ASCII DNS name")
@@ -260,13 +278,13 @@ func (s *session) scopes() ([]netip.Prefix, error) {
 		return nil, err
 	}
 	prefixes := []netip.Prefix{netip.PrefixFrom(target.Addr(), 32)}
-	if s.DNSTarget != "" {
-		dns, err := testAddress(s.DNSTarget)
+	for _, raw := range s.dnsTargets() {
+		dns, err := testAddress(raw)
 		if err != nil || dns.Port() != 53 {
 			return nil, errors.New("dns-target must be a public IPv4:53 endpoint")
 		}
 		p := netip.PrefixFrom(dns.Addr(), 32)
-		if p != prefixes[0] {
+		if !slices.Contains(prefixes, p) {
 			prefixes = append(prefixes, p)
 		}
 	}

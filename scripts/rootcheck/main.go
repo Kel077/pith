@@ -23,7 +23,7 @@ const usage = `rootcheck prepares a private, bounded acceptance session.
 
   prepare   --helper ABSOLUTE_PATH --interface-a NAME --interface-b NAME
             --target IP:PORT --server-name TLS_NAME [--version dev]
-            [--dns-target IP:53]
+            [--dns-target IP:53 [--dns-target IP:53] --dns-name DNS_NAME]
             [--capture-mode full-ipv4 --test-lease 120s]
             [--capture-mode host-ipv6 --test-lease 60s]
   cancel    --session DIRECTORY [--auth keychain:SERVICE]
@@ -31,6 +31,7 @@ const usage = `rootcheck prepares a private, bounded acceptance session.
   check     --session DIRECTORY [--batch | --safe-failure | --preserve | --app-bypass | --observe 90s]
   check     --session DIRECTORY --crash [--auth keychain:SERVICE]
   check     --session DIRECTORY --observe 90s --renew-hotspot
+  check     --session DIRECTORY [--udp-dns | --udp-dns-batch]
   stop      --session DIRECTORY
   rebaseline --session DIRECTORY --label MODE [--accept-external-change]
   uninstall --session DIRECTORY [--auth keychain:SERVICE]
@@ -99,6 +100,8 @@ func run(args []string) error {
 		fs.BoolVar(&opts.crash, "crash", false, "deliberately crash the reviewed active helper once, then verify cleanup and idle restart")
 		fs.DurationVar(&opts.observe, "observe", 0, "manual observation window, at most 90s; always stops afterward")
 		fs.BoolVar(&opts.renewHotspot, "renew-hotspot", false, "explicitly renew hotspot A during --observe, then verify a new routed connection")
+		fs.BoolVar(&opts.udpDNS, "udp-dns", false, "one UDP DNS smoke request through A to the first frozen resolver")
+		fs.BoolVar(&opts.udpDNSBatch, "udp-dns-batch", false, "bounded DNS cases after a passed UDP DNS smoke check")
 	}
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
@@ -313,6 +316,7 @@ func uninstall(ctx context.Context, s *session, c api.Service, auth authorizatio
 	}
 	s.Installed = false
 	s.SmokePassed = false
+	s.DNSPassed = false
 	if err := s.save(); err != nil {
 		return err
 	}

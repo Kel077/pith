@@ -112,8 +112,11 @@ PITH_TLS_NAME='<reviewed TLS certificate DNS name>'
 "$PITH_TEST_BIN/rootcheck" prepare --helper "$PITH_TEST_BIN/pithd" --version acceptance --interface-a "$PITH_IF_A" --interface-b "$PITH_IF_B" --target "$PITH_TLS_TARGET" --server-name "$PITH_TLS_NAME"
 ```
 
-For manual UDP/DNS checks, add `--dns-target '<reviewed public IPv4:53>'` to
-that one preparation command. Do not add extra hosts later: prepare and review
+For UDP/DNS checks, add up to two `--dns-target '<reviewed public IPv4:53>'`
+arguments and an explicit `--dns-name '<reviewed question name>'` to that one
+preparation command; see the separate bounded DNS stage below. A legacy session
+with only a DNS target permits manual checks, not the new automatic batch.
+Do not add extra hosts or change the question later: prepare and review
 a new session instead. There is no default target or automatic capture expansion.
 
 Preparation opens no administrator dialog. It refuses an existing helper,
@@ -131,6 +134,7 @@ mode-0600 files include:
 | `session.json` | User ID, immutable target selection, reviewed adapter references, helper checksum and installation identity, capture ownership history, active baseline label/file, current smoke result, and a checksum-bound cleanup proof |
 | `original.json` | Permanent initial pre-privilege interface inventory, route snapshot, launchd result, and the five managed paths |
 | `preflight.json` | Bound/unbound HTTPS status and public-IP echo, when the endpoint provides one |
+| `dns-plan.json` | Optional frozen resolver endpoints, question name, A/AAAA types, request counts, response/idle bounds and evidence limits; its checksum binds the automatic DNS stage |
 | `install-plan.json`, `install.sh` | Exact scoped launchd arguments, fixed destinations, helper SHA-256 check, rollback, and authorization prompt |
 | `uninstall.sh` | Exact bootout, ownership-checked route cleanup, and managed-path removal |
 | `emergency-command.txt` | A standalone, single command that can be pasted into Terminal without IPC or the test executable |
@@ -335,6 +339,76 @@ during preflight must be reviewed rather than silently accepted as stable.
 This establishes IPv6 host-capture support, not full IPv6 capture, UDP/QUIC, or full
 dual-stack acceptance. IPv4 policy equality is recorded, but an independent IPv4
 connectivity control requires its own reviewed endpoint and observation.
+
+## Bounded UDP/DNS stage
+
+This stage is implemented with synthetic and loopback tests; hardware acceptance
+is pending. It is an explicit extension of `host-ipv4` only. During preparation,
+freeze one or two distinct public IPv4 resolver literals on port 53 and one
+plain lowercase question name. There is no default resolver, echo fixture, or
+system DNS change. The reviewed capture consists of the TLS host plus those
+DNS hosts, all `/32`; the immutable helper lease remains five minutes. Full IPv4
+and `host-ipv6` profiles reject additional DNS targets in this stage.
+
+```sh
+"$PITH_TEST_BIN/rootcheck" prepare --helper "$PITH_TEST_BIN/pithd" --version acceptance --interface-a "$PITH_IF_A" --interface-b "$PITH_IF_B" --target "$PITH_TLS_TARGET" --server-name "$PITH_TLS_NAME" --dns-target '<first reviewed IPv4:53>' --dns-target '<second reviewed IPv4:53>' --dns-name '<reviewed question name>'
+```
+
+Omit the second resolver if only one is approved. Preparation still performs
+exactly the three existing TLS preflights; it sends no DNS test queries. Review
+`dns-plan.json`, the added host routes, installation and emergency undo before
+authorizing this new session. After the normal cancel/install sequence and a
+successful default TCP smoke, run one DNS query before any batch:
+
+```sh
+"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION"
+"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --udp-dns
+"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --udp-dns-batch
+```
+
+Each command starts a fresh bounded capture, verifies the ordinary TLS system
+path, and always stops and compares the baseline afterward. The DNS smoke sends
+one A query through adapter A to the first resolver. Only a passed DNS smoke and
+successful cleanup enable the batch; default TCP smoke and rebaseline clear that
+pass flag. Each command is a separate case: stop on failure and review its
+private `check-udp-dns*.json` and cleanup report before continuing.
+
+The batch sends at most 11 queries for one resolver or 20 for two. Each exchange
+sends one classic UDP query with a unique DNS ID and a two-second response
+deadline, without retransmission, EDNS, resolver fallback or TCP fallback. The
+512-byte reply limit, matching ID/question/class/type, successful response code,
+and address answer for the question or its bounded CNAME chain are required.
+Truncation or a missing A/AAAA answer is a failed prerequisite/result, never a
+synthetic success or permission to choose another name. At most three queries
+belong to one case, and the existing three-minute controller deadline still
+applies independently of the helper's lease.
+
+For each resolver the batch checks unmatched system egress, A and AAAA through
+A, reuse of that engine session and its source tuples, preservation of A after
+hot reload to B, a new session through B, missing-interface fallback to A,
+explicit system fallback, block priority, and strict missing-interface failure.
+On the first resolver it also waits at most 14 seconds for the ten-second DNS
+idle timeout, then uses the same native UDP socket/source port to require a new
+engine connection ID and B's new rule. No packet loss or silent peer is used to
+claim automatic failover.
+
+Positive evidence requires the exact PID, executable, UDP application tuple,
+destination, rule, outcome, interface and cumulative payload byte counts from
+the helper, plus the actual nonce-matched DNS response. Application and outbound
+pre-NAT source ports must stay stable within one engine session. A new outbound
+socket after expiry may legitimately reuse its old ephemeral port. Public
+resolver replies do not reveal carrier/public NAT ports; no such claim is made.
+Negative cases require no response and a matching terminal block/unreachable
+record with no outbound tuple or forwarded payload. Capture identity must stay
+Running throughout the stage.
+
+The private report retains A/AAAA/CNAME answers and their TTLs. It does not dial
+those answer addresses, add routes for them, or prove IP-to-domain cache expiry.
+Those cache semantics retain synthetic tests. General UDP echo, a two-minute
+non-DNS idle timeout, pre-existing connected UDP, and unconnected UDP listeners
+remain separate acceptance gaps. Uninstall and independently inspect all owned
+routes, tunnel, service and paths when this session ends; no additional password
+dialog is needed for the DNS checks themselves.
 
 ## Ordered execution
 
@@ -581,7 +655,8 @@ Terminal. Use the previously selected literal destinations, bounded counts,
 and deadlines. No manual command may broaden capture. The harness ends its
 observation automatically and treats an unexpected helper stop as a failure.
 
-* **UDP and DNS:** if a DNS target was included at preparation, perform one
+* **UDP and DNS:** prefer the reviewed [bounded stage](#bounded-udpdns-stage)
+  above. If only a legacy manual DNS target was included at preparation, perform one
   ordinary UDP DNS request to it, with a two-second timeout and one attempt;
   repeat once before the session idle timeout, then after it. Confirm responses
   and the expected UDP session creation/byte counts in the app or an authenticated

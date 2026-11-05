@@ -209,6 +209,7 @@ func assertNoCleanup(t *testing.T, s *session) {
 
 func TestRebaselineAdoptsStableNewModeWithoutCapture(t *testing.T) {
 	s, c, ops := baselineFixture(t)
+	s.DNSPassed = true
 	old := privateArtifacts(t, s)
 	previous := s.baselineDigest()
 	next := nextMode(s)
@@ -245,7 +246,7 @@ func TestRebaselineAdoptsStableNewModeWithoutCapture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.BaselineLabel != "exit-node" || loaded.BaselineFile == "original.json" || !sameRoutes(loaded.Original.Routes, next.Routes) || loaded.Interfaces[0].Name != "renamed0" || loaded.SmokePassed || loaded.Cleanup != nil || loaded.baselineIP("") != "203.0.113.2" {
+	if loaded.BaselineLabel != "exit-node" || loaded.BaselineFile == "original.json" || !sameRoutes(loaded.Original.Routes, next.Routes) || loaded.Interfaces[0].Name != "renamed0" || loaded.SmokePassed || loaded.DNSPassed || loaded.Cleanup != nil || loaded.baselineIP("") != "203.0.113.2" {
 		t.Fatalf("new phase was not adopted or pass flags survived: %#v", loaded)
 	}
 	assertArtifactsUnchanged(t, s, old, false)
