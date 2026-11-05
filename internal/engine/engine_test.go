@@ -226,6 +226,52 @@ func TestTunnelFailureStopsAutomatically(t *testing.T) {
 	t.Fatal("fault did not restore the network")
 }
 
+func TestScopedCaptureLeaseStopsAfterControllerDisappears(t *testing.T) {
+	e, d := newTestEngine(t, nil)
+	if e.scopedLease != 5*time.Minute {
+		t.Fatal("scoped capture lacks its bounded default lifetime")
+	}
+	e.scopedLease = 250 * time.Millisecond
+	cfg := api.DefaultConfig()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	events, err := e.Subscribe(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Start(ctx, cfg.Scenes[0], cfg.Settings); err != nil {
+		t.Fatal(err)
+	}
+	e.mu.Lock()
+	run := e.run
+	deadline := run.leaseUntil
+	e.mu.Unlock()
+	if err := e.Reload(ctx, cfg.Scenes[0], cfg.Settings); err != nil {
+		t.Fatal(err)
+	}
+	e.mu.Lock()
+	extended := run.leaseUntil != deadline
+	e.mu.Unlock()
+	if extended {
+		t.Fatal("hot reload extended a development capture lease")
+	}
+	for {
+		select {
+		case event := <-events:
+			if event.Status == nil || event.Status.State != api.Failed {
+				continue
+			}
+			routes, _ := d.Snapshot()
+			if len(routes) != 1 || event.Status.Error == nil || event.Status.Error.Code != api.ErrNetworkLost {
+				t.Fatal("expired test left capture active", event.Status)
+			}
+			return
+		case <-ctx.Done():
+			t.Fatal("scoped capture outlived its lease")
+		}
+	}
+}
+
 func TestTickPublishesTrafficAndStopsItsWatcher(t *testing.T) {
 	e, _ := newTestEngine(t, nil)
 	cfg := api.DefaultConfig()

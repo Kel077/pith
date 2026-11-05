@@ -83,7 +83,9 @@ running. See [helper protocol](../internal/helper/README.md).
 For approved development tests the root helper accepts repeated `--capture CIDR`
 flags, `--safe-target IP:443`, `--safe-server-name example.com`, `--data-dir` and
 `--socket`. Scoped capture never expands to global DNS routes. Passing these flags
-does not start routing: an authenticated Start is still required. **Do not run a
+does not start routing: an authenticated Start is still required. Each scoped
+capture stops automatically after five minutes even if its controller dies;
+hot reload never extends that lease. **Do not run a
 root capture test without the coordinator's explicit go-ahead and the recorded
 undo plan.** Unit tests use fake drivers, memory tunnels and synthetic addresses;
 unprivileged live tests only read interface/socket metadata or use loopback.

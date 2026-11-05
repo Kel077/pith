@@ -30,6 +30,7 @@ type session struct {
 	baseSent, baseReceived uint64
 	lastSent, lastReceived uint64
 	lastAt                 time.Time
+	leaseUntil             time.Time
 }
 
 func (e *Engine) startLocked(ctx context.Context, scene api.Scene, settings api.Settings) (result error) {
@@ -107,6 +108,9 @@ func (e *Engine) startLocked(ctx context.Context, scene api.Scene, settings api.
 		return err
 	}
 	started := time.Now()
+	if e.scopedLease > 0 {
+		s.leaseUntil = started.Add(e.scopedLease)
+	}
 	if settings.SafeStart {
 		verifyCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		if e.opts.Verify != nil {
@@ -216,6 +220,12 @@ func (e *Engine) monitor(ctx context.Context, s *session) {
 	}()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	var leaseExpired <-chan time.Time
+	if !s.leaseUntil.IsZero() {
+		lease := time.NewTimer(time.Until(s.leaseUntil))
+		defer lease.Stop()
+		leaseExpired = lease.C
+	}
 	fail := func(err error) {
 		if err != nil && ctx.Err() == nil {
 			go e.failSession(s, err)
@@ -224,6 +234,9 @@ func (e *Engine) monitor(ctx context.Context, s *session) {
 	for {
 		select {
 		case <-ctx.Done():
+			return
+		case <-leaseExpired:
+			fail(errors.New("scoped capture test lease expired; routing was stopped"))
 			return
 		case err, ok := <-s.capture.Faults:
 			if ok {

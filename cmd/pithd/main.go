@@ -37,7 +37,7 @@ func run() error {
 	probe := flag.String("safe-target", "", "SafeStart TLS host:port, resolved before capture")
 	serverName := flag.String("safe-server-name", "", "TLS server name when safe-target is an IP address")
 	var scopes []netip.Prefix
-	flag.Func("capture", "development: capture only this CIDR (repeatable); empty captures both /1 routes", func(raw string) error {
+	flag.Func("capture", "development: capture only this CIDR for at most five minutes (repeatable); empty captures both /1 routes", func(raw string) error {
 		prefix, err := netip.ParsePrefix(raw)
 		if err != nil || prefix.Bits() == 0 {
 			return fmt.Errorf("invalid scoped capture CIDR %q", raw)

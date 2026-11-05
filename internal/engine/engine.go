@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/Kel077/pith/internal/api"
 	"github.com/Kel077/pith/internal/engine/capture"
@@ -39,15 +40,16 @@ type Options struct {
 }
 
 type Engine struct {
-	opts      Options
-	store     *telemetry.Store
-	lifecycle sync.Mutex
-	mu        sync.Mutex
-	status    api.Status
-	run       *session
-	subs      map[chan api.Event]struct{}
-	done      chan struct{}
-	closed    bool
+	opts        Options
+	store       *telemetry.Store
+	lifecycle   sync.Mutex
+	mu          sync.Mutex
+	status      api.Status
+	run         *session
+	subs        map[chan api.Event]struct{}
+	done        chan struct{}
+	closed      bool
+	scopedLease time.Duration
 }
 
 func New(opts Options) (*Engine, error) {
@@ -68,7 +70,13 @@ func New(opts Options) (*Engine, error) {
 	if err := capture.Recover(filepath.Join(opts.DataDir, "capture.json"), opts.Driver); err != nil {
 		return nil, err
 	}
-	return &Engine{opts: opts, store: store, status: api.Status{State: api.Stopped}, subs: make(map[chan api.Event]struct{}), done: make(chan struct{})}, nil
+	e := &Engine{opts: opts, store: store, status: api.Status{State: api.Stopped}, subs: make(map[chan api.Event]struct{}), done: make(chan struct{})}
+	if len(opts.Scopes) > 0 {
+		// A development controller can disappear without sending Stop. Never
+		// leave scoped test capture running indefinitely in the idle daemon.
+		e.scopedLease = 5 * time.Minute
+	}
+	return e, nil
 }
 
 func validate(scene api.Scene, settings api.Settings) error {
