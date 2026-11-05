@@ -571,8 +571,20 @@ the user. The destination was recorded by its frozen ordinal; page-body content
 was not automatically verified. There were no authorization prompts and uninstall
 restored routing and helper state. Subsequent process review found Safari and a
 WebKit service left running by the former single-open implementation; the
-coordinator terminated only those new test processes. The bounded process cleanup
-below has synthetic coverage and needs its own reviewed hardware verification.
+coordinator terminated only those new test processes. A later hardware run of
+`936c6a7` passed installation, TCP smoke, delegated socket/exit observation,
+automatic browser cleanup and uninstall, with manual cancellation explicitly
+skipped under managed authorization. Independent process review confirmed Safari
+and every WebKit process in its newly created coalitions had exited. Two delegated
+authorizations covered installation and removal; no additional prompt was needed.
+
+The independent audit also listed unrelated application renderers, system services
+and launchd-managed Safari agents. On-demand bookmark, safe-browsing and other
+Safari agents can run in their own launchd-job coalitions, allocated before this
+observation, and launchd may restart them while Safari is closed. These are expected
+system/app services, not leftovers owned by this test. Other applications' older
+WebKit services were preserved. The coordinator reviewed coalition ownership rather
+than treating the audit's total count as a failure or an instruction to kill.
 Earlier runs remained incomplete: even freezing every A record in an
 answer missed later answers from a larger rotating CDN pool.
 
@@ -672,6 +684,8 @@ Review its private report before deleting the session. A listed process is evide
 to investigate, never authorization to terminate it. Missing metadata is retained;
 an unfinished recorded window extends through the audit time. This command sends
 no signals and does not contact or reinstall the helper.
+On-demand Safari agents in pre-existing launchd-job coalitions are expected even
+after Safari exits. Do not terminate them solely because their name includes Safari.
 
 The app/IP rule covers every frozen A record and directs fresh Safari TCP/UDP
 sockets to A. The observation summary records the actual destination's one-based

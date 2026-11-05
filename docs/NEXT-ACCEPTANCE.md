@@ -30,9 +30,19 @@ Later review found browser processes left by the former automatic-open harness.
 The coordinator removed those test-owned processes. The new lifecycle refuses
 an already running Safari, uses bounded identity-checked cleanup on every return,
 and independently audits all processes started in the test window after uninstall.
-This cleanup needs separate hardware verification; the earlier routing pass did
-not establish browser process cleanup. Synthetic tests cover existing browsers,
+The coordinator subsequently verified `936c6a7` on hardware: managed cancellation
+was explicitly skipped; installation, TCP smoke, delegated observation, automatic
+browser cleanup and uninstall passed. Independent coalition inspection found no
+remaining Safari or WebKit process in any coalition created by that Safari launch.
+Two managed authorizations covered installation and uninstall. The earlier routing
+pass alone did not establish process cleanup. Synthetic tests cover existing browsers,
 other applications' WebKit services, PID reuse, cancellation and stubborn children.
+
+The time-window audit intentionally included unrelated applications and system
+services. Launchd's on-demand Safari agents may occupy pre-existing job coalitions
+and run or restart with Safari closed; these are expected services, not test-owned
+leftovers. Older WebKit processes from other apps were left untouched. Review
+identity and coalition ownership, not just the audit's total process count.
 
 Earlier incomplete observations showed why endpoint selection matters: freezing
 all addresses in one DNS answer cannot cover a CDN that returns rotating subsets

@@ -65,7 +65,9 @@ or denied calls fail without a numeric-PID fallback. This is confined to the
 explicit acceptance option, not the app/helper. Its private reports retain normal,
 forced and incomplete cleanup, and a separate post-uninstall inventory lists all
 still-present processes started in the recorded window. That inventory is read-only
-and cannot authorize future signals. These lifecycle changes await hardware review.
+and cannot authorize future signals. The coordinator has verified the normal
+automatic-open cleanup path on hardware; independently managed launchd Safari
+agents remain outside its ownership, as recorded in the acceptance documents.
 
 ### Capture ownership
 
