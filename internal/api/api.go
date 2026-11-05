@@ -332,6 +332,11 @@ const (
 	// WarnNoDomains: domain rules can only match connections whose host
 	// name Pith can see, and SniffDomains is off.
 	WarnNoDomains WarningCode = "no_domains"
+	// WarnDNSUnobserved: an existing configured host route prevents adding a
+	// DNS capture route (Detail: the server's IP address). Queries using that
+	// route are not observed; domain rules need another observed name, such as
+	// TLS SNI, HTTP Host or QUIC SNI when SniffDomains is enabled.
+	WarnDNSUnobserved WarningCode = "dns_unobserved"
 )
 
 // ---- Interfaces -------------------------------------------------------------
