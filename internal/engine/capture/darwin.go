@@ -79,6 +79,19 @@ func address(value route.Addr) netip.Addr {
 
 type nativeDriver struct{}
 
+// XNU bsd/kern/kern_sysctl.c exposes this read-only UUID for the current boot.
+// Unlike kern.bootuuid, it identifies a boot session, not the boot volume.
+func (nativeDriver) BootSession() (string, error) {
+	id, err := unix.Sysctl("kern.bootsessionuuid")
+	if err != nil {
+		return "", err
+	}
+	if len(id) != 36 {
+		return "", fmt.Errorf("invalid kernel boot session identity")
+	}
+	return id, nil
+}
+
 func (nativeDriver) Snapshot() ([]Route, error) { return Snapshot() }
 func (nativeDriver) Index(name string) (int, error) {
 	iface, err := net.InterfaceByName(name)

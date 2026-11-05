@@ -10,7 +10,7 @@ applied by the UI.
 ## Capturing and forwarding
 
 `engine/capture` records the routing table, creates a WireGuard-Go utun, and
-journals its name, index, random ownership token and intended prefixes before
+journals its name, index, boot session, random ownership token and intended prefixes before
 installing any route. A ready gVisor netstack receives `0.0.0.0/1`, `128.0.0.0/1`
 and, when enabled, `::/1` and `8000::/1`. The system default is never replaced.
 LAN DNS servers get host routes so their answers can feed the DNS cache. Existing
@@ -57,7 +57,10 @@ tunnel. A failure returns `ErrNetworkLost`, removes capture and closes every
 relay. A captured DNS or tunnel fault similarly stops routing. The default routes
 remain available throughout teardown. Kernel closure of the utun fd removes its
 routes on process death; the next idle helper discards only demonstrably stale
-ownership metadata and refuses ambiguous live-looking state.
+ownership metadata and refuses ambiguous live-looking state. Metadata from a
+previous boot can never authorize deleting current routes, even if an interface
+name and index were reused. Explicit emergency cleanup also verifies the boot
+identity and refuses legacy journals that cannot establish ownership.
 
 Stop restores routes before waiting on relays or disk. TCP half-close is retained;
 shutdown aborts incomplete handshakes and waits for all workers. Hot rule/scene
@@ -90,6 +93,10 @@ root capture test without the coordinator's explicit go-ahead and the recorded
 undo plan.** Unit tests use fake drivers, memory tunnels and synthetic addresses;
 unprivileged live tests only read interface/socket metadata or use loopback.
 
-Build/packaging scripts and the consolidated root-test procedure follow in M4.
+See [building and packaging](BUILDING.md) and the consolidated
+[authorized root-test procedure](ROOT-TEST.md).
 Actual utun forwarding, native socket continuity, delegated WebKit/nsurlsessiond
 attribution and the 500 Mbps throughput target are not yet verified on hardware.
+Replies from unconnected native UDP listeners are not covered by the existing
+socket preservation path; captured replies can lose their original source port.
+Do not treat the scoped TCP smoke test as verification of native UDP services.

@@ -123,13 +123,85 @@ func TestEmergencyRecoveryRefusesLiveOwnerAndPreservesReusedName(t *testing.T) {
 	}
 }
 
+func TestRecoveryAcrossBootsNeverDeletesReusedTunnelRoutes(t *testing.T) {
+	for _, emergency := range []bool{false, true} {
+		t.Run(fmt.Sprintf("emergency=%t", emergency), func(t *testing.T) {
+			d := &fakeDriver{routes: baseRoutes()}
+			opts := fakeOptions(t, d)
+			c, err := Prepare(context.Background(), opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := c.Activate(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			// Simulate the old process's kernel fd closing at reboot. Do not call
+			// its normal Close after reusing the fake interface in the next boot.
+			if err := c.Device.Close(); err != nil {
+				t.Fatal(err)
+			}
+			<-c.drained
+			d.boot = "test-boot-two"
+			foreign := Route{Prefix: c.Plan.Prefixes[0], Interface: c.Name, Index: c.state.Index}
+			d.routes = append(d.routes, foreign)
+			if emergency {
+				err = cleanupStale(context.Background(), opts.StatePath, d, func(int) bool {
+					t.Error("queried a PID from another boot")
+					return false
+				})
+			} else {
+				err = Recover(opts.StatePath, d)
+			}
+			if err != nil || !slices.Contains(d.routes, foreign) {
+				t.Fatal("recovery touched a route from a later boot", err)
+			}
+			if _, err := os.Stat(opts.StatePath); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("previous-boot metadata remained", err)
+			}
+		})
+	}
+}
+
+func TestLegacyJournalCannotAuthorizeEmergencyRouteDeletion(t *testing.T) {
+	d := &fakeDriver{routes: baseRoutes()}
+	opts := fakeOptions(t, d)
+	c, err := Prepare(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err := c.Activate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	c.state.Version, c.state.BootSession = 1, ""
+	if err := c.writeState(); err != nil {
+		t.Fatal(err)
+	}
+	before := slices.Clone(d.routes)
+	if err := cleanupStale(context.Background(), opts.StatePath, d, func(int) bool { return false }); err == nil {
+		t.Fatal("legacy journal authorized deletion without boot identity")
+	}
+	if !reflect.DeepEqual(before, d.routes) {
+		t.Fatal("legacy recovery changed routes")
+	}
+}
+
 type fakeDriver struct {
+	boot                      string
 	routes                    []Route
 	device                    *fakeDevice
 	operations                []string
 	failConfigure, failDelete bool
 	failAdd, adds             int
 }
+
+func (d *fakeDriver) BootSession() (string, error) {
+	if d.boot == "" {
+		return "test-boot-one", nil
+	}
+	return d.boot, nil
+}
+
 type fakeDevice struct {
 	owner  *fakeDriver
 	events chan tun.Event

@@ -14,6 +14,8 @@ func Snapshot() ([]Route, error) { return nil, fmt.Errorf("capture requires macO
 
 type nativeDriver struct{}
 
+func (nativeDriver) BootSession() (string, error) { return "", fmt.Errorf("capture requires macOS") }
+
 func (nativeDriver) Index(string) (int, error) { return 0, fmt.Errorf("capture requires macOS") }
 
 func (nativeDriver) Snapshot() ([]Route, error)     { return Snapshot() }

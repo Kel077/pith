@@ -60,7 +60,8 @@ func (d *testDriver) Snapshot() ([]capture.Route, error) {
 	defer d.mu.Unlock()
 	return slices.Clone(d.routes), nil
 }
-func (d *testDriver) Index(string) (int, error) { return 42, nil }
+func (d *testDriver) BootSession() (string, error) { return "test-boot-one", nil }
+func (d *testDriver) Index(string) (int, error)    { return 42, nil }
 func (d *testDriver) Create(int) (tun.Device, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
