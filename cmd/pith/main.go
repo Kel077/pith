@@ -27,17 +27,21 @@ func main() {
 	mygo.App.SetName("Pith")
 	mygo.App.SetActivationPolicy(mygo.ActivationPolicyAccessory)
 	mygo.App.OnWindowAllClosed(func() {}) // Pith stays in the menu bar
-	svc, err := newService(*useMock)
-	if err != nil {
-		log.Fatal(err)
-	}
 	s := &shell{}
-	mygo.App.WhenReady(func() { s.ready(svc) })
+	mygo.App.WhenReady(func() {
+		svc, err := newService(*useMock)
+		if err != nil {
+			log.Fatal(err)
+		}
+		s.ready(svc)
+	})
 	mygo.App.OnSecondInstance(func([]string, string) { s.showWindow() })
 	mygo.App.OnActivate(func(bool) { s.showWindow() })
 	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) {
 		s.quitting = true
-		s.app.BeforeQuit()
+		if s.app != nil {
+			s.app.BeforeQuit()
+		}
 	})
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)

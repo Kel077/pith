@@ -82,21 +82,37 @@ func (a *App) colorOf(k string) ui.Color {
 	return ifaceColor(k)
 }
 
+// colorFor is the color of an interface a rule names.
+func (a *App) colorFor(ref api.InterfaceRef) ui.Color {
+	if i := a.iface(ref); i != nil {
+		return a.colorOf(i.Name)
+	}
+	return ifaceColor(ref.Key())
+}
+
 func (a *App) assignColors() {
 	a.colors = map[string]ui.Color{}
 	a.colorsFor = len(a.ifaces)
 	used := map[int]bool{}
+	// Connected interfaces choose first, so that they get their kind's
+	// color; then the rest, by name.
 	sorted := slices.Clone(a.ifaces)
-	slices.SortFunc(sorted, func(x, y api.Interface) int { return strings.Compare(x.Name, y.Name) })
+	slices.SortFunc(sorted, func(x, y api.Interface) int {
+		if x.Up != y.Up {
+			if x.Up {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(x.Name, y.Name)
+	})
 	for _, i := range sorted {
 		k := kindColor[i.Kind]
 		for n := 0; used[k] && n < len(ifacePalette); n++ {
 			k = (k + 1) % len(ifacePalette)
 		}
 		used[k] = true
-		col := ifacePalette[k]
-		a.colors[refOf(&i).Key()] = col
-		a.colors[i.Name] = col
+		a.colors[i.Name] = ifacePalette[k]
 	}
 }
 

@@ -507,26 +507,31 @@ func (a *App) installedApps() []api.AppRef {
 
 // ---- interfaces -------------------------------------------------------------
 
-// iface returns the interface a rule names, by its hardware address first.
-func (a *App) iface(ref api.InterfaceRef) *api.Interface {
-	if ref.HardwareAddr != "" {
-		for i := range a.ifaces {
-			if a.ifaces[i].HardwareAddr == ref.HardwareAddr {
-				return &a.ifaces[i]
-			}
-		}
-	}
+// iface returns the interface a rule names, or nil.
+func (a *App) iface(ref api.InterfaceRef) *api.Interface { return ref.Resolve(a.ifaces) }
+
+// ifaceByName returns the interface with a BSD name, or nil.
+func (a *App) ifaceByName(name string) *api.Interface {
 	for i := range a.ifaces {
-		if a.ifaces[i].Name == ref.Name {
+		if a.ifaces[i].Name == name {
 			return &a.ifaces[i]
 		}
 	}
 	return nil
 }
 
-// ifaceByName returns the interface with a BSD name, or nil.
-func (a *App) ifaceByName(name string) *api.Interface {
-	return a.iface(api.InterfaceRef{Name: name})
+// visibleIfaces are the interfaces worth showing: those connected, and
+// those System Settings lists as network services. Ports without a service
+// (Thunderbolt ports, AirDrop's links) and idle tunnels stay out.
+func (a *App) visibleIfaces() []*api.Interface {
+	var out []*api.Interface
+	for k := range a.ifaces {
+		i := &a.ifaces[k]
+		if i.Up || i.Label != "" && i.Label != i.Name && i.Kind != api.KindVPN {
+			out = append(out, i)
+		}
+	}
+	return out
 }
 
 // ifaceLabel is the name the interface shows for an interface: the alias
@@ -553,14 +558,6 @@ func (a *App) ifaceLabel(ref api.InterfaceRef) string {
 // refOf is the reference a rule saves to an interface.
 func refOf(i *api.Interface) api.InterfaceRef {
 	return api.InterfaceRef{Name: i.Name, Label: i.Label, HardwareAddr: i.HardwareAddr}
-}
-
-// ifaceKey is the key of the interface with a BSD name, for its color.
-func (a *App) ifaceKey(name string) string {
-	if i := a.ifaceByName(name); i != nil {
-		return refOf(i).Key()
-	}
-	return name
 }
 
 // ---- errors -----------------------------------------------------------------

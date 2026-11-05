@@ -167,12 +167,44 @@ type InterfaceRef struct {
 }
 
 // Key identifies the interface across BSD name changes: its hardware
-// address when it has one, else its BSD name.
+// address when it has one, else its BSD name. Several interfaces can share
+// a hardware address (a bridge and its members, the ports of one adapter),
+// so look interfaces up with Resolve, not by Key.
 func (r InterfaceRef) Key() string {
 	if r.HardwareAddr != "" {
 		return r.HardwareAddr
 	}
 	return r.Name
+}
+
+// Resolve finds the interface r names among ifaces: the one with both its
+// name and its hardware address; else the only one with its hardware
+// address (a USB adapter that came back under another BSD name); else, for
+// a reference without a hardware address, the one with its name. Nil when
+// none is.
+func (r InterfaceRef) Resolve(ifaces []Interface) *Interface {
+	var byAddr *Interface
+	n := 0
+	for i := range ifaces {
+		switch {
+		case ifaces[i].Name == r.Name && ifaces[i].HardwareAddr == r.HardwareAddr:
+			return &ifaces[i]
+		case r.HardwareAddr != "" && ifaces[i].HardwareAddr == r.HardwareAddr:
+			byAddr = &ifaces[i]
+			n++
+		}
+	}
+	if n == 1 {
+		return byAddr
+	}
+	if r.HardwareAddr == "" {
+		for i := range ifaces {
+			if ifaces[i].Name == r.Name {
+				return &ifaces[i]
+			}
+		}
+	}
+	return nil
 }
 
 // Settings are the preferences of the app and of the engine.

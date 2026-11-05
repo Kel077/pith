@@ -111,10 +111,10 @@ func (r Rule) Problems() []Problem {
 			switch {
 			case v.Name == "":
 				add("via", i, ProblemBadVia)
-			case seen[v.Key()]:
+			case seen[v.Name+"|"+v.HardwareAddr]:
 				add("via", i, ProblemDuplicate)
 			}
-			seen[v.Key()] = true
+			seen[v.Name+"|"+v.HardwareAddr] = true
 		}
 	default:
 		add("action", -1, ProblemBadAction)

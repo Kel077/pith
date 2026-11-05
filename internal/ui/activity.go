@@ -91,7 +91,7 @@ func (a *App) ifaceStrip(c *ui.Context) {
 
 func (a *App) ifaceSpeedCard(c *ui.Context, name string, samples []api.TrafficSample, now time.Time) {
 	t := c.Theme()
-	col := a.colorOf(a.ifaceKey(name))
+	col := a.colorOf(name)
 	// The last full second is the speed now; the chart is the last minute.
 	const span = 60
 	var down, up [span]float32

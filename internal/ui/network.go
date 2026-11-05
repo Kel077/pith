@@ -31,13 +31,31 @@ func (a *App) networkView(c *ui.Context) {
 		}
 	})
 	ui.Scroll(c).Grow(1).Padding(0, 24, 24).Gap(16).Children(func() {
+		var up, down []*api.Interface
+		for _, i := range a.visibleIfaces() {
+			if i.Up {
+				up = append(up, i)
+			} else {
+				down = append(down, i)
+			}
+		}
 		ui.Grid(c).Columns(2).Gap(12).Children(func() {
-			for k := range a.ifaces {
-				a.ifaceCard(c, &a.ifaces[k])
+			for _, i := range up {
+				a.ifaceCard(c, i)
 			}
 		})
-		if len(a.ifaces) == 0 {
-			muted(c, tr("No network interfaces.", "没有网络接口。")).Padding(24)
+		if len(up) == 0 {
+			muted(c, tr("No network is connected.", "没有已连接的网络。")).Padding(24)
+		}
+		if len(down) > 0 {
+			ui.Column(c).Gap(8).Children(func() {
+				sectionTitle(c, tr("Not connected", "未连接")).Padding(0, 4)
+				ui.Column(c).Radius(12).Border(1, t.Border).Dividers(1, t.Border).Children(func() {
+					for _, i := range down {
+						a.downRow(c, i)
+					}
+				})
+			})
 		}
 		a.reachability(c)
 		ui.Row(c).Gap(6).Children(func() {
@@ -51,9 +69,9 @@ func (a *App) networkView(c *ui.Context) {
 func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 	t := c.Theme()
 	ref := refOf(i)
-	col := a.colorOf(ref.Key())
+	col := a.colorOf(i.Name)
 	n := &a.network
-	box := ui.Column(c.Key("iface-"+ref.Key())).Padding(16).Gap(12).Radius(14).Border(1, t.Border)
+	box := ui.Column(c.Key("iface-"+i.Name)).Padding(16).Gap(12).Radius(14).Border(1, t.Border)
 	if !i.Up {
 		box.Background(subtle(t, 0.025))
 	}
@@ -74,7 +92,7 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 				}
 			})
 			ui.Column(c).Grow(1).Gap(2).MinWidth(0).Children(func() {
-				if n.renaming == ref.Key() {
+				if n.renaming == ref.Key()+"|"+i.Name {
 					in := ui.TextInput(c.Key("alias"), &n.alias).AutoFocus().Placeholder(i.Label)
 					if in.Submitted() {
 						a.setAlias(ref.Key(), n.alias)
@@ -83,7 +101,7 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 				} else {
 					name := ui.Text(c, a.ifaceLabel(ref)).FontSize(15).FontWeight(600).SingleLine().Cursor(ui.CursorText).Tooltip(tr("Double-click to rename", "双击重命名"))
 					if name.DoubleClicked() {
-						n.renaming, n.alias = ref.Key(), a.cfg.Aliases[ref.Key()]
+						n.renaming, n.alias = ref.Key()+"|"+i.Name, a.cfg.Aliases[ref.Key()]
 					}
 				}
 				status := tr("Not connected", "未连接")
@@ -143,6 +161,30 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 				a.probe(i.Name)
 			}
 		})
+	})
+}
+
+// downRow is a compact row for an interface that is not connected.
+func (a *App) downRow(c *ui.Context, i *api.Interface) {
+	t := c.Theme()
+	ref := refOf(i)
+	n := &a.network
+	ui.Row(c.Key("down-"+i.Name)).Gap(12).Padding(9, 14).Children(func() {
+		ui.Icon(c, kindIcon(i.Kind)).FontSize(16).TextColor(t.TextMuted)
+		if n.renaming == ref.Key()+"|"+i.Name {
+			if ui.TextInput(c.Key("alias"), &n.alias).AutoFocus().Placeholder(i.Label).Width(220).Submitted() {
+				a.setAlias(ref.Key(), n.alias)
+				n.renaming = ""
+			}
+		} else {
+			name := ui.Text(c, a.ifaceLabel(ref)).SingleLine().Cursor(ui.CursorText).Tooltip(tr("Double-click to rename", "双击重命名"))
+			if name.DoubleClicked() {
+				n.renaming, n.alias = ref.Key()+"|"+i.Name, a.cfg.Aliases[ref.Key()]
+			}
+		}
+		ui.Text(c, i.Name).FontSize(12).Font("monospace").TextColor(t.TextMuted)
+		ui.Spacer(c)
+		ui.Text(c, tr("Not connected", "未连接")).FontSize(12).TextColor(t.TextMuted)
 	})
 }
 

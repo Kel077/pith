@@ -91,10 +91,7 @@ func (a *App) ifaceChip(c *ui.Context, ref api.InterfaceRef) ui.Element {
 	t := c.Theme()
 	i := a.iface(ref)
 	up := i != nil && i.Up
-	col := a.colorOf(ref.Key())
-	if i != nil {
-		col = a.colorOf(refOf(i).Key())
-	}
+	col := a.colorFor(ref)
 	fill := col.Alpha(0.12)
 	if t.Dark {
 		fill = col.Alpha(0.2)
@@ -121,7 +118,7 @@ func (a *App) systemChip(c *ui.Context, name string) ui.Element {
 		label = a.ifaceLabel(refOf(i))
 	}
 	return ui.Row(c).Gap(6).Padding(3, 9, 3, 8).Radius(999).Border(1, t.Border).Shrink(0).Children(func() {
-		dot(c, a.colorOf(a.ifaceKey(name)), 7, false).Opacity(0.6)
+		dot(c, a.colorOf(name), 7, false).Opacity(0.6)
 		ui.Text(c, label).FontSize(12).TextColor(t.TextMuted).SingleLine()
 	})
 }

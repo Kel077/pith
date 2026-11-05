@@ -297,7 +297,7 @@ func (a *App) viaEditor(c *ui.Context, e *editor, missing bool) {
 	box.Children(func() {
 		for k, v := range e.rule.Via {
 			i := a.iface(v)
-			ui.Row(c.Key("via-"+v.Key())).Gap(10).Padding(7, 8, 7, 12).Children(func() {
+			ui.Row(c.Key("via-"+strconv.Itoa(k)+"-"+v.Name)).Gap(10).Padding(7, 8, 7, 12).Children(func() {
 				ui.Text(c, strconv.Itoa(k+1)).FontSize(12).TextColor(t.TextMuted).Width(12)
 				a.ifaceChip(c, v)
 				state := tr("Not connected", "未连接")
@@ -324,10 +324,9 @@ func (a *App) viaEditor(c *ui.Context, e *editor, missing bool) {
 				ui.Icon(c, icPlus)
 				ui.Text(c, tr("Add Interface", "添加网卡")).SingleLine()
 			}).Menu(func(m *ui.Menu) {
-				for k := range a.ifaces {
-					i := &a.ifaces[k]
+				for _, i := range a.visibleIfaces() {
 					ref := refOf(i)
-					if slices.ContainsFunc(e.rule.Via, func(v api.InterfaceRef) bool { return v.Key() == ref.Key() || v.Name == ref.Name }) {
+					if slices.ContainsFunc(e.rule.Via, func(v api.InterfaceRef) bool { return v.Resolve([]api.Interface{*i}) != nil }) {
 						continue
 					}
 					label := a.ifaceLabel(ref) + "  ·  " + i.Name

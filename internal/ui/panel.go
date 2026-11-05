@@ -16,7 +16,7 @@ func (a *App) PanelHeight() int {
 	if a.panelH > 0 {
 		return a.panelH
 	}
-	return 220 + 33*len(a.cfg.Scenes) + 32*len(a.ifaces)
+	return 220 + 33*len(a.cfg.Scenes) + 32*len(a.panelIfaces())
 }
 
 // PanelView is the panel under the menu bar icon: the switch, the scenes,
@@ -89,11 +89,10 @@ func (a *App) PanelView(c *ui.Context) {
 		panelDivider(c)
 		panelTitle(c, tr("Interfaces", "网卡"))
 		rates := a.ifaceRates()
-		for k := range a.ifaces {
-			i := &a.ifaces[k]
+		for _, i := range a.panelIfaces() {
 			ref := refOf(i)
-			ui.Row(c.Key("if-"+ref.Key())).Gap(10).Padding(6, 10).Children(func() {
-				dot(c, a.colorOf(ref.Key()), 8, !i.Up)
+			ui.Row(c.Key("if-"+i.Name)).Gap(10).Padding(6, 10).Children(func() {
+				dot(c, a.colorOf(i.Name), 8, !i.Up)
 				name := ui.Text(c, a.ifaceLabel(ref)).SingleLine().Grow(1)
 				if !i.Up {
 					name.TextColor(t.TextMuted)
@@ -126,6 +125,34 @@ func (a *App) PanelView(c *ui.Context) {
 			}
 		})
 	})
+}
+
+// panelIfaces are the interfaces the panel lists: those connected, and
+// those the rules of the scene that runs, or would, route through.
+func (a *App) panelIfaces() []*api.Interface {
+	id := a.cfg.Selected
+	if a.isRunning() {
+		id = a.status.SceneID
+	}
+	used := map[string]bool{}
+	if s := a.scene(id); s != nil {
+		for _, r := range s.Rules {
+			if r.Enabled && r.Action == api.Route {
+				for _, v := range r.Via {
+					if i := a.iface(v); i != nil {
+						used[i.Name] = true
+					}
+				}
+			}
+		}
+	}
+	var out []*api.Interface
+	for _, i := range a.visibleIfaces() {
+		if i.Up || used[i.Name] {
+			out = append(out, i)
+		}
+	}
+	return out
 }
 
 // ifaceRates is the speed of each interface over the last full second:

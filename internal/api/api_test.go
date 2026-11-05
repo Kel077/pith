@@ -98,6 +98,34 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+func TestResolve(t *testing.T) {
+	ifs := []Interface{
+		{Name: "bridge0", HardwareAddr: "02:00:00:00:00:0b"},
+		{Name: "en2", HardwareAddr: "02:00:00:00:00:0b"},
+		{Name: "en3", HardwareAddr: "02:00:00:00:00:0b"},
+		{Name: "en8", HardwareAddr: "02:00:00:00:00:08"}, // a USB adapter, once en7
+		{Name: "utun4"},
+	}
+	for _, tt := range []struct {
+		ref  InterfaceRef
+		want string
+	}{
+		{InterfaceRef{Name: "en3", HardwareAddr: "02:00:00:00:00:0b"}, "en3"},
+		{InterfaceRef{Name: "en7", HardwareAddr: "02:00:00:00:00:08"}, "en8"},
+		{InterfaceRef{Name: "en4", HardwareAddr: "02:00:00:00:00:0b"}, ""}, // shared address, gone name: not a guess
+		{InterfaceRef{Name: "en8", HardwareAddr: "02:00:00:00:00:99"}, ""}, // another adapter took the name
+		{InterfaceRef{Name: "utun4"}, "utun4"},
+	} {
+		got := ""
+		if i := tt.ref.Resolve(ifs); i != nil {
+			got = i.Name
+		}
+		if got != tt.want {
+			t.Errorf("%+v.Resolve = %q, want %q", tt.ref, got, tt.want)
+		}
+	}
+}
+
 func TestParseFile(t *testing.T) {
 	if _, err := ParseFile([]byte(`{"pith":"rules","version":1,"rules":[]}`)); err != nil {
 		t.Errorf("rules file: %v", err)
