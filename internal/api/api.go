@@ -390,8 +390,14 @@ type ConnectionQuery struct {
 
 // TrafficQuery selects a period of traffic.
 type TrafficQuery struct {
-	Since time.Time     `json:"since"`
-	Step  time.Duration `json:"step"` // the interval of Traffic.Series; 0: no series
+	Since time.Time `json:"since"`
+	// Step is the interval of Traffic.Series; 0 means no series. For Step > 0,
+	// samples are aligned to Since: At = Since + k*Step, summing stored buckets
+	// whose timestamps fall in [At, At+Step). The backend keeps sub-hour buckets
+	// for at least eight days, so week queries never rely on UTC daily totals.
+	// Older coarse history may widen Traffic.Since; stored buckets cannot be
+	// divided at arbitrary boundaries. Missing samples represent zero traffic.
+	Step time.Duration `json:"step"`
 }
 
 // Traffic sums the bytes of the connections Pith handled.
@@ -417,7 +423,9 @@ type InterfaceTraffic struct {
 	Received  uint64 `json:"received"`
 }
 
-// TrafficSample is the traffic through one interface in one Step from At.
+// TrafficSample is traffic through one interface in [At, At+Step), with At
+// aligned to the query's Since, not UTC midnight. Step is the query's duration;
+// calendar-day grouping (including daylight-saving changes) belongs to the UI.
 type TrafficSample struct {
 	At        time.Time `json:"at"`
 	Interface string    `json:"interface"`
