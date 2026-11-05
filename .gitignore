@@ -2,6 +2,8 @@
 /build/
 /dist/
 /resources/darwin-arm64/bin/
+/resources/darwin-arm64/licenses/
+/resources/darwin-arm64/.licenses-*/
 *.dmg
 
 # Local state, logs and captures (never commit the user's network data)
