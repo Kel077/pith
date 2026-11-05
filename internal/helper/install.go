@@ -22,10 +22,11 @@ import (
 // dialog or modifies the system. Update failures restore the previous files
 // and the previous launchd registration.
 type InstallPlan struct {
-	Script  string
-	Prompt  string
-	Changes []string
-	Undo    string
+	Script           string
+	Prompt           string
+	Changes          []string
+	CreatesIfMissing []string // Shared parent directories; existing metadata is never changed.
+	Undo             string
 }
 
 const (
@@ -114,6 +115,8 @@ func planInstall(source string, uid uint32, args []string) (InstallPlan, error) 
 	script := "set -eu\n" +
 		"binary=" + shellQuote(BinaryPath) + "\nplist=" + shellQuote(PlistPath) + "\ndata=" + shellQuote(DataDir) + "\n" +
 		"service=" + shellQuote("system/"+Label) + "\n" +
+		createSharedDirectory(filepath.Dir(BinaryPath), "1755") +
+		createSharedDirectory(filepath.Dir(PlistPath), "0755") +
 		"for path in \"$binary\" \"$plist\" \"$data\"; do [ ! -L \"$path\" ] || { echo 'refusing symlink installation path' >&2; exit 1; }; done\n" +
 		"for path in \"$binary\" \"$plist\"; do if [ -e \"$path\" ]; then [ -f \"$path\" ] && [ \"$(/usr/bin/stat -f %u \"$path\")\" = 0 ] || exit 1; fi; done\n" +
 		"if [ -e \"$data\" ]; then [ -d \"$data\" ] && [ \"$(/usr/bin/stat -f %u \"$data\")\" = 0 ] || exit 1; fi\n" +
@@ -135,10 +138,33 @@ func planInstall(source string, uid uint32, args []string) (InstallPlan, error) 
 		"/usr/sbin/chown root:wheel \"$stage/new.plist\"\n/bin/chmod 0644 \"$stage/new.plist\"\n/usr/bin/plutil -lint \"$stage/new.plist\" >/dev/null\n" +
 		"changed=1\nif [ \"$was_loaded\" -eq 1 ]; then /bin/launchctl bootout \"$service\"; fi\n" +
 		waitForSocket() +
-		"/usr/bin/install -d -o root -g wheel -m 0755 /Library/PrivilegedHelperTools /Library/LaunchDaemons\n" +
 		"/bin/mv -f \"$stage/new-helper\" \"$binary\"\n/bin/mv -f \"$stage/new.plist\" \"$plist\"\n" +
 		"/bin/launchctl bootstrap system \"$plist\"\n"
-	return InstallPlan{Script: script, Prompt: InstallPrompt, Changes: []string{BinaryPath, PlistPath, DataDir, SocketPath}, Undo: "UninstallHelper removes the service and helper data; a failed update restores the previous executable, plist and launchd registration."}, nil
+	return InstallPlan{
+		Script: script, Prompt: InstallPrompt, Changes: []string{BinaryPath, PlistPath, DataDir, SocketPath},
+		CreatesIfMissing: []string{filepath.Dir(BinaryPath), filepath.Dir(PlistPath)},
+		Undo:             "UninstallHelper removes the service and helper data; a failed update restores the previous executable, plist and launchd registration. Shared parent directories are retained, and existing parent permissions and ownership are never changed.",
+	}, nil
+}
+
+// install -d changes metadata even when a directory already exists. Only a
+// successful exclusive mkdir permits setting ownership: another installer can
+// create the shared directory between the existence check and mkdir.
+func createSharedDirectory(path, mode string) string {
+	quoted := shellQuote(path)
+	return "[ ! -L " + quoted + " ] || { echo 'refusing symlink parent directory' >&2; exit 1; }\n" +
+		"if [ ! -e " + quoted + " ]; then\n" +
+		"  if /bin/mkdir -m " + mode + " " + quoted + " 2>/dev/null; then\n" +
+		"    /usr/sbin/chown root:wheel " + quoted + "\n" +
+		"  else\n" +
+		"    [ ! -L " + quoted + " ] && [ -d " + quoted + " ] || { echo 'could not create installation parent' >&2; exit 1; }\n" +
+		"  fi\n" +
+		"else\n" +
+		"  [ -d " + quoted + " ] || { echo 'installation parent is not a directory' >&2; exit 1; }\n" +
+		"fi\n" +
+		"pith_parent_owner=$(/usr/bin/stat -f %u " + quoted + ")\n" +
+		"pith_parent_mode=$(/usr/bin/stat -f %OLp " + quoted + ")\n" +
+		"[ \"$pith_parent_owner\" = 0 ] && [ \"$((0$pith_parent_mode & 022))\" -eq 0 ] || { echo 'installation parent must be root-owned and not writable by group or others' >&2; exit 1; }\n"
 }
 
 func PlanUninstall() InstallPlan {
