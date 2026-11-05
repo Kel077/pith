@@ -85,6 +85,7 @@ type App struct {
 	trafficAt time.Time // when traffic was read
 	probes    map[string]api.Probe
 	probing   map[string]bool
+	hotspot   hotspots
 	apps      []api.AppRef
 	appsAsk   bool
 	icons     map[string]*appIcon
@@ -146,6 +147,7 @@ func New(o Options) *App {
 		byID:    map[uint64]*api.Connection{},
 		probes:  map[string]api.Probe{},
 		probing: map[string]bool{},
+		hotspot: newHotspots(),
 		icons:   map[string]*appIcon{},
 		page:    cmp.Or(o.Page, "rules"),
 	}
@@ -171,6 +173,7 @@ func (a *App) Run(ctx context.Context) {
 		a.follow(ctx)
 	}()
 	go a.pollTraffic(ctx)
+	go a.pollHotspots(ctx)
 }
 
 // Sync loads everything at once, without goroutines, for tests.
@@ -185,6 +188,7 @@ func (a *App) Sync(ctx context.Context) {
 	}
 	if ifs, err := a.Service.Interfaces(ctx); err == nil {
 		a.setIfaces(ifs)
+		a.readHotspots(ctx)
 	}
 	if conns, err := a.Service.Connections(ctx, api.ConnectionQuery{Limit: 500}); err == nil {
 		a.setConnections(conns)
@@ -318,6 +322,9 @@ func (a *App) setStatus(st api.Status) {
 func (a *App) setIfaces(ifs []api.Interface) {
 	a.ifaces = ifs
 	a.colors = nil
+	// Another device may sit behind an interface now: ask again.
+	clear(a.hotspot.none)
+	a.hotspotNames()
 }
 
 func (a *App) setConnections(conns []api.Connection) {
@@ -718,6 +725,10 @@ func errorText(err error) string {
 		msg = locales.AnotherVpnOrNetworkToolHolds()
 	case api.ErrNetworkLost:
 		msg = locales.RoutingCutTheInternetSoPith()
+	case api.ErrUnsupported:
+		msg = locales.PithCanTControlThisDevice()
+	case api.ErrWrongPassword:
+		msg = locales.TheHotspotRefusedItsPassword()
 	default:
 		msg = locales.SomethingWentWrong()
 		if detail == "" {

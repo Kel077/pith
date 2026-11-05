@@ -65,6 +65,9 @@ func (a *App) dialogs(c *ui.Context) {
 	if a.rename.open {
 		a.renameView(c)
 	}
+	if a.hotspot.unlock.open {
+		a.unlockView(c)
+	}
 	if a.confirm != nil {
 		a.confirmView(c)
 	}

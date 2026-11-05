@@ -32,6 +32,7 @@ const networkInset = 16
 // reached through all of them.
 func (a *App) networkView(c *ui.Context) {
 	t := c.Theme()
+	a.watchHotspots()
 	pageHeader(c, locales.Network(), "", func() {
 		all := glassCapsuleButton(c, "test-all", icRefresh, locales.TestAll()).Focusable().Shrink(0).
 			Tooltip(locales.TestsConnectThroughOneInterfaceAt()).Disabled(len(a.probing) > 0)
@@ -147,6 +148,10 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 		if !i.Up {
 			return
 		}
+		h, isHotspot := a.hotspot.info[i.Name]
+		if isHotspot {
+			a.hotspotStrip(c, h, col)
+		}
 		// The details, as rows of their own inside the pane.
 		ui.Column(c).Radius(12).Background(subtle(t, 0.03)).Dividers(1, hairline(t)).Children(func() {
 			kv(c, "IPv4", strings.Join(i.IPv4, ", "))
@@ -162,7 +167,16 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 		// The test, at the foot of the pane however tall its row makes it.
 		ui.Row(c).Gap(10).Margin(ui.Auto, 0, 0, 0).Children(func() {
 			p, tested := a.probes[i.Name]
+			renewal := ""
+			if r, ok := a.hotspot.renewals[i.Name]; ok {
+				renewal = renewalText(r)
+			}
 			switch {
+			case a.hotspot.renewing[i.Name]:
+				ui.Spinner(c)
+				muted(c, locales.ChangingHotspotIp())
+			case renewal != "":
+				ui.Text(c, renewal).FontSize(13).FontWeight(600).FontFeatures("tnum").SingleLine().Shrink(1).Selectable()
 			case a.probing[i.Name]:
 				ui.Spinner(c)
 				muted(c, locales.Testing())
@@ -185,7 +199,17 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 				muted(c, locales.NotTested())
 			}
 			ui.Spacer(c)
-			if glassCapsuleButton(c, "test", nil, locales.Test()).Focusable().Shrink(0).Disabled(a.probing[i.Name]).Clicked() {
+			if isHotspot {
+				busy := a.hotspot.renewing[i.Name] || a.probing[i.Name]
+				renew := glassCapsuleButton(c, "renew", icSwap, locales.ChangeHotspotIp()).Shrink(0).Disabled(busy || h.Locked || !h.Connected)
+				if h.Locked {
+					renew.Opacity(0.5).Tooltip(locales.HotspotPassword())
+				}
+				if renew.Clicked() && !busy && !h.Locked && h.Connected {
+					a.renewHotspot(i.Name)
+				}
+			}
+			if glassCapsuleButton(c, "test", nil, locales.Test()).Focusable().Shrink(0).Disabled(a.probing[i.Name] || a.hotspot.renewing[i.Name]).Clicked() {
 				a.probe(i.Name)
 			}
 		})
@@ -255,6 +279,7 @@ func (a *App) probe(name string) {
 	if a.probing[name] {
 		return
 	}
+	delete(a.hotspot.renewals, name)
 	a.probing[name] = true
 	var p api.Probe
 	a.async(func(ctx context.Context) (err error) {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Kel077/pith/internal/api"
+	"github.com/Kel077/pith/internal/keychain"
 	"github.com/Kel077/pith/internal/netif"
 )
 
@@ -37,15 +38,19 @@ type Prompts struct {
 }
 
 type Client struct {
-	opts       Options
-	configPath string
-	mu         sync.Mutex
-	interfaces func(context.Context) ([]api.Interface, error)
-	lookup     func(context.Context, string, string) ([]netip.Addr, error)
-	dialer     func(string, time.Duration, []string) (*net.Dialer, error)
-	probeURLs  [2]string
-	http       *http.Client
-	peerUID    uint32
+	opts        Options
+	configPath  string
+	mu          sync.Mutex
+	interfaces  func(context.Context) ([]api.Interface, error)
+	lookup      func(context.Context, string, string) ([]netip.Addr, error)
+	dialer      func(string, time.Duration, []string) (*net.Dialer, error)
+	probeURLs   [2]string
+	http        *http.Client
+	peerUID     uint32
+	hotspots    map[string]*hotspotSession
+	hotspotPort string // of the hotspots' web admin: 80 when empty
+	secretGet   func(ctx context.Context, service, account string) (string, error)
+	secretSet   func(ctx context.Context, service, account, secret string) error
 }
 
 var _ api.Service = (*Client)(nil)
@@ -63,7 +68,7 @@ func New(opts Options) (*Client, error) {
 		opts.Version = "dev"
 	}
 	c := &Client{opts: opts, configPath: filepath.Join(opts.ConfigDir, "config.json"), interfaces: netif.List, lookup: net.DefaultResolver.LookupNetIP, dialer: netif.Dialer,
-		probeURLs: [2]string{"https://api.ipify.org", "https://api6.ipify.org"}}
+		probeURLs: [2]string{"https://api.ipify.org", "https://api6.ipify.org"}, secretGet: keychain.Get, secretSet: keychain.Set}
 	c.initIPC()
 	return c, nil
 }

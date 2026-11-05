@@ -161,6 +161,25 @@ func TestSnapshots(t *testing.T) {
 		tt.SetScale(2)
 		tt.Frame()
 		save(t, tt.Image(), "check-"+mode)
+
+		// The hotspot: its card after a change of its IP, and locked, with
+		// the sheet that asks for its admin password.
+		a, svc := testApp(t, mock.Options{Sample: true, HelperInstalled: true, Running: true})
+		a.page = "network"
+		a.hotspot.renewals["en9"] = api.HotspotRenewal{Before: api.Probe{PublicIPv4: "198.51.100.80"}, After: api.Probe{PublicIPv4: "198.51.100.81"}}
+		tt = ui.NewTester(a.WindowView, 1040, 1180)
+		tt.SetDark(dark)
+		tt.SetScale(2)
+		tt.Frame()
+		save(t, tt.Image(), "hotspot-"+mode)
+		svc.LockHotspot()
+		a.Sync(context.Background())
+		a.hotspot.unlock = unlockDialog{open: true, iface: "en9"}
+		tt = ui.NewTester(a.WindowView, 1040, 1180)
+		tt.SetDark(dark)
+		tt.SetScale(2)
+		tt.Frame()
+		save(t, tt.Image(), "hotspot-locked-"+mode)
 	}
 	// Warnings: an interface of a rule is down, and a catch-all rule on
 	// top shadows the rules under it.

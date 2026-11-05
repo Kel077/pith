@@ -18,6 +18,8 @@ const (
 	ErrNoScene        ErrorCode = "no_scene"        // no scene has that ID
 	ErrRouteConflict  ErrorCode = "route_conflict"  // another app holds routes Pith needs (Detail: which)
 	ErrNetworkLost    ErrorCode = "network_lost"    // SafeStart undid a start that cut the internet
+	ErrUnsupported    ErrorCode = "unsupported"     // Pith can't control that device
+	ErrWrongPassword  ErrorCode = "wrong_password"  // a device refused the password Pith has, or Pith has none
 	ErrInternal       ErrorCode = "internal"
 )
 

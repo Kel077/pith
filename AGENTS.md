@@ -43,7 +43,7 @@ of both owners.
 
 | Area | Owner |
 | :-- | :-- |
-| `cmd/pith`, `internal/ui`, `internal/mock`, `locales`, `resources`, `mygo.json`, `docs/DESIGN.md`, the READMEs | Claude: the interface, its design, integration |
+| `cmd/pith`, `internal/ui`, `internal/mock`, `internal/hotspot`, `internal/keychain`, `locales`, `resources`, `mygo.json`, `docs/DESIGN.md`, the READMEs | Claude: the interface, its design, integration, hotspots |
 | `cmd/pithd`, `internal/client`, `internal/engine/…`, `internal/helper`, `internal/rules`, `internal/netif`, `scripts`, `Makefile`, `.github`, `docs/ARCHITECTURE.md` | Astra: the engine, the helper, data, builds, CI |
 | `internal/api` | both, by agreement |
 
