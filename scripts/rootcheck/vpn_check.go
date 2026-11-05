@@ -20,6 +20,7 @@ import (
 )
 
 var errVPNInconclusive = errors.New("VPN acceptance incomplete")
+var errVPNDNSDeadline = errors.New("VPN DNS response deadline")
 
 type vpnRestartDeps struct {
 	snapshot                                                       func(context.Context) (snapshot, error)
@@ -32,19 +33,15 @@ type vpnRestartDeps struct {
 func liveVPNChecks(snapshot func(context.Context) (snapshot, error)) vpnRestartDeps {
 	return vpnRestartDeps{
 		snapshot: snapshot,
-		dns: func(ctx context.Context, p *vpnRestartPlan) (dnsEvidence, error) {
-			ctx, cancel := context.WithTimeout(ctx, dnsResponseTimeout)
+		dns: func(parent context.Context, p *vpnRestartPlan) (dnsEvidence, error) {
+			ctx, cancel := context.WithTimeoutCause(parent, dnsResponseTimeout, errVPNDNSDeadline)
 			defer cancel()
-			sequence, err := newDNSSequence()
-			if err != nil {
-				return dnsEvidence{}, err
-			}
 			conn, err := (&net.Dialer{Timeout: dnsResponseTimeout}).DialContext(ctx, "udp4", p.DNS)
 			if err != nil {
 				return dnsEvidence{}, err
 			}
 			defer conn.Close()
-			return sequence.exchange(ctx, conn, p.OwnName, dnsmessage.TypeA)
+			return exchangeVPNDNS(parent, ctx, conn, p)
 		},
 		public: func(ctx context.Context, s *session) (tlsEvidence, error) {
 			ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
@@ -55,6 +52,37 @@ func liveVPNChecks(snapshot func(context.Context) (snapshot, error)) vpnRestartD
 		poll:   250 * time.Millisecond, withdrawWindow: 45 * time.Second,
 		minimumDown: 10 * time.Second, rebuildWindow: 45 * time.Second, finalReserve: 15 * time.Second,
 	}
+}
+
+func exchangeVPNDNS(parent, query context.Context, conn net.Conn, p *vpnRestartPlan) (dnsEvidence, error) {
+	sequence, err := newDNSSequence()
+	if err != nil {
+		return dnsEvidence{}, err
+	}
+	evidence, err := sequence.exchange(query, conn, p.OwnName, dnsmessage.TypeA)
+	return evidence, vpnDNSError(parent, query, err)
+}
+
+func vpnDNSError(parent, query context.Context, err error) error {
+	if parent.Err() != nil {
+		return parent.Err()
+	}
+	// The kernel may report an earlier parent deadline before its context timer
+	// fires. That shorter observation cannot establish the full DNS timeout.
+	if parentEnd, ok := parent.Deadline(); ok {
+		queryEnd, bounded := query.Deadline()
+		var timed net.Error
+		if bounded && !queryEnd.Before(parentEnd) && (errors.Is(err, net.ErrClosed) || errors.As(err, &timed) && timed.Timeout()) {
+			return fmt.Errorf("%w: parent deadline bounded the VPN DNS observation", errVPNInconclusive)
+		}
+	}
+	// The socket deadline and cancellation's Close can race. Only this query's
+	// own expired timer can turn ErrClosed into expected negative evidence.
+	// The exchange retains the original socket error in the private report.
+	if errors.Is(err, net.ErrClosed) && query.Err() == context.DeadlineExceeded && context.Cause(query) == errVPNDNSDeadline {
+		return fmt.Errorf("VPN DNS socket closed at its response deadline: %w", context.DeadlineExceeded)
+	}
+	return err
 }
 
 type vpnPoll struct {
@@ -77,20 +105,29 @@ type vpnSnapshot struct {
 	Snapshot snapshot `json:"snapshot"`
 }
 type vpnRestartEvidence struct {
-	ReadyAt          time.Time     `json:"readyAt"`
-	WithdrewAt       time.Time     `json:"withdrewAt"`
-	ReconnectAt      time.Time     `json:"reconnectPromptAt"`
-	RestoredAt       time.Time     `json:"restoredAt"`
-	WithdrawalWindow time.Duration `json:"withdrawalWindow"`
-	RebuildWindow    time.Duration `json:"rebuildWindow"`
-	MinimumDown      time.Duration `json:"minimumDown"`
-	Polls            []vpnPoll     `json:"polls"`
-	Queries          []vpnDNSCase  `json:"queries"`
-	Snapshots        []vpnSnapshot `json:"snapshots"`
-	ControlsPassed   bool          `json:"controlsPassed"`
-	PostStopPassed   bool          `json:"postStopPassed"`
-	Incomplete       string        `json:"incompleteReason,omitempty"`
-	Notes            []string      `json:"notes"`
+	ReadyAt           time.Time     `json:"readyAt"`
+	WithdrewAt        time.Time     `json:"withdrewAt"`
+	ReconnectAt       time.Time     `json:"reconnectPromptAt"`
+	RestoredAt        time.Time     `json:"restoredAt"`
+	RestoreReminderAt time.Time     `json:"restoreReminderAt,omitzero"`
+	WithdrawalWindow  time.Duration `json:"withdrawalWindow"`
+	RebuildWindow     time.Duration `json:"rebuildWindow"`
+	MinimumDown       time.Duration `json:"minimumDown"`
+	Polls             []vpnPoll     `json:"polls"`
+	Queries           []vpnDNSCase  `json:"queries"`
+	Snapshots         []vpnSnapshot `json:"snapshots"`
+	ControlsPassed    bool          `json:"controlsPassed"`
+	PostStopPassed    bool          `json:"postStopPassed"`
+	Incomplete        string        `json:"incompleteReason,omitempty"`
+	Notes             []string      `json:"notes"`
+}
+
+func remindVPNReconnect(evidence *vpnRestartEvidence, deps vpnRestartDeps) {
+	if evidence == nil || evidence.ReadyAt.IsZero() || !evidence.RestoreReminderAt.IsZero() {
+		return
+	}
+	evidence.RestoreReminderAt = time.Now()
+	deps.prompt("RECONNECT: test ended; turn the VPN back on now")
 }
 
 func claimVPN(s *session) error {
@@ -274,6 +311,9 @@ func queryVPN(ctx context.Context, s *session, c api.Service, tunnel vpnTunnel, 
 	}
 	exchange, queryErr := deps.dns(ctx, s.VPNRestart)
 	evidence.Queries = append(evidence.Queries, vpnDNSCase{Phase: phase, Exchange: exchange, ExpectedTimeout: down, AfterConnectionID: id, CheckNoForwarding: true})
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if err := noVPNForward(ctx, c, id, s.VPNRestart.DNS, exchange.Local); err != nil {
 		return err
 	}
@@ -414,6 +454,11 @@ func runVPNRestart(ctx context.Context, s *session, c api.Service, cfg api.Confi
 		resultErr = vpnTimeoutResult(resultErr)
 		if errors.Is(resultErr, errVPNInconclusive) {
 			evidence.Incomplete = resultErr.Error()
+		}
+		if resultErr != nil {
+			// A single reminder never waits for the operator; the caller immediately
+			// unwinds into its independent Stop context.
+			remindVPNReconnect(evidence, deps)
 		}
 	}()
 	view, tunnel, up, err := vpnCheckpoint(ctx, s, c, running, evidence, deps)

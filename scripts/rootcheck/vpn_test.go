@@ -309,6 +309,14 @@ func TestVPNIncompleteAndForwardingFailures(t *testing.T) {
 					return v, err
 				}
 			}
+			var reminders int
+			prompt := deps.prompt
+			deps.prompt = func(line string) {
+				if line == "RECONNECT: test ended; turn the VPN back on now" {
+					reminders++
+				}
+				prompt(line)
+			}
 			report := checkReport{Started: time.Now()}
 			if err := beginVPNCheck(context.Background(), s, s.Original, &report, deps); err != nil {
 				t.Fatal(err)
@@ -322,6 +330,10 @@ func TestVPNIncompleteAndForwardingFailures(t *testing.T) {
 			}
 			if kind == "early-reconnect" && (!errors.Is(err, errVPNInconclusive) || report.VPNRestart.Incomplete == "") {
 				t.Fatal(err)
+			}
+			wantReminder := kind != "wrong-exit" && kind != "capture-route-missing"
+			if (reminders == 1) != wantReminder {
+				t.Fatal("wrong terminal restoration reminder", kind, reminders)
 			}
 		})
 	}

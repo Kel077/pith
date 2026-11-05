@@ -45,6 +45,7 @@ const usage = `rootcheck prepares a private, bounded acceptance session.
   stop      --session DIRECTORY
   rebaseline --session DIRECTORY --label MODE [--accept-external-change]
   uninstall --session DIRECTORY [--auth keychain:SERVICE]
+  verify-uninstalled --session DIRECTORY
   audit-processes --session DIRECTORY
 
 prepare writes review material only to a fresh directory in TMPDIR. It reads
@@ -64,6 +65,8 @@ check --crash requires prior smoke, kills only the reviewed running helper, and
 verifies owned capture removal and idle restart. It needs separate authorization.
 rebaseline records an approved mode change only while stopped, after verified
 cleanup, without an authorization dialog. It requires a new smoke check.
+verify-uninstalled repeats only the post-removal checks after external network
+state is restored. It does not authorize, contact the helper, or remove anything.
 Read docs/ROOT-TEST.md before use. Do not run from an unattended agent.
 `
 
@@ -154,6 +157,9 @@ func run(args []string) error {
 	// the normal installer does not constrain capture to the reviewed hosts.
 	if args[0] == "audit-processes" {
 		return s.auditProcesses(ctx, liveProcessInventory)
+	}
+	if args[0] == "verify-uninstalled" {
+		return verifyUninstalled(ctx, s)
 	}
 	c, err := client.New(client.Options{ConfigDir: filepath.Join(s.Dir, "config"), Version: s.Version})
 	if err != nil {
@@ -333,20 +339,32 @@ func uninstall(ctx context.Context, s *session, c api.Service, auth authorizatio
 	if err := s.authorize(authCtx, "uninstall", helper.PlanUninstall(), auth, liveOps()); err != nil {
 		return fmt.Errorf("uninstall: %w; retain the session and use the reviewed emergency command", err)
 	}
-	if err := s.expectOriginal(ctx, "after-uninstall"); err != nil {
-		return err
-	}
-	s.Installed = false
-	s.SmokePassed = false
-	s.DNSPassed = false
-	s.QUICPassed = false
-	s.BundlePassed = false
-	if err := s.save(); err != nil {
-		return err
+	return verifyUninstalled(ctx, s)
+}
+
+func verifyUninstalled(ctx context.Context, s *session) error {
+	if err := verifyUninstalledWithOps(ctx, s, liveOps()); err != nil {
+		return fmt.Errorf("post-removal verification incomplete: %w; retain the private session, restore any intentionally disconnected VPN, then use verify-uninstalled without authorization", err)
 	}
 	fmt.Println("PASS: helper, launchd registration, socket, capture journal, and helper data are absent; current baseline routes and tunnels are restored.")
 	fmt.Println("Private review artifacts remain in the session directory for inspection; remove that directory when finished.")
 	return s.auditProcesses(ctx, liveProcessInventory)
+}
+
+// This path only reads system state and writes private session evidence. It
+// never accepts changed routes, reauthorizes removal, or contacts a helper.
+func verifyUninstalledWithOps(ctx context.Context, s *session, ops rootcheckOps) error {
+	if !s.AuthorizationAttempted {
+		return errors.New("this session has never attempted installation")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	if err := s.expectOriginalWithOps(ctx, "after-uninstall", ops); err != nil {
+		return err
+	}
+	s.Installed, s.SmokePassed, s.DNSPassed, s.QUICPassed, s.BundlePassed = false, false, false, false, false
+	s.Cleanup = nil
+	return ops.save(s)
 }
 
 func waitUntil(ctx context.Context, fn func() (bool, error)) error {

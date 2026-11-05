@@ -836,6 +836,17 @@ with exactly a 120-second helper lease. The user alone operates the VPN menu.
 Neither prepare nor check runs a VPN CLI, starts, stops, updates or reconfigures
 the VPN, changes an exit node, queries peers, or connects to a DNS answer address.
 
+The first hardware attempt with `b8f8dee` passed installation, TCP smoke and the
+connected controls, but was incomplete during withdrawal. The DNS datagram was
+sent and unanswered for its two-second bound; a context-triggered socket close
+returned `net.ErrClosed` instead of an I/O timeout. This was a harness
+classification error, not evidence that Pith forwarded the query. Only a close
+after the DNS query's own deadline is now classified as a timeout; parent
+cancellation and unrelated closes are not. Real unanswered loopback UDP tests
+cover both deadline/close orders, preserving the raw error in the report.
+Stop was immediate and independent inspection found no owned capture residue;
+post-uninstall comparison remained incomplete because the VPN was still off.
+
 Before the session, the user enables Tailscale **without an exit node** and keeps
 it connected through prepare, install and ordinary TCP smoke. The coordinator
 obtains this Mac's full MagicDNS name independently and supplies it privately,
@@ -894,7 +905,10 @@ relay delays of 5--15 seconds fit the windows, but the two 45-second maxima are
 not additive guarantees. Any timeout/cancellation is incomplete and ends capture.
 The durable attempt file prevents automatic or accidental repetition in this
 session, even after failure/rebaseline. If aborted while disconnected, the user
-restores the VPN manually after the coordinator confirms Pith is stopped.
+restores the VPN manually after the coordinator confirms Pith is stopped. Any
+failure or incomplete result after READY prints exactly one terminal reminder:
+`RECONNECT: test ended; turn the VPN back on now`. This also covers errors in
+final verification. The reminder never waits for user action or delays Stop.
 
 There are at most five own-name A queries in check (before capture, running before,
 withdrawn, rebuilt, after Stop), plus the single prepare query. Each sends one
@@ -904,6 +918,11 @@ to the existing SafeStart/common system control. No polling request is sent to a
 tailnet peer: route/status polls are local reads and capped at 512 observations.
 All request workers are canceled and joined before returning.
 
+The response deadline is also applied to the UDP socket. If context cancellation
+wins the read race, `net.ErrClosed` counts as negative evidence only when this
+DNS operation's own deadline expired and its parent is still live. A sent query,
+zero response bytes and no matching helper-forwarded tuple remain mandatory.
+
 Private reports retain the prompts' times and actual windows, independent
 snapshots, local VPN name/index and routes, exact DNS tuples/replies, public
 connection records and the unchanged capture identity. The API does not expose
@@ -912,6 +931,28 @@ reports only a verified external VPN change, active controls and cleanup remain
 separate results: inspect the differences, then explicitly
 `rebaseline --label vpn-rebuilt --accept-external-change` while stopped before
 uninstall. No automatic baseline adoption or route repair is allowed.
+
+If the test ends with the VPN disconnected, keep Pith stopped and ask the user
+to restore the VPN before the final baseline comparison. With the idle helper
+still installed, run `stop` again after restoration to archive fresh cleanup
+evidence. If only independently verified external reconstruction differences
+remain, review them and explicitly rebaseline as above, then uninstall once.
+Do not rerun capture to repair or conceal a failed test.
+
+If uninstall already removed the helper while the VPN was still down, do not
+repeat authorization. After the user restores the VPN, repeat only verification:
+
+```sh
+"$PITH_TEST_BIN/rootcheck" verify-uninstalled --session "$PITH_SESSION"
+```
+
+This reads system state, archives the snapshot privately, and verifies all five
+managed paths and the launchd service are absent and the accepted routes/tunnel
+inventory match. It contacts no helper, runs no removal script, and reads no
+credential. Success clears the stale installed/test flags and runs the independent
+process audit. If a rebuilt VPN has a different identity and strict comparison
+still fails after removal, keep the snapshots for independent coordinator review;
+this command does not silently adopt external changes or claim a cleanup pass.
 
 Quad100 is a [device-local service](https://tailscale.com/docs/reference/quad100);
 an [own-name MagicDNS answer](https://tailscale.com/docs/features/magicdns) does

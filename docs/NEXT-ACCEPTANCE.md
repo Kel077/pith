@@ -360,6 +360,16 @@ No agent invokes the VPN CLI, operates its menu, updates it or scans peers.
 Use the separately reviewed 120-second full-profile installation and pass ordinary
 TCP smoke first. `check --vpn-restart` then permits exactly one manual transition.
 
+The first hardware run with `b8f8dee` passed preparation, installation, TCP smoke
+and connected DNS/public controls, then ended incomplete: an unanswered withdrawal
+query hit its own two-second deadline, but the cancellation callback closed the
+UDP socket before its read timeout. `net.ErrClosed` was incorrectly rejected.
+The fix recognizes only that operation's own deadline, retains the raw socket
+error, and has real loopback UDP coverage for both read-timeout and close races.
+Parent cancellation or an unrelated close cannot satisfy the negative control.
+Capture stopped promptly; independent checks found no owned routes or tunnel.
+The complete disconnect/reconnect stage still needs a successful repeat.
+
 READY allows up to 45 seconds for observed withdrawal. The user keeps the VPN off
 about 15 seconds before reconnecting; require at least ten observed seconds for
 the bounded negative DNS and positive public controls. RECONNECT permits up to
@@ -368,6 +378,16 @@ the 110-second controller deadline. Early reconnect, timeout or insufficient
 evidence is incomplete, followed by safe Stop. RESTORED reports active controls,
 not final cleanup. An external-only changed VPN identity still requires explicit
 review/rebaseline while stopped, never automatic baseline adoption.
+
+Any error after READY also prints `RECONNECT: test ended; turn the VPN back on now`
+once, without waiting or delaying Stop. If the user has not restored the VPN,
+do that before final baseline verification. While the helper remains idle, repeat
+`stop`, review external-only differences and explicitly rebaseline if necessary,
+then uninstall. If removal already completed but comparison failed with the VPN
+down, use `verify-uninstalled --session ...` after restoration: it rechecks absence
+and the strict accepted baseline without another authorization or helper call.
+Changed external identities still need independent review; they are never adopted
+automatically after removal. See the full recovery procedure in ROOT-TEST.md.
 
 This implemented subset samples capture identity/state and independent routing,
 checks physical-rule and system public exits, and repeats own-name DNS before,

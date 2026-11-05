@@ -271,6 +271,11 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 	// The helper's immutable test lease is the final bound if this process
 	// is killed before its deferred Stop can run.
 	defer func() {
+		defer func() {
+			if opts.vpnRestart && resultErr != nil {
+				remindVPNReconnect(report.VPNRestart, *ops.vpn)
+			}
+		}()
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cleanupCancel()
 		record, cleanupErr := collectCleanup(cleanupCtx, s, c, ops, "check")
@@ -301,6 +306,9 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 			report.StopError = cleanupErr.Error()
 		}
 		resultErr = errors.Join(resultErr, cleanupErr)
+		if opts.vpnRestart && resultErr != nil {
+			remindVPNReconnect(report.VPNRestart, *ops.vpn)
+		}
 		report.Finished = time.Now()
 		if resultErr != nil {
 			report.Error = resultErr.Error()
