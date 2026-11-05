@@ -277,6 +277,11 @@ type Status struct {
 	// successful preparation and after a helper restart. This is historical
 	// ownership evidence, not proof that capture is active or cleanup succeeded.
 	LastCapture *CaptureIdentity `json:"lastCapture,omitempty"`
+	// RouteDiagnostics retains at most 32 address-free technical summaries from
+	// the latest capture attempt, including after Stop or startup failure. Entries
+	// describe unusual routing messages (type, flags, index, address formats), not
+	// packet contents or interface names. Cleared at Start and helper restart.
+	RouteDiagnostics []string `json:"routeDiagnostics,omitempty"`
 
 	Open        int    `json:"open"`        // connections open now
 	Sent        uint64 `json:"sent"`        // bytes since Since
