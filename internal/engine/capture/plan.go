@@ -35,12 +35,17 @@ func SystemInterface(routes []Route, address netip.Addr) string {
 	name := ""
 	address = address.WithZone("").Unmap()
 	for _, r := range routes {
-		if r.Scoped || r.Local || r.Reject || r.Interface == "" || !r.Prefix.Contains(address) {
+		if r.Scoped || !r.Prefix.Contains(address) {
 			continue
 		}
 		if r.Prefix.Bits() > best {
 			best = r.Prefix.Bits()
 			name = r.Interface
+			// A more specific rejected/local route must not become permission to
+			// send an unmatched connection through the broader default route.
+			if r.Reject || r.Local {
+				name = ""
+			}
 		}
 	}
 	return name

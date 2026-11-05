@@ -75,6 +75,23 @@ func TestRouteConflictsAndVPNDefault(t *testing.T) {
 	}
 }
 
+func TestSystemRoutePreservesRejectAndLocalDestinations(t *testing.T) {
+	for _, terminal := range []Route{
+		{Prefix: prefix("198.51.100.0/24"), Interface: "lo0", Reject: true},
+		{Prefix: prefix("198.51.100.10/32"), Interface: "lo0", Local: true},
+		{Prefix: prefix("198.51.100.0/24")},
+	} {
+		for _, routes := range [][]Route{append(baseRoutes(), terminal), append([]Route{terminal}, baseRoutes()...)} {
+			if got := SystemInterface(routes, addr("198.51.100.10")); got != "" {
+				t.Fatalf("terminal route escaped through %s", got)
+			}
+			if got := SystemInterface(routes, addr("203.0.113.10")); got != "en0" {
+				t.Fatalf("unrelated route changed to %s", got)
+			}
+		}
+	}
+}
+
 func TestEmergencyRecoveryRefusesLiveOwnerAndPreservesReusedName(t *testing.T) {
 	driver := &fakeDriver{routes: baseRoutes()}
 	path := filepath.Join(t.TempDir(), "capture.json")
