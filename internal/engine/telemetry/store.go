@@ -34,6 +34,7 @@ type Store struct {
 	open                   int
 	sent, received         uint64
 	seconds, minutes, days map[int64]*bucket
+	quarters               map[int64]*bucket
 	trafficDirty           bool
 	lastTrafficWrite       time.Time
 	lastPrune              time.Time
@@ -48,6 +49,7 @@ func Open(opts Options) (*Store, error) {
 		opts.Limit = 5000
 	}
 	s := &Store{opts: opts, now: time.Now, next: uint64(time.Now().UnixNano()), records: make(map[uint64]*record), seconds: make(map[int64]*bucket), minutes: make(map[int64]*bucket), days: make(map[int64]*bucket)}
+	s.quarters = make(map[int64]*bucket)
 	s.secondsSince = s.now()
 	if opts.Dir != "" {
 		if err := s.load(); err != nil {

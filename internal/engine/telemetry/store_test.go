@@ -233,6 +233,55 @@ func TestConcurrentCountersAndQueries(t *testing.T) {
 	}
 }
 
+func TestSeriesAlignsToSinceAndLocalDSTWeek(t *testing.T) {
+	s, now := testStore(t, Options{})
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	s.secondsSince = base.Add(-time.Hour)
+	for _, offset := range []time.Duration{5 * time.Second, 22 * time.Second, 24 * time.Second} {
+		*now = base.Add(offset)
+		id := s.Add(fixture())
+		s.AddBytes(id, 1, 0)
+		s.End(id, "")
+	}
+	*now = base.Add(time.Minute)
+	since := base.Add(3 * time.Second)
+	traffic := s.Traffic(api.TrafficQuery{Since: since, Step: 20 * time.Second})
+	if len(traffic.Series) != 2 || !traffic.Series[0].At.Equal(since) || traffic.Series[0].Sent != 2 || !traffic.Series[1].At.Equal(since.Add(20*time.Second)) || traffic.Series[1].Sent != 1 {
+		t.Fatal("UTC-aligned instead of query-aligned", traffic.Series)
+	}
+	zone, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, now = testStore(t, Options{})
+	// US fall-back on Nov 1 gives this local-calendar week 169 hours.
+	start := time.Date(2026, 10, 29, 0, 0, 0, 0, zone)
+	end := start.AddDate(0, 0, 7)
+	s.secondsSince = start
+	for at := start; at.Before(end); at = at.Add(15 * time.Minute) {
+		*now = at
+		id := s.Add(fixture())
+		s.AddBytes(id, 1, 0)
+		s.End(id, "")
+	}
+	*now = end
+	traffic = s.Traffic(api.TrafficQuery{Since: start, Step: time.Hour})
+	if len(traffic.Series) != 169 || traffic.Apps[0].Sent != 676 {
+		t.Fatalf("DST week lost quarter-hours: %d %+v", len(traffic.Series), traffic.Apps)
+	}
+	for k, p := range traffic.Series {
+		if !p.At.Equal(start.Add(time.Duration(k)*time.Hour)) || p.Sent != 4 {
+			t.Fatalf("misaligned local week sample %d: %+v", k, p)
+		}
+	}
+	// Persistence keeps quarters, so a restart still answers the complete week.
+	s.seconds = make(map[int64]*bucket)
+	traffic = s.Traffic(api.TrafficQuery{Since: start, Step: time.Hour})
+	if len(traffic.Series) != 169 || traffic.Apps[0].Sent != 676 {
+		t.Fatal("week depends on ephemeral second buckets")
+	}
+}
+
 func BenchmarkRecentTraffic(b *testing.B) {
 	s, err := Open(Options{})
 	if err != nil {

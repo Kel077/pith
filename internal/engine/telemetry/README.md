@@ -15,11 +15,14 @@ pending ring before oldest records are discarded; aggregate traffic is retained.
 Clearing the log hides existing active entries while their traffic keeps counting.
 
 Traffic is independent of connection-log retention: ten minutes of seconds in
-memory, 24 hours of minutes and five years of daily totals on disk, per app and
-interface. `traffic.json` is atomically replaced and synchronized every fifteen
+memory, 24 hours of minutes, nine days of fifteen-minute buckets, and five years
+of daily totals on disk, per app and interface. `traffic.json` is atomically
+replaced and synchronized every fifteen
 seconds while dirty and on a forced flush. Queries subtract overlapping finer
-buckets, including after a restart. Recent UI queries retain second resolution;
-older results report their actual coarse boundary in `Traffic.Since`.
+buckets, including after a restart. Samples start at `Since + k*Step` and sum
+stored buckets whose timestamps fall in that interval. Explicit `Since` is
+preserved. Week queries use sub-hour buckets; the UI groups hourly samples into
+local calendar days, including 23- and 25-hour days at daylight-saving changes.
 
 Persistent data requires a private directory owned by the helper's effective
 UID. Data files are mode 0600 and opened without following symlinks; non-regular

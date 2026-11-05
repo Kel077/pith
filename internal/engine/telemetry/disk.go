@@ -17,10 +17,11 @@ import (
 )
 
 type persisted struct {
-	Version int               `json:"version"`
-	LogDays int               `json:"logDays"`
-	Minutes map[int64]*bucket `json:"minutes"`
-	Days    map[int64]*bucket `json:"days"`
+	Version  int               `json:"version"`
+	LogDays  int               `json:"logDays"`
+	Minutes  map[int64]*bucket `json:"minutes"`
+	Quarters map[int64]*bucket `json:"quarters"`
+	Days     map[int64]*bucket `json:"days"`
 }
 
 func (s *Store) openFile(name string, flags int) (*os.File, error) {
@@ -72,7 +73,10 @@ func (s *Store) load() error {
 		if state.Days != nil {
 			s.days = state.Days
 		}
-		for _, level := range []map[int64]*bucket{s.minutes, s.days} {
+		if state.Quarters != nil {
+			s.quarters = state.Quarters
+		}
+		for _, level := range []map[int64]*bucket{s.minutes, s.quarters, s.days} {
 			for at, b := range level {
 				if b == nil || b.At != at || b.Apps == nil || b.Interfaces == nil {
 					return fmt.Errorf("invalid traffic bucket")
@@ -255,7 +259,7 @@ func (s *Store) writeTraffic() error {
 		return err
 	}
 	defer os.Remove(f.Name())
-	state := persisted{Version: 1, LogDays: s.opts.LogDays, Minutes: s.minutes, Days: s.days}
+	state := persisted{Version: 1, LogDays: s.opts.LogDays, Minutes: s.minutes, Quarters: s.quarters, Days: s.days}
 	if err := json.NewEncoder(f).Encode(state); err != nil {
 		f.Close()
 		return err

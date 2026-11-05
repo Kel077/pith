@@ -8,9 +8,10 @@ import (
 )
 
 const (
-	secondRetention = 10 * time.Minute
-	minuteRetention = 24 * time.Hour
-	dayRetention    = 5 * 365 * 24 * time.Hour
+	secondRetention  = 10 * time.Minute
+	minuteRetention  = 24 * time.Hour
+	quarterRetention = 9 * 24 * time.Hour
+	dayRetention     = 5 * 365 * 24 * time.Hour
 )
 
 type bucket struct {
@@ -30,7 +31,7 @@ func (s *Store) metric(app api.AppRef, iface string, sent, received uint64, conn
 	for _, level := range []struct {
 		buckets map[int64]*bucket
 		step    time.Duration
-	}{{s.seconds, time.Second}, {s.minutes, time.Minute}, {s.days, 24 * time.Hour}} {
+	}{{s.seconds, time.Second}, {s.minutes, time.Minute}, {s.quarters, 15 * time.Minute}, {s.days, 24 * time.Hour}} {
 		at := now.UTC().Truncate(level.step).Unix()
 		b := level.buckets[at]
 		if b == nil {
@@ -59,7 +60,7 @@ func (s *Store) pruneBuckets(now time.Time) {
 	for _, level := range []struct {
 		buckets map[int64]*bucket
 		keep    time.Duration
-	}{{s.seconds, secondRetention}, {s.minutes, minuteRetention}, {s.days, dayRetention}} {
+	}{{s.seconds, secondRetention}, {s.minutes, minuteRetention}, {s.quarters, quarterRetention}, {s.days, dayRetention}} {
 		cut := now.Add(-level.keep).Unix()
 		for at := range level.buckets {
 			if at < cut {
@@ -96,10 +97,9 @@ func subtract(whole, part *bucket) {
 	}
 }
 
-// Traffic uses disjoint residual buckets: days minus retained minutes, minutes
-// minus retained seconds, and seconds. This avoids double-counting at retention
-// boundaries and after a helper restart. Since reflects the actual coarser
-// boundary when historical data can no longer answer at second resolution.
+// Traffic uses disjoint residual buckets: days minus quarters, quarters minus
+// minutes, minutes minus seconds, and seconds. Query intervals start at Since;
+// a coarser bucket is included only when its timestamp falls in an interval.
 func (s *Store) Traffic(q api.TrafficQuery) api.Traffic {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -108,20 +108,29 @@ func (s *Store) Traffic(q api.TrafficQuery) api.Traffic {
 		b   *bucket
 		end int64
 	}
-	days, minutes := make(map[int64]atom), make(map[int64]atom)
+	days, quarters, minutes := make(map[int64]atom), make(map[int64]atom), make(map[int64]atom)
 	// The UI's one-second polling never needs to clone historical buckets.
 	recent := !q.Since.IsZero() && !q.Since.Before(s.secondsSince) && !q.Since.Before(s.now().Add(-secondRetention))
 	if !recent {
 		for at, b := range s.days {
 			days[at] = atom{copyBucket(b), at + 86400}
 		}
-		for at, b := range s.minutes {
-			minutes[at] = atom{copyBucket(b), at + 60}
+		for at, b := range s.quarters {
+			quarters[at] = atom{copyBucket(b), at + 900}
 			day := time.Unix(at, 0).UTC().Truncate(24 * time.Hour).Unix()
 			if a, ok := days[day]; ok {
 				subtract(a.b, b)
 				a.end = min(a.end, at)
 				days[day] = a
+			}
+		}
+		for at, b := range s.minutes {
+			minutes[at] = atom{copyBucket(b), at + 60}
+			quarter := time.Unix(at, 0).UTC().Truncate(15 * time.Minute).Unix()
+			if a, ok := quarters[quarter]; ok {
+				subtract(a.b, b)
+				a.end = min(a.end, at)
+				quarters[quarter] = a
 			}
 		}
 		for at, b := range s.seconds {
@@ -142,12 +151,13 @@ func (s *Store) Traffic(q api.TrafficQuery) api.Traffic {
 	}
 	series := make(map[sampleKey]api.TrafficSample)
 	step := q.Step
-	if step > 0 && step < time.Second {
-		step = time.Second
+	anchor := q.Since
+	if anchor.IsZero() {
+		anchor = time.Unix(0, 0).UTC()
 	}
 	add := func(a atom) {
 		at := time.Unix(a.b.At, 0).UTC()
-		if !q.Since.IsZero() && !time.Unix(a.end, 0).After(q.Since) {
+		if !q.Since.IsZero() && (at.Before(q.Since) || !time.Unix(a.end, 0).After(q.Since)) {
 			return
 		}
 		hasData := false
@@ -174,7 +184,8 @@ func (s *Store) Traffic(q api.TrafficQuery) api.Traffic {
 			p.Received += v.Received
 			interfaces[key] = p
 			if step > 0 {
-				k := sampleKey{at.Truncate(step).UnixNano(), key}
+				sampleAt := anchor.Add(at.Sub(anchor) / step * step)
+				k := sampleKey{sampleAt.UnixNano(), key}
 				sample := series[k]
 				sample.At = time.Unix(0, k.at).UTC()
 				sample.Interface = key
@@ -188,6 +199,9 @@ func (s *Store) Traffic(q api.TrafficQuery) api.Traffic {
 		}
 	}
 	for _, a := range days {
+		add(a)
+	}
+	for _, a := range quarters {
 		add(a)
 	}
 	for _, a := range minutes {
