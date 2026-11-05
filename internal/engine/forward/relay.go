@@ -28,13 +28,17 @@ func problem(err error) string {
 }
 
 func (f *Forwarder) tcp(req *tcp.ForwarderRequest) {
+	local, remote := tuple(req.ID())
+	if f.opts.InterceptTCP != nil {
+		f.opts.InterceptTCP(local, remote)
+	}
 	if !f.begin() {
 		req.Complete(true)
 		return
 	}
 	defer f.end()
 	policy := f.opts.Router.Policy()
-	local, remote := tuple(req.ID())
+	f.rememberTCP(local, remote)
 	a, _ := f.opts.Lookup(f.ctx, api.TCP, local, remote)
 	c := api.Connection{Started: time.Now(), App: a.App, Process: a.Process, Protocol: api.TCP, Remote: remote.String(), Domain: f.cache.Lookup(remote.Addr(), time.Now())}
 	// An address/app block can refuse the SYN without accepting the connection.

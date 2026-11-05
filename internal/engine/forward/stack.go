@@ -38,6 +38,11 @@ type Options struct {
 	MaxFlows int
 	UDPIdle  time.Duration
 	DNSIdle  time.Duration
+	// Existing packets retain their native kernel socket across Start. Packet
+	// runs before netstack; Unknown runs only when it has no transport endpoint.
+	Packet       func([]byte) bool
+	Unknown      func(netip.AddrPort, netip.AddrPort, api.Protocol, []byte) bool
+	InterceptTCP func(netip.AddrPort, netip.AddrPort)
 	// Echo handles validated, reassembled ICMP echo requests. It must copy data
 	// it retains and return quickly. Nil drops echo instead of fabricating replies.
 	Echo func(source, destination netip.Addr, message []byte)
@@ -53,6 +58,7 @@ type Forwarder struct {
 	mu        sync.Mutex
 	closing   bool
 	active    int
+	seenTCP   map[[2]netip.AddrPort]struct{}
 	flows     sync.WaitGroup
 	io        sync.WaitGroup
 	writeMu   sync.Mutex
@@ -106,8 +112,24 @@ func New(opts Options) (*Forwarder, error) {
 	s.SetRouteTable(routes)
 	ctx, cancel := context.WithCancel(context.Background())
 	f := &Forwarder{opts: opts, stack: s, link: link, cache: domains.NewCache(0), ctx: ctx, cancel: cancel, faults: make(chan error, 1)}
-	s.SetTransportProtocolHandler(tcp.ProtocolNumber, tcp.NewForwarder(s, 0, 1024, f.tcp).HandlePacket)
-	s.SetTransportProtocolHandler(udp.ProtocolNumber, udp.NewForwarder(s, f.udp).HandlePacket)
+	f.seenTCP = make(map[[2]netip.AddrPort]struct{})
+	tcpForward := tcp.NewForwarder(s, 0, 1024, f.tcp)
+	udpForward := udp.NewForwarder(s, f.udp)
+	legacy := func(id stack.TransportEndpointID, pkt *stack.PacketBuffer, proto api.Protocol) bool {
+		if opts.Unknown == nil {
+			return false
+		}
+		local, remote := tuple(id)
+		data := stack.PayloadSince(pkt.TransportHeader())
+		defer data.Release()
+		return opts.Unknown(local, remote, proto, data.AsSlice())
+	}
+	s.SetTransportProtocolHandler(tcp.ProtocolNumber, func(id stack.TransportEndpointID, pkt *stack.PacketBuffer) bool {
+		return tcpForward.HandlePacket(id, pkt) || legacy(id, pkt, api.TCP)
+	})
+	s.SetTransportProtocolHandler(udp.ProtocolNumber, func(id stack.TransportEndpointID, pkt *stack.PacketBuffer) bool {
+		return legacy(id, pkt, api.UDP) || udpForward.HandlePacket(id, pkt)
+	})
 	consumeICMP := func(id stack.TransportEndpointID, pkt *stack.PacketBuffer) bool {
 		message := stack.PayloadSince(pkt.TransportHeader())
 		defer message.Release()
@@ -148,6 +170,24 @@ func (f *Forwarder) begin() bool {
 }
 func (f *Forwarder) end() { f.mu.Lock(); f.active--; f.mu.Unlock(); f.flows.Done() }
 
+// SawTCP lets SafeStart prove its exact native socket crossed the tunnel. The
+// bounded recent set is diagnostic only and never influences routing policy.
+func (f *Forwarder) SawTCP(local, remote netip.AddrPort) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, ok := f.seenTCP[[2]netip.AddrPort{local, remote}]
+	return ok
+}
+
+func (f *Forwarder) rememberTCP(local, remote netip.AddrPort) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.seenTCP) >= 4096 {
+		clear(f.seenTCP)
+	}
+	f.seenTCP[[2]netip.AddrPort{local, remote}] = struct{}{}
+}
+
 func tuple(id stack.TransportEndpointID) (local, remote netip.AddrPort) {
 	a, _ := netip.AddrFromSlice(id.RemoteAddress.AsSlice())
 	b, _ := netip.AddrFromSlice(id.LocalAddress.AsSlice())
@@ -168,6 +208,9 @@ func (f *Forwarder) read() {
 			continue
 		}
 		p := data[4 : 4+sizes[0]]
+		if opts := f.opts; opts.Packet != nil && opts.Packet(p) {
+			continue
+		}
 		var proto tcpip.NetworkProtocolNumber
 		switch p[0] >> 4 {
 		case 4:
