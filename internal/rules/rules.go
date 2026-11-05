@@ -3,7 +3,6 @@ package rules
 
 import (
 	"fmt"
-	"net"
 	"net/netip"
 	"path/filepath"
 	"slices"
@@ -154,26 +153,11 @@ func MatchApp(ref, app api.AppRef, processPath string) bool {
 	return false
 }
 
-// ResolveInterface treats the hardware address as the identity when supplied.
-// A missing adapter must not silently become a different one reusing its name.
+// ResolveInterface shares the API's exact name/MAC and unique-MAC semantics,
+// including bridges and adapter ports that share a hardware address.
 func ResolveInterface(ref api.InterfaceRef, interfaces []api.Interface) (api.Interface, bool) {
-	if ref.HardwareAddr != "" {
-		want, err := net.ParseMAC(ref.HardwareAddr)
-		if err != nil {
-			return api.Interface{}, false
-		}
-		for _, iface := range interfaces {
-			have, err := net.ParseMAC(iface.HardwareAddr)
-			if err == nil && slices.Equal(want, have) {
-				return iface, true
-			}
-		}
-		return api.Interface{}, false
-	}
-	for _, iface := range interfaces {
-		if iface.Name == ref.Name {
-			return iface, true
-		}
+	if iface := ref.Resolve(interfaces); iface != nil {
+		return *iface, true
 	}
 	return api.Interface{}, false
 }
