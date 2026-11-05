@@ -162,8 +162,9 @@ func (s *session) cleanupBinding() string {
 		Ownership                                                     captureHistory
 		DNSPlanSHA256                                                 string `json:",omitempty"`
 		QUICPlanSHA256                                                string `json:",omitempty"`
+		BundlePlanSHA256                                              string `json:",omitempty"`
 	}{s.Dir, s.Helper, s.HelperSHA256, s.InstallScriptSHA256, s.Version,
-		s.Target, s.ServerName, s.DNSTarget, s.baselineDigest(), s.UID, s.Installation, s.Ownership, s.DNSPlanSHA256, s.QUICPlanSHA256})
+		s.Target, s.ServerName, s.DNSTarget, s.baselineDigest(), s.UID, s.Installation, s.Ownership, s.DNSPlanSHA256, s.QUICPlanSHA256, s.BundlePlanSHA256})
 	return hashBytes(data)
 }
 
@@ -477,6 +478,7 @@ func rebaselineWithOps(parent context.Context, s *session, c api.Service, label 
 	next.SmokePassed, next.Cleanup = false, nil
 	next.DNSPassed = false
 	next.QUICPassed = false
+	next.BundlePassed = false
 	if err := ops.save(&next); err != nil {
 		return err
 	}

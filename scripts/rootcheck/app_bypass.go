@@ -34,6 +34,7 @@ type appCase struct {
 	Executable    string
 	ExpectedIP    string
 	RequireDomain bool
+	ExpectedApp   *api.AppRef
 	Request       proofRequest
 }
 
@@ -174,7 +175,22 @@ func runAppCase(ctx context.Context, s *session, c api.Service, cfg api.Config, 
 				continue
 			}
 			entry.Connection = conn
-			if conn.Process.Path != test.Executable || conn.App.Path != test.Executable {
+			app := api.AppRef{Path: test.Executable}
+			if test.ExpectedApp != nil {
+				app = *test.ExpectedApp
+				if proof.TLS.Local == "" || conn.Local != proof.TLS.Local {
+					return false, errors.New("bundle connection does not match the request's application socket tuple")
+				}
+				if expectSuccess {
+					local, err := netip.ParseAddrPort(conn.OutboundLocal)
+					if err != nil || local.Addr().IsUnspecified() || local.Port() == 0 {
+						return false, errors.New("successful bundle request has no outbound socket tuple")
+					}
+				} else if conn.OutboundLocal != "" {
+					return false, errors.New("blocked bundle request unexpectedly opened an outbound socket")
+				}
+			}
+			if conn.Process.Path != test.Executable || conn.App.Path != app.Path || conn.App.BundleID != app.BundleID {
 				return false, errors.New("connection attribution does not match the controlled executable path")
 			}
 			if conn.Outcome != test.Outcome || conn.RuleID != test.RuleID || conn.Interface != test.Interface {
@@ -212,6 +228,17 @@ func runAppCase(ctx context.Context, s *session, c api.Service, cfg api.Config, 
 }
 
 func executablePath() (string, error) {
+	path, err := processExecutablePath()
+	if err != nil {
+		return "", err
+	}
+	if rules.OuterBundle(path) != "" {
+		return "", errors.New("run the standalone rootcheck tool from TMPDIR, outside any application bundle")
+	}
+	return path, nil
+}
+
+func processExecutablePath() (string, error) {
 	path, err := os.Executable()
 	if err != nil {
 		return "", err
@@ -220,8 +247,8 @@ func executablePath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !filepath.IsAbs(path) || rules.OuterBundle(path) != "" {
-		return "", errors.New("run the standalone rootcheck tool from TMPDIR, outside any application bundle")
+	if !filepath.IsAbs(path) {
+		return "", errors.New("request executable path is not absolute")
 	}
 	return path, nil
 }

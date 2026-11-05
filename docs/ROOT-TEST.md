@@ -136,6 +136,7 @@ mode-0600 files include:
 | `preflight.json` | Bound/unbound HTTPS status and public-IP echo, when the endpoint provides one |
 | `dns-plan.json` | Optional frozen resolver endpoints, question name, A/AAAA types, request counts, response/idle bounds and evidence limits; its checksum binds the automatic DNS stage |
 | `quic-plan.json` | Optional frozen HTTP/3 host/certificate name, request/packet/payload budgets and observable/fragmented Initial controls; its checksum binds the QUIC stage |
+| `bundle-plan.json` | Optional standalone tool checksum/size, exact bundle metadata/layout, TLS target and one/six-request smoke/batch limits for disposable bundle fixtures |
 | `install-plan.json`, `install.sh` | Exact scoped launchd arguments, fixed destinations, helper SHA-256 check, rollback, and authorization prompt |
 | `uninstall.sh` | Exact bootout, ownership-checked route cleanup, and managed-path removal |
 | `emergency-command.txt` | A standalone, single command that can be pasted into Terminal without IPC or the test executable |
@@ -500,6 +501,56 @@ The acceptance tool uses MIT-licensed
 `ClientConn.RoundTrip` avoids the general transport's retry branch; see the
 [HTTP/3 client API](https://quic-go.net/docs/http3/client/) and
 [pinned transport implementation](https://github.com/quic-go/quic-go/blob/v0.63.0/http3/transport.go).
+
+## Disposable application bundle stage
+
+Add `--app-bundle` to a new `host-ipv4` preparation. It freezes this standalone
+rootcheck executable's checksum and size, the existing TLS endpoint, both
+Info.plists and the relative fixture layout in `bundle-plan.json`. No app is
+launched during preparation and no capture prefix is added. The ordinary TLS
+preflights must provide public-IP echoes for A and the system path, as for
+app-bypass; drift is supplementary evidence under the same policy.
+
+After reviewing the private plan, installing and passing default TCP smoke:
+
+```sh
+"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --app-bundle
+"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --app-bundle-batch
+```
+
+The first command makes one main-executable request through A. Only a successful
+smoke with verified cleanup enables the six-case batch: nested helper under the
+parent IP rule, outside control under that rule, main and helper under the parent
+identifier/domain rule, helper under block priority, and the outside control
+under that block. The path-only and identifier-only controls are distinct; the
+latter names a nonexistent relocated app path but the real parent's identifier.
+
+Each invocation copies the reviewed pure-Go executable three times beneath a
+fresh mode-0700 `bundle-fixture-*` directory inside the private session: the
+outer app's `Contents/MacOS`, a nested helper app with a deliberately different
+identifier, and a control outside either bundle. Each child makes exactly one
+unbound, certificate-verified TLS request to the frozen literal address, with
+an eight-second total deadline and at most 4 KiB of response data. There is no
+Launch Services registration, XPC activation, shell, authorization dialog or
+browser launch. Both ends verify the source/fixture checksums and metadata.
+
+Proof includes the actual spawned PID/path, application socket tuple (including
+TLS rejection), outermost bundle path/identifier, rule, outcome, interface and
+bytes. Successful routes also require an outbound tuple; blocks require none.
+Each child stays alive for attribution verification until its stdin is closed,
+has a 25-second lifetime, and is waited for on success, rejection and timeout.
+The parent removes only its newly created fixture directory on every ordinary
+return; reports and the source executable remain. If the controller itself is
+killed, EOF/child lifetime still release its processes, but the private fixture
+files may remain for the coordinator to remove with the session.
+
+Default smoke, rebaseline and uninstall clear the bundle smoke gate. The shared
+Stop/cleanup/report path still applies, including after a fixture integrity
+failure. This is bundle containment acceptance, not evidence of XPC launch or
+delegated WebKit sockets. Safari requires its separate reviewed observation;
+background URLSession is explicitly skipped this round. Synthetic policy tests
+and real copied Go protocol children cover preparation, tampering, attribution,
+block priority and process cleanup without accessing a helper or network.
 
 ## Ordered execution
 

@@ -31,26 +31,29 @@ import (
 )
 
 type session struct {
-	Dir             string                 `json:"directory"`
-	UID             int                    `json:"uid"`
-	Helper          string                 `json:"helper"`
-	HelperSHA256    string                 `json:"helperSHA256"`
-	Version         string                 `json:"version"`
-	Target          string                 `json:"target"`
-	ServerName      string                 `json:"serverName"`
-	DNSTarget       string                 `json:"dnsTarget,omitempty"`
-	ExtraDNSTargets []string               `json:"extraDNSTargets,omitempty"`
-	DNSName         string                 `json:"dnsName,omitempty"`
-	DNSPlanSHA256   string                 `json:"dnsPlanSHA256,omitempty"`
-	DNSPassed       bool                   `json:"dnsPassed,omitempty"`
-	QUICTarget      string                 `json:"quicTarget,omitempty"`
-	QUICServerName  string                 `json:"quicServerName,omitempty"`
-	QUICPlanSHA256  string                 `json:"quicPlanSHA256,omitempty"`
-	QUICPassed      bool                   `json:"quicPassed,omitempty"`
-	Interfaces      [2]api.InterfaceRef    `json:"interfaces"`
-	Preflight       []preflight            `json:"preflight"`
-	TestProfile     *testprofile.Profile   `json:"testProfile,omitempty"`
-	SkippedDNS      []capture.DNSExclusion `json:"skippedDNS,omitempty"`
+	Dir              string                 `json:"directory"`
+	UID              int                    `json:"uid"`
+	Helper           string                 `json:"helper"`
+	HelperSHA256     string                 `json:"helperSHA256"`
+	Version          string                 `json:"version"`
+	Target           string                 `json:"target"`
+	ServerName       string                 `json:"serverName"`
+	DNSTarget        string                 `json:"dnsTarget,omitempty"`
+	ExtraDNSTargets  []string               `json:"extraDNSTargets,omitempty"`
+	DNSName          string                 `json:"dnsName,omitempty"`
+	DNSPlanSHA256    string                 `json:"dnsPlanSHA256,omitempty"`
+	DNSPassed        bool                   `json:"dnsPassed,omitempty"`
+	QUICTarget       string                 `json:"quicTarget,omitempty"`
+	QUICServerName   string                 `json:"quicServerName,omitempty"`
+	QUICPlanSHA256   string                 `json:"quicPlanSHA256,omitempty"`
+	QUICPassed       bool                   `json:"quicPassed,omitempty"`
+	Bundle           *bundlePlan            `json:"bundle,omitempty"`
+	BundlePlanSHA256 string                 `json:"bundlePlanSHA256,omitempty"`
+	BundlePassed     bool                   `json:"bundlePassed,omitempty"`
+	Interfaces       [2]api.InterfaceRef    `json:"interfaces"`
+	Preflight        []preflight            `json:"preflight"`
+	TestProfile      *testprofile.Profile   `json:"testProfile,omitempty"`
+	SkippedDNS       []capture.DNSExclusion `json:"skippedDNS,omitempty"`
 	// Original is the active rollback baseline; original.json is never replaced.
 	Original               snapshot        `json:"original"`
 	BaselineLabel          string          `json:"baselineLabel"`
@@ -109,6 +112,7 @@ func prepare(ctx context.Context, args []string) error {
 	fs.StringVar(&s.DNSName, "dns-name", "", "reviewed lowercase DNS question name; enables the explicit UDP/DNS stage")
 	fs.StringVar(&s.QUICTarget, "quic-target", "", "optional reviewed public HTTP/3 IPv4:443")
 	fs.StringVar(&s.QUICServerName, "quic-server-name", "", "reviewed HTTP/3 TLS certificate name")
+	bundle := fs.Bool("app-bundle", false, "freeze a disposable pure-Go app and helper fixture using this rootcheck executable")
 	mode := fs.String("capture-mode", "host-ipv4", "reviewed installation mode: host-ipv4, full-ipv4 or host-ipv6")
 	lease := fs.Duration("test-lease", 0, "profile lease: default/max 120s for full-ipv4, 60s for host-ipv6; minimum 30s")
 	if err := fs.Parse(args); err != nil {
@@ -140,6 +144,9 @@ func prepare(ctx context.Context, args []string) error {
 		return errors.New("capture-mode must be host-ipv4, full-ipv4 or host-ipv6")
 	} else if leaseSpecified {
 		return errors.New("test-lease requires an explicit full-ipv4 or host-ipv6 installation")
+	}
+	if *bundle && s.TestProfile != nil {
+		return errors.New("app-bundle acceptance currently requires host-ipv4")
 	}
 	if _, err := s.scopes(); err != nil {
 		return err
@@ -219,6 +226,11 @@ func prepare(ctx context.Context, args []string) error {
 	}
 	if err := s.save(); err != nil {
 		return err
+	}
+	if *bundle {
+		if err := s.writeBundlePlan(); err != nil {
+			return err
+		}
 	}
 	if err := s.writeDNSPlan(); err != nil {
 		return err

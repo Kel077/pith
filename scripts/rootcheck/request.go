@@ -22,11 +22,12 @@ const requestLifetime = 25 * time.Second
 func requestCommand(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("_request", flag.ContinueOnError)
 	dir := fs.String("session", "", "existing private acceptance session")
+	fixture := fs.String("fixture", "", "private disposable bundle fixture, only for the reviewed bundle stage")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 || *dir == "" {
-		return errors.New("internal request requires only --session DIRECTORY")
+		return errors.New("internal request requires --session DIRECTORY and an optional reviewed --fixture DIRECTORY")
 	}
 	s, err := loadSession(*dir)
 	if err != nil {
@@ -34,17 +35,17 @@ func requestCommand(ctx context.Context, args []string) error {
 	}
 	return serveRequest(ctx, s, os.Stdin, os.Stdout, func(ctx context.Context) (tlsEvidence, error) {
 		return exchangeTLS(ctx, s, "", nil)
-	})
+	}, *fixture)
 }
 
-func serveRequest(parent context.Context, s *session, input io.ReadCloser, output io.Writer, exchange func(context.Context) (tlsEvidence, error)) error {
+func serveRequest(parent context.Context, s *session, input io.ReadCloser, output io.Writer, exchange func(context.Context) (tlsEvidence, error), fixture ...string) error {
 	if !s.Installed || !s.cancellationRecorded() || !s.SmokePassed {
 		return errors.New("internal request requires an installed session with a passed smoke check")
 	}
 	if _, err := s.scopes(); err != nil {
 		return err
 	}
-	path, err := executablePath()
+	path, err := requestExecutable(s, fixture)
 	if err != nil {
 		return err
 	}
@@ -71,6 +72,27 @@ func serveRequest(parent context.Context, s *session, input io.ReadCloser, outpu
 		return err
 	}
 	return nil
+}
+
+func requestExecutable(s *session, fixture []string) (string, error) {
+	if len(fixture) == 0 || fixture[0] == "" {
+		return executablePath()
+	}
+	if err := s.reviewedBundlePlan(); err != nil {
+		return "", err
+	}
+	f, err := verifyBundleFixture(s, fixture[0])
+	if err != nil {
+		return "", err
+	}
+	path, err := processExecutablePath()
+	if err != nil {
+		return "", err
+	}
+	if path != f.Main && path != f.Helper && path != f.Control {
+		return "", errors.New("request process is not one of the reviewed fixture executables")
+	}
+	return path, nil
 }
 
 // childCommand permits a mock protocol process in tests. Production always

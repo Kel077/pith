@@ -23,21 +23,24 @@ import (
 )
 
 type checkOptions struct {
-	batch        bool
-	safeFailure  bool
-	preserve     bool
-	appBypass    bool
-	crash        bool
-	auth         authorization
-	observe      time.Duration
-	renewHotspot bool
-	udpDNS       bool
-	udpDNSBatch  bool
-	quic         bool
-	quicBatch    bool
+	batch          bool
+	safeFailure    bool
+	preserve       bool
+	appBypass      bool
+	crash          bool
+	auth           authorization
+	observe        time.Duration
+	renewHotspot   bool
+	udpDNS         bool
+	udpDNSBatch    bool
+	quic           bool
+	quicBatch      bool
+	appBundle      bool
+	appBundleBatch bool
 }
 
 type tlsEvidence struct {
+	Local      string `json:"local,omitempty"`
 	StatusCode int    `json:"statusCode"`
 	BodyBytes  int    `json:"bodyBytes"`
 	PublicIP   string `json:"publicIP,omitempty"`
@@ -96,13 +99,13 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		return errors.New("check requires recorded cancellation or a managed skip, and this session's reviewed installation")
 	}
 	choices := 0
-	for _, selected := range []bool{opts.batch, opts.safeFailure, opts.preserve, opts.appBypass, opts.crash, opts.observe != 0, opts.udpDNS, opts.udpDNSBatch, opts.quic, opts.quicBatch} {
+	for _, selected := range []bool{opts.batch, opts.safeFailure, opts.preserve, opts.appBypass, opts.crash, opts.observe != 0, opts.udpDNS, opts.udpDNSBatch, opts.quic, opts.quicBatch, opts.appBundle, opts.appBundleBatch} {
 		if selected {
 			choices++
 		}
 	}
 	if choices > 1 || opts.observe < 0 || opts.observe > 90*time.Second {
-		return errors.New("choose one check mode: batch, safe-failure, preserve, app-bypass, crash, udp-dns, udp-dns-batch, quic, quic-batch, or observe with a duration in (0,90s]")
+		return errors.New("choose one check mode: batch, safe-failure, preserve, app-bypass, crash, udp-dns, udp-dns-batch, quic, quic-batch, app-bundle, app-bundle-batch, or observe with a duration in (0,90s]")
 	}
 	if opts.renewHotspot && opts.observe == 0 {
 		return errors.New("--renew-hotspot requires an explicit --observe duration")
@@ -129,7 +132,15 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 			return errors.New("run --quic successfully before --quic-batch")
 		}
 	}
-	if opts.appBypass || opts.renewHotspot {
+	if opts.appBundle || opts.appBundleBatch {
+		if err := s.reviewedBundlePlan(); err != nil {
+			return err
+		}
+		if opts.appBundleBatch && !s.BundlePassed {
+			return errors.New("run --app-bundle successfully before --app-bundle-batch")
+		}
+	}
+	if opts.appBypass || opts.renewHotspot || opts.appBundle || opts.appBundleBatch {
 		if err := appBypassPreflight(s); err != nil {
 			return err
 		}
@@ -160,6 +171,10 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		report.Mode = "quic"
 	} else if opts.quicBatch {
 		report.Mode = "quic-batch"
+	} else if opts.appBundle {
+		report.Mode = "app-bundle"
+	} else if opts.appBundleBatch {
+		report.Mode = "app-bundle-batch"
 	} else if opts.safeFailure {
 		report.Mode = "safe-failure"
 	} else if opts.preserve {
@@ -202,6 +217,9 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 	}
 	if choices == 0 || opts.quic {
 		s.QUICPassed = false
+	}
+	if choices == 0 || opts.appBundle {
+		s.BundlePassed = false
 	}
 	// Read-only admission failures preserve the last cleanup proof, so an
 	// approved mode switch followed by an accidental check can still rebaseline.
@@ -248,6 +266,9 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		}
 		if resultErr == nil && opts.quic {
 			s.QUICPassed = true
+		}
+		if resultErr == nil && opts.appBundle {
+			s.BundlePassed = true
 		}
 		// A test assertion and cleanup are separate results. A failed case must
 		// stay failed, but verified rollback remains valid evidence for rebaseline.
@@ -419,6 +440,12 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		}
 		return collectTraffic(ctx, c, &report)
 	}
+	if opts.appBundle || opts.appBundleBatch {
+		if err := runBundleChecks(ctx, s, c, cfg, status, system, &report, opts.appBundleBatch); err != nil {
+			return err
+		}
+		return collectTraffic(ctx, c, &report)
+	}
 	if opts.crash {
 		err := crashCapture(ctx, s, c, opts.auth, ops)
 		entry := checkCase{Name: "crash removes owned capture and helper restarts idle"}
@@ -562,6 +589,10 @@ func collectTraffic(ctx context.Context, c api.Service, report *checkReport) err
 }
 
 func connectTLS(ctx context.Context, s *session, iface string) (*tls.Conn, error) {
+	return connectTLSObserved(ctx, s, iface, nil)
+}
+
+func connectTLSObserved(ctx context.Context, s *session, iface string, local func(string)) (*tls.Conn, error) {
 	probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	dialer, err := netif.Dialer(iface, 3*time.Second, nil)
@@ -572,6 +603,9 @@ func connectTLS(ctx context.Context, s *session, iface string) (*tls.Conn, error
 	if err != nil {
 		return nil, err
 	}
+	if local != nil {
+		local(conn.LocalAddr().String())
+	}
 	tlsConn := tls.Client(conn, &tls.Config{ServerName: s.ServerName, MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}})
 	if err := tlsConn.HandshakeContext(probeCtx); err != nil {
 		tlsConn.Close()
@@ -581,15 +615,18 @@ func connectTLS(ctx context.Context, s *session, iface string) (*tls.Conn, error
 }
 
 func exchangeTLS(ctx context.Context, s *session, iface string, conn *tls.Conn) (tlsEvidence, error) {
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
 	var result tlsEvidence
 	var err error
 	if conn == nil {
-		conn, err = connectTLS(ctx, s, iface)
+		conn, err = connectTLSObserved(ctx, s, iface, func(local string) { result.Local = local })
 		if err != nil {
 			return result, err
 		}
 	}
 	defer conn.Close()
+	result.Local = conn.LocalAddr().String()
 	stopCancel := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stopCancel()
 	if err := conn.SetDeadline(time.Now().Add(8 * time.Second)); err != nil {

@@ -26,6 +26,7 @@ type proofService struct {
 	saved   []api.Config
 	mutate  func(*api.Connection, *requestProof)
 	closed  int
+	capture *api.CaptureIdentity
 }
 
 func (m *proofService) SaveConfig(_ context.Context, cfg api.Config) error {
@@ -46,17 +47,20 @@ func (m *proofService) Connections(context.Context, api.ConnectionQuery) ([]api.
 }
 
 func (m *proofService) Status(context.Context) (api.Status, error) {
-	return api.Status{State: api.Running, Since: m.since}, nil
+	return api.Status{State: api.Running, Since: m.since, LastCapture: m.capture}, nil
 }
 
 func (m *proofService) requester(path string, pid int) proofRequest {
+	return m.requesterWithApp(path, pid, api.AppRef{Path: path})
+}
+
+func (m *proofService) requesterWithApp(path string, pid int, app api.AppRef) proofRequest {
 	return func(context.Context) (requestProof, func() error, error) {
 		set, err := rules.New(m.cfg.Scenes[0])
 		if err != nil {
 			return requestProof{}, nil, err
 		}
 		address, _ := netip.ParseAddrPort(m.session.Target)
-		app := api.AppRef{Path: path}
 		process := api.Process{PID: pid, Path: path}
 		decision := set.Match(rules.Flow{App: app, Process: process, Address: address.Addr(), Domain: m.session.ServerName, Protocol: api.TCP})
 		outcome, iface := decision.Predict(m.session.Original.Interfaces)
@@ -64,10 +68,12 @@ func (m *proofService) requester(path string, pid int) proofRequest {
 		if outcome == api.System {
 			iface, publicIP = "utun42", m.session.baselineIP("")
 		}
-		proof := requestProof{PID: pid, Executable: path, Target: m.session.Target, TLS: tlsEvidence{StatusCode: 200, BodyBytes: len(publicIP), PublicIP: publicIP}}
-		conn := api.Connection{ID: uint64(len(m.logs) + 1), Started: time.Now(), Ended: time.Now(), App: app, Process: process, Protocol: api.TCP, Remote: m.session.Target, Domain: m.session.ServerName, RuleID: decision.RuleID, Outcome: outcome, Interface: iface, Sent: 300, Received: 500}
+		proof := requestProof{PID: pid, Executable: path, Target: m.session.Target, TLS: tlsEvidence{Local: "192.0.2.10:50000", StatusCode: 200, BodyBytes: len(publicIP), PublicIP: publicIP}}
+		conn := api.Connection{ID: uint64(len(m.logs) + 1), Started: time.Now(), Ended: time.Now(), App: app, Process: process, Protocol: api.TCP, Local: proof.TLS.Local, Remote: m.session.Target, Domain: m.session.ServerName, RuleID: decision.RuleID, Outcome: outcome, Interface: iface, Sent: 300, Received: 500}
+		conn.OutboundLocal = "198.51.100.10:50001"
 		if outcome == api.Blocked {
-			proof.Problem, proof.TLS = "blocked test request", tlsEvidence{}
+			conn.OutboundLocal = ""
+			proof.Problem, proof.TLS = "blocked test request", tlsEvidence{Local: proof.TLS.Local}
 			conn.Sent, conn.Received = 0, 0
 		}
 		if m.mutate != nil {
