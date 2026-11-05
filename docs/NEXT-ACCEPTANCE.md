@@ -42,7 +42,7 @@ in the private review. Queries on that path are not observed; domain rules need
 another observed name, such as SNI or HTTP Host. This is not a DNS-capture pass.
 
 This record does not cover full capture with Tailscale connected (including VPN
-restart), IPv6 `/128`, UDP/QUIC, app bundles/delegated processes, or throughput.
+restart), full IPv6 capture, UDP/QUIC, app bundles/delegated processes, or throughput.
 Tool attribution is not bundle acceptance. Raw reports were reviewed privately
 and deleted; no network identifiers or raw observations are reproduced here.
 
@@ -98,7 +98,7 @@ SafeStart through the system adapter when it has an unscoped default but no
 scoped default: a successful bound request on a second adapter alone misses this
 regression. Repeat that condition in the later full-IPv6 stage. Fake-driver
 tests reproduce the old split's failure and the new split's success in both
-families; IPv6 hardware acceptance remains pending.
+families; full IPv6 hardware acceptance remains pending.
 
 Run one request before each bounded batch. Stop at the first unexplained result;
 do not broaden capture, change DNS/pf, remove a VPN route, or retry indefinitely
@@ -125,25 +125,33 @@ nonces/addresses, caller identity, and matching Pith connection records together
 The root helper's identity receipt establishes which tunnel Pith created; it
 does not itself prove that a test request traversed it.
 
-## Next session: IPv6 host capture
+## Recorded IPv6 host hardware acceptance
 
-The `host-ipv6` harness is implemented and ready for a separately reviewed
-session; no new protocol driver is needed for this stage. It freezes one `/128`,
+The coordinator reported successful hardware acceptance of `d359287`: `host-ipv6`
+passed smoke, all 11 batch cases, app-bypass, preservation, forced SafeStart
+failure and crash recovery. A scoped IPv4 regression passed the same TCP cases
+without a crash test, and full IPv4 passed the same cases including crash
+recovery. Every uninstall restored its accepted baseline. Independent inspection
+confirmed ordinary IPv4/IPv6 routing and connectivity, no remaining owned routes,
+tunnel or test processes, and no sudo credential cache. Raw session reports were
+reviewed privately and deleted. These results cover host IPv6 and the full IPv4
+TCP subset, not full IPv6, UDP/QUIC, bundles or throughput.
+
+The `host-ipv6` harness freezes one `/128`,
 requires global IPv6 on both adapters, forces `tcp6` for all three preflights and
 test requests, and requires the native SafeStart socket to cross capture. IPv4
 fallback and an IPv4 echo cannot satisfy the IPv6 checks. The helper's lease is
 at most 60 seconds and the controller stops its work ten seconds before that
 deadline. Preparation, installation identity, family/scope rejection and cleanup
-have synthetic coverage, not an IPv6 hardware pass.
+also have synthetic coverage.
 
 The first hardware smoke attempt stopped during SafeStart with
 `unreadable configured route event`; the coordinator verified clean rollback and
 uninstall. Source analysis and a synthetic wire-format reproduction found that
 `-net` with IPv6 `/128` removes HOST while omitting the mask. Host additions and
 deletions now explicitly use `-host` in both families. The former report had no
-event metadata, so the exact offending hardware message is unconfirmed. Rebuild
-both binaries and prepare a new session; the corrected IPv6 hardware run is still
-pending. Inspect the new `routeDiagnostics` field even on failed startup: it
+event metadata, so the exact offending hardware message is unconfirmed. Inspect
+the `routeDiagnostics` field even on failed startup: it
 records address formats and the ownership decision without address payloads.
 
 A subsequent retry and scoped IPv4 control both exposed a notification regression:
@@ -162,9 +170,12 @@ them. Static non-cloned LLINFO entries now remain visible to validation and
 cleanup; unscoped, link-gateway and exact interface checks remain strict. The same
 retry's non-fatal NEWADDR diagnostic was reproduced as an empty final RTA_BRD
 for a point-to-point address without a peer, which is now accepted. Both fixes
-have synthetic coverage, including teardown and retained pre-cleanup diagnostics;
-corrected IPv6 hardware acceptance is still pending. Rebuild both binaries and
-prepare a new reviewed session before retrying.
+have synthetic coverage, including teardown and retained pre-cleanup diagnostics.
+The subsequent hardware passes above verify the corrected startup, host-route
+ownership and cleanup paths. A read-only comparison around ordinary IPv4/IPv6
+HTTPS traffic also retained identical configured-route snapshots.
+
+### Repeating the IPv6 host stage
 
 1. Confirm the two adapters and one permitted IPv6 TLS endpoint. It must support
    certificate-verified HTTP/1.1 `GET /`; a plain-text IPv6 exit echo also enables

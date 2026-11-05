@@ -43,11 +43,31 @@ such as TLS SNI, HTTP Host or QUIC SNI. This behavior allowed full capture to
 start without replacing the gateway route; it does not prove DNS interception.
 
 Still pending: full capture while Tailscale is connected (including restart),
-IPv6 `/128`, UDP/QUIC, app bundles/delegation and throughput. The next prepared
-stage is [IPv6 host capture](NEXT-ACCEPTANCE.md#next-session-ipv6-host-capture).
+full IPv6, UDP/QUIC, app bundles/delegation and throughput. IPv6 host acceptance
+is recorded below and in [the acceptance plan](NEXT-ACCEPTANCE.md#recorded-ipv6-host-hardware-acceptance).
 Raw reports were reviewed privately and deleted; only this sanitized outcome is
 retained. A skipped manual cancellation under delegated authorization is not a
 cancellation-dialog pass.
+
+## Recorded IPv6 host result and IPv4 regressions
+
+The coordinator reported that `d359287` passed `host-ipv6` smoke, all 11 batch
+cases, app-bypass, preservation, forced SafeStart failure and crash recovery.
+The scoped IPv4 regression passed smoke, batch, app-bypass, preservation and
+forced SafeStart failure; full IPv4 passed those cases and crash recovery.
+Each uninstall restored its baseline. Independent inspection confirmed ordinary
+IPv4/IPv6 routing and connectivity, no remaining owned routes, tunnel or test
+processes, and no sudo credential cache. Raw reports were reviewed privately and
+deleted. The IPv6 result covers one frozen `/128`, not full IPv6 capture.
+
+Three issues were corrected on the way to that pass: explicit `-host` preserves
+HOST and host-route semantics where IPv6 `-net /128` omitted both HOST and the
+netmask; a normal IFINFO skipped by `x/net/route` is decoded as an interface
+notification rather than a failure; and static non-cloned IPv6 LLINFO host
+routes remain in ownership snapshots while dynamic neighbors stay excluded.
+The first issue was reproduced from source and wire fixtures, since its original
+hardware event was not recorded. The latter two were identified by retained
+hardware diagnostics. See [the detailed history](#separate-ipv6-host-installation).
 
 ## Prepare a concrete review
 
@@ -238,8 +258,8 @@ neither HOST nor netmask in a synthetic Darwin reproduction. Both IPv4 `/32` and
 IPv6 `/128` now use explicit `-host` for add and delete. See
 [the source analysis and observer policy](ARCHITECTURE.md#capturing-and-forwarding).
 The original failed report contained no event metadata, so the exact event is
-not retrospectively proven. A corrected hardware pass remains pending: rebuild
-the helper and harness, then prepare and review a new session before retrying.
+not retrospectively proven. The corrected IPv6 host hardware pass is recorded
+above. Repeated tests still require a new reviewed session and authorization.
 
 The subsequent IPv6 smoke and a scoped IPv4 regression exposed another startup
 fault: a normal utun IFINFO with no sockaddrs was mistaken for a decoder failure.
@@ -262,8 +282,9 @@ point-to-point address without a peer. Both formats are now covered by wire
 fixtures. Failed ownership checks retain address-free candidate summaries from
 the failed RIB read in `routeDiagnostics`, including flags, gateway family,
 scope, index and counts, even after Stop. See the
-[source analysis](ARCHITECTURE.md#capturing-and-forwarding). Corrected IPv6
-hardware acceptance remains pending; these changes do not authorize a test.
+[source analysis](ARCHITECTURE.md#capturing-and-forwarding). The subsequent IPv6
+hardware run passed, including crash cleanup; this record does not authorize
+another test.
 
 IPv6 `/128` acceptance is another new installation and private session, selected
 explicitly by `--capture-mode host-ipv6`. Both reviewed adapters must be up and
@@ -604,12 +625,12 @@ observation automatically and treats an unexpected helper stop as a failure.
   helper, and delegated networking process attribution. The automatic tests
   prove attribution to this command-line process only; they do not validate
   WebKit, `nsurlsessiond`, bundle matching, or delegated UUID behavior.
-* **IPv6, QUIC, existing UDP, loss-driven failover, throughput, and full-capture
-  extensions:** these remain separate acceptance items beyond the recorded IPv4
+* **Full IPv6, QUIC, existing UDP, loss-driven failover, throughput, and full-capture
+  extensions:** these remain separate acceptance items beyond the recorded IPv4/IPv6
   TCP result. The automatic fallback uses a missing
   synthetic interface; it does not prove timeout behavior on a live interface
-  that drops packets. Do not infer IPv6, UDP/QUIC correctness or a throughput
-  target from the TCP smoke result. A later IPv6 test must use only a reviewed
+  that drops packets. Do not infer full IPv6, UDP/QUIC correctness or a throughput
+  target from the TCP results. Repeating host IPv6 requires a reviewed
   `/128`. Every new full-capture session still requires an explicit go-ahead;
   the completed IPv4 run does not authorize VPN or mixed-protocol extensions.
 
