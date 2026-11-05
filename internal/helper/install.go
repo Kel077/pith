@@ -28,9 +28,9 @@ type InstallPlan struct {
 }
 
 const (
-	InstallPrompt   = "Pith (橘核) needs your password to install its routing helper. 橘核需要您的密码来安装路由辅助程序。"
-	UpdatePrompt    = "Pith (橘核) needs your password to update its routing helper. 橘核需要您的密码来更新路由辅助程序。"
-	UninstallPrompt = "Pith (橘核) needs your password to remove its routing helper. 橘核需要您的密码来移除路由辅助程序。"
+	InstallPrompt   = "Pith needs your password to install its routing helper."
+	UpdatePrompt    = "Pith needs your password to update its routing helper."
+	UninstallPrompt = "Pith needs your password to remove its routing helper."
 )
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }

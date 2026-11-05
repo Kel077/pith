@@ -30,9 +30,7 @@ func (c *Client) InstallHelper(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if status.Helper.Installed {
-		plan.Prompt = helper.UpdatePrompt
-	}
+	plan.Prompt = c.authorizationPrompt(status.Helper.Installed)
 	if err := plan.Execute(ctx); err != nil {
 		return err
 	}
@@ -77,5 +75,22 @@ func (c *Client) UninstallHelper(ctx context.Context) error {
 			return err
 		}
 	}
-	return helper.PlanUninstall().Execute(ctx)
+	plan := helper.PlanUninstall()
+	if c.opts.Prompts.Uninstall != "" {
+		plan.Prompt = c.opts.Prompts.Uninstall
+	}
+	return plan.Execute(ctx)
+}
+
+func (c *Client) authorizationPrompt(update bool) string {
+	if update {
+		if c.opts.Prompts.Update != "" {
+			return c.opts.Prompts.Update
+		}
+		return helper.UpdatePrompt
+	}
+	if c.opts.Prompts.Install != "" {
+		return c.opts.Prompts.Install
+	}
+	return helper.InstallPrompt
 }
