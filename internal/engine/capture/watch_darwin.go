@@ -68,7 +68,7 @@ func changes(messages []route.Message) []Change {
 			if m.Type != unix.RTM_ADD && m.Type != unix.RTM_DELETE && m.Type != unix.RTM_CHANGE && m.Type != unix.RTM_REDIRECT {
 				continue
 			}
-			event := Change{Index: messageIndex(m.Index, m.Addrs), Added: m.Type == unix.RTM_ADD, Scoped: m.Flags&unix.RTF_IFSCOPE != 0}
+			event := Change{Index: messageIndex(m.Index, m.Addrs), Added: m.Type == unix.RTM_ADD, Deleted: m.Type == unix.RTM_DELETE, ScopeKnown: true, Scoped: m.Flags&unix.RTF_IFSCOPE != 0}
 			prefix, err := routePrefix(m)
 			if err != nil {
 				event.Unparsed, event.Diagnostic = true, err.Error()

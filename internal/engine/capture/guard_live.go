@@ -20,6 +20,7 @@ type Change struct {
 	Index     int
 	Prefix    netip.Prefix
 	Added     bool
+	Deleted   bool // An explicit route deletion, not a change or redirect.
 	Interface bool
 	Address   bool
 	Up        bool
@@ -29,6 +30,7 @@ type Change struct {
 	// Diagnostic contains no address payloads.
 	Unparsed   bool
 	Scoped     bool
+	ScopeKnown bool // Read from a complete route header; otherwise use the snapshot.
 	NonIP      bool
 	Diagnostic string
 }
@@ -177,7 +179,10 @@ func (g *Guard) Observe(event Change) error {
 			if index == event.Index && (event.Unparsed || event.Interface && !event.Up || !event.Added && event.Prefix.IsValid() && tunnel(name)) {
 				g.epochs[name]++
 			}
-			if index == event.Index && tunnel(name) && !event.Added && event.Prefix.IsValid() && event.Prefix.Bits() == 0 {
+			// Scoped defaults never supply system egress. Only a decoded, known
+			// unscoped deletion can start settling from the event alone; other
+			// notifications defer to the independently verified snapshot below.
+			if index == event.Index && tunnel(name) && event.Deleted && event.ScopeKnown && !event.Scoped && !event.Unparsed && event.Prefix.IsValid() && event.Prefix.Bits() == 0 {
 				g.settle[family(event.Prefix)] = g.now().Add(3 * time.Second)
 			}
 		}

@@ -308,11 +308,18 @@ full-capture VPN reconstruction on hardware remains outstanding:
   never migrate, and fail locally if that interface lifetime ends.
 * System dials and ICMP select the most-specific unscoped route from the verified
   live view. Ambiguous ties, stale indices or a missing route fail that request
-  immediately. After a VPN default is withdrawn, public system fallback is held
+  immediately. After an unscoped VPN default is withdrawn, public system fallback is held
   for a three-second settling interval; requests fail during the interval rather
   than waiting without a bound. Explicit physical rules remain available. A new
   VPN default can be used immediately; a stable physical default becomes usable
   after settling. No automatic teardown or SafeStart is needed for these updates.
+  Scoped tunnel defaults never supplied system egress, so withdrawing or rebuilding
+  them must not start that interval. The event path preserves `RTF_IFSCOPE` and
+  distinguishes an explicit `RTM_DELETE` from ADD/CHANGE/REDIRECT. Only a decoded,
+  known unscoped default deletion can arm the event-based timer; unknown scope
+  defers to the independent snapshot comparison. Interface notifications and
+  index changes invalidate affected interface lifetimes, not unrelated physical
+  bindings. Capture verification and route-generation checks remain in force.
 * Independently of notification timing, packets for a pre-existing, more-specific
   unscoped VPN route must not enter this capture. If one does, drop it before
   TCP/UDP rules, native passthrough or ICMP, without stopping other traffic. This

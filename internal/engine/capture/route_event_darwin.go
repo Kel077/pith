@@ -78,7 +78,7 @@ func parseRouteEvents(data []byte) []Change {
 			problem = "invalid routing sockaddr encoding"
 		}
 		diagnostic := meta.summary() + ": " + problem
-		result = append(result, Change{Index: meta.index, Prefix: meta.prefixHint(frame), Added: meta.typ == unix.RTM_ADD, Scoped: meta.flags&unix.RTF_IFSCOPE != 0, Unparsed: true, NonIP: meta.nonIP, Diagnostic: diagnostic})
+		result = append(result, Change{Index: meta.index, Prefix: meta.prefixHint(frame), Added: meta.typ == unix.RTM_ADD, Deleted: meta.typ == unix.RTM_DELETE, ScopeKnown: true, Scoped: meta.flags&unix.RTF_IFSCOPE != 0, Unparsed: true, NonIP: meta.nonIP, Diagnostic: diagnostic})
 	}
 	return result
 }
