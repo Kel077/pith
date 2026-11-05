@@ -189,8 +189,9 @@ func (s *session) vpnPlanBytes() ([]byte, error) {
 	}{p, s.Target, s.ServerName, s.Interfaces, []string{
 		"One user-controlled disconnect/reconnect; no VPN CLI, toggle, restart, update, peer scan or account change.",
 		"READY: disconnect within at most 45s, keep disconnected about 15s, then reconnect once. Require at least 10s observed withdrawal; RECONNECT follows gap controls.",
-		"Rebuild window is at most 45s, clipped to leave 15s for final controls before the controller deadline. Every timeout or early reconnect is incomplete, not a Pith network failure.",
-		"At most one own-name A query in prepare, and five in check including post-Stop; one datagram each, two-second deadline, no DNS fallback or answer-address dialing.",
+		"Rebuild window is at most 45s, clipped to leave 15s for final controls before the controller deadline. Route recovery and DNS settling share this deadline. Exhausted windows or early reconnect are incomplete, not a Pith network failure.",
+		"At most one own-name A query in prepare, and seven in check including post-Stop; one datagram each, two-second deadline, no DNS fallback or answer-address dialing.",
+		"Only rebuilt DNS may retry: at most three attempts separated by one second, all within the original rebuild window. Every attempt is retained and checked for Pith forwarding; wrong own-address answers or forwarding/capture faults are not retried.",
 		"Four extra frozen public HTTPS requests in check, three seconds each, in addition to common SafeStart/system control; no replacement endpoint or retry.",
 		"Own-name/Quad100 proves local MagicDNS and route lifecycle, not remote peer reachability, wire-level absence of leaks, existing TCP continuity, daemon restart or egress generation internals.",
 	}}, "", "  ")

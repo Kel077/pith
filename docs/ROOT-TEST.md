@@ -893,8 +893,15 @@ the user does not need direct access to the process output:
    Reconnection has at most 45 seconds, shortened to leave 15 seconds for final
    controls before the controller deadline. The prompt reports the actual bound.
    Detect recovery from current routes/interfaces even if the name/index changed.
-   Repeat own-name DNS, the physical rule and the system public request, requiring
-   the original Pith capture token, interface, prefixes and Running timestamp.
+   Routes can return before MagicDNS is ready: allow up to three own-name queries,
+   each bounded by two seconds, with one second between attempts. Route recovery
+   and all attempts share the original rebuild deadline; do not start a new
+   window when the route appears. Check every attempted tuple for Pith forwarding,
+   retaining failed attempts and rechecking the final log after Stop. A wrong
+   own-address answer, forwarding evidence or capture fault ends the stage without
+   retry. Repeat the physical rule and system public request after DNS succeeds,
+   requiring the original Pith capture token, interface, prefixes and Running
+   timestamp. Exhausted DNS attempts are incomplete, followed by immediate Stop.
 4. `RESTORED:` means those active controls passed. The harness immediately stops
    capture, checks cleanup and performs one final own-name query. This prompt is
    not a cleanup pass; inspect the completed private check/cleanup reports.
@@ -910,9 +917,12 @@ failure or incomplete result after READY prints exactly one terminal reminder:
 `RECONNECT: test ended; turn the VPN back on now`. This also covers errors in
 final verification. The reminder never waits for user action or delays Stop.
 
-There are at most five own-name A queries in check (before capture, running before,
-withdrawn, rebuilt, after Stop), plus the single prepare query. Each sends one
-classic DNS datagram with a two-second deadline and no retry/fallback. Four extra
+There are at most seven own-name A queries in check (one before capture, one running
+before, one withdrawn, up to three rebuilt, one after Stop), plus the single prepare
+query. Each sends one classic DNS datagram with a two-second deadline and no
+retransmission/fallback. Only the rebuilt phase permits another separate query,
+spaced by one second; even its maximum eight-second query/spacing budget must fit
+inside the remaining rebuild window. Four extra
 public HTTPS requests use the frozen endpoint and three-second bounds, in addition
 to the existing SafeStart/common system control. No polling request is sent to a
 tailnet peer: route/status polls are local reads and capped at 512 observations.
@@ -925,12 +935,23 @@ zero response bytes and no matching helper-forwarded tuple remain mandatory.
 
 Private reports retain the prompts' times and actual windows, independent
 snapshots, local VPN name/index and routes, exact DNS tuples/replies, public
-connection records and the unchanged capture identity. The API does not expose
+connection records and the unchanged capture identity. Route recovery and DNS-ready
+times are separate, with every rebuilt DNS attempt retained. The API does not expose
 the internal egress generation; it is not inferred from timestamps. If Stop
 reports only a verified external VPN change, active controls and cleanup remain
 separate results: inspect the differences, then explicitly
 `rebaseline --label vpn-rebuilt --accept-external-change` while stopped before
 uninstall. No automatic baseline adoption or route repair is allowed.
+
+The intended final order is **review the private differences, rebaseline, then
+uninstall**. Rebaseline requires this session's helper to remain installed,
+identity/version-matched and idle; it needs no root or authorization and never
+starts capture. It rechecks cleanup evidence, both reviewed adapters, stable
+snapshots and three bounded system/A/B TLS preflights. No additional smoke is
+needed if the next action is uninstall; a new smoke is required only before
+additional capture checks. A changed frozen capture plan or ambiguous ownership
+still blocks rebaseline. If VPN state changed again after check, first run `stop`
+to refresh its cleanup evidence before reviewing/rebaselining.
 
 If the test ends with the VPN disconnected, keep Pith stopped and ask the user
 to restore the VPN before the final baseline comparison. With the idle helper

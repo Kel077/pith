@@ -22,12 +22,22 @@ import (
 var errVPNInconclusive = errors.New("VPN acceptance incomplete")
 var errVPNDNSDeadline = errors.New("VPN DNS response deadline")
 
+const vpnRebuiltDNSAttempts = 3
+
+// Only a failed DNS exchange may settle. Capture faults, forwarding evidence,
+// and a valid answer for another device must never be hidden by a later attempt.
+type vpnDNSQueryError struct{ err error }
+
+func (e *vpnDNSQueryError) Error() string { return e.err.Error() }
+func (e *vpnDNSQueryError) Unwrap() error { return e.err }
+
 type vpnRestartDeps struct {
 	snapshot                                                       func(context.Context) (snapshot, error)
 	dns                                                            func(context.Context, *vpnRestartPlan) (dnsEvidence, error)
 	public                                                         func(context.Context, *session) (tlsEvidence, error)
 	prompt                                                         func(string)
 	poll, withdrawWindow, minimumDown, rebuildWindow, finalReserve time.Duration
+	dnsRetryDelay                                                  time.Duration
 }
 
 func liveVPNChecks(snapshot func(context.Context) (snapshot, error)) vpnRestartDeps {
@@ -51,6 +61,7 @@ func liveVPNChecks(snapshot func(context.Context) (snapshot, error)) vpnRestartD
 		prompt: func(line string) { fmt.Println(line) },
 		poll:   250 * time.Millisecond, withdrawWindow: 45 * time.Second,
 		minimumDown: 10 * time.Second, rebuildWindow: 45 * time.Second, finalReserve: 15 * time.Second,
+		dnsRetryDelay: time.Second,
 	}
 }
 
@@ -109,6 +120,7 @@ type vpnRestartEvidence struct {
 	WithdrewAt        time.Time     `json:"withdrewAt"`
 	ReconnectAt       time.Time     `json:"reconnectPromptAt"`
 	RestoredAt        time.Time     `json:"restoredAt"`
+	DNSReadyAt        time.Time     `json:"dnsReadyAt,omitzero"`
 	RestoreReminderAt time.Time     `json:"restoreReminderAt,omitzero"`
 	WithdrawalWindow  time.Duration `json:"withdrawalWindow"`
 	RebuildWindow     time.Duration `json:"rebuildWindow"`
@@ -170,7 +182,7 @@ func beginVPNCheck(ctx context.Context, s *session, before snapshot, report *che
 		return err
 	}
 	evidence := &vpnRestartEvidence{MinimumDown: deps.minimumDown, Notes: []string{
-		"One manually requested disconnect/reconnect. No VPN command, peer request or automatic retry.",
+		"One manually requested disconnect/reconnect. No VPN command, peer request or repeated stage. Rebuilt DNS permits three attempts inside the original rebuild window.",
 		"Status/capture identity and independent snapshots are sampled; the internal egress generation is not exposed by the API.",
 		"Own-name MagicDNS is device-local evidence, not remote tailnet connectivity or a VPN daemon self-update/restart.",
 		"Withdrawal evidence is a sent query timing out with no matching helper-forwarded tuple; this is not a wire capture proving absence of every possible packet leak.",
@@ -326,10 +338,53 @@ func queryVPN(ctx context.Context, s *session, c api.Service, tunnel vpnTunnel, 
 		return nil
 	}
 	if queryErr != nil {
-		return queryErr
+		return &vpnDNSQueryError{queryErr}
 	}
 	_, err = vpnOwnAnswers(s.VPNRestart, tunnel, exchange)
 	return err
+}
+
+func settleVPNDNS(ctx context.Context, s *session, c api.Service, running api.Status, evidence *vpnRestartEvidence, deps vpnRestartDeps) error {
+	for attempt := 1; attempt <= vpnRebuiltDNSAttempts; attempt++ {
+		view, tunnel, err := waitVPNState(ctx, s, c, running, evidence, deps, true, deps.rebuildWindow)
+		if err != nil {
+			return err
+		}
+		if evidence.RestoredAt.IsZero() {
+			evidence.RestoredAt = time.Now()
+			evidence.Snapshots = append(evidence.Snapshots, vpnSnapshot{"rebuilt-routes", view})
+		}
+		queryErr := queryVPN(ctx, s, c, tunnel, evidence, deps, fmt.Sprintf("rebuilt-attempt-%d", attempt), false)
+		if ctx.Err() != nil {
+			return fmt.Errorf("%w: rebuilt DNS exceeded the original rebuild window", errVPNInconclusive)
+		}
+		var unavailable *vpnDNSQueryError
+		if queryErr != nil && !errors.As(queryErr, &unavailable) {
+			return queryErr
+		}
+		view, _, up, err := vpnCheckpoint(ctx, s, c, running, evidence, deps)
+		if err != nil {
+			return err
+		}
+		if ctx.Err() != nil {
+			return fmt.Errorf("%w: rebuild window ended while verifying DNS recovery", errVPNInconclusive)
+		}
+		if !up {
+			return fmt.Errorf("%w: VPN withdrew during the rebuilt DNS attempt", errVPNInconclusive)
+		}
+		if queryErr == nil {
+			evidence.DNSReadyAt = time.Now()
+			evidence.Snapshots = append(evidence.Snapshots, vpnSnapshot{"rebuilt-dns-ready", view})
+			return nil
+		}
+		if attempt == vpnRebuiltDNSAttempts {
+			return fmt.Errorf("%w: rebuilt MagicDNS unavailable after %d attempts: %v", errVPNInconclusive, attempt, queryErr)
+		}
+		if err := processPause(ctx, deps.dnsRetryDelay); err != nil {
+			return fmt.Errorf("%w: rebuild window ended during DNS settling", errVPNInconclusive)
+		}
+	}
+	return nil
 }
 
 func vpnPublic(ctx context.Context, s *session, c api.Service, cfg api.Config, running api.Status, report *checkReport, deps vpnRestartDeps, name string, route bool) error {
@@ -496,13 +551,12 @@ func runVPNRestart(ctx context.Context, s *session, c api.Service, cfg api.Confi
 	}
 	evidence.ReconnectAt = time.Now()
 	deps.prompt(fmt.Sprintf("RECONNECT: Disconnected controls completed; turn the VPN on now, within %s; no exit node.", evidence.RebuildWindow.Round(time.Second)))
-	view, tunnel, err = waitVPNState(ctx, s, c, running, evidence, deps, true, evidence.RebuildWindow)
+	// Route appearance and all DNS settling share this one deadline. The final
+	// control reserve and helper lease are never extended by retries.
+	rebuildCtx, rebuildCancel := context.WithTimeout(ctx, evidence.RebuildWindow)
+	err = settleVPNDNS(rebuildCtx, s, c, running, evidence, deps)
+	rebuildCancel()
 	if err != nil {
-		return err
-	}
-	evidence.RestoredAt = time.Now()
-	evidence.Snapshots = append(evidence.Snapshots, vpnSnapshot{"rebuilt", view})
-	if err := queryVPN(ctx, s, c, tunnel, evidence, deps, "rebuilt", false); err != nil {
 		return err
 	}
 	if err := vpnPublic(ctx, s, c, cfg, running, report, deps, "physical rule after VPN rebuild", true); err != nil {

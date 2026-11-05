@@ -374,10 +374,24 @@ READY allows up to 45 seconds for observed withdrawal. The user keeps the VPN of
 about 15 seconds before reconnecting; require at least ten observed seconds for
 the bounded negative DNS and positive public controls. RECONNECT permits up to
 45 seconds for rebuilding, clipped to preserve 15 seconds for final checks inside
-the 110-second controller deadline. Early reconnect, timeout or insufficient
+the 110-second controller deadline. Route appearance can precede MagicDNS readiness:
+allow at most three rebuilt own-name queries, each two seconds with one-second
+spacing, all inside that same rebuild deadline. Every attempt retains its tuple
+and checks for forwarding, including a final post-Stop log check. Capture faults,
+forwarding evidence or a wrong own-address answer stop the stage without retry.
+The frozen budget is one prepare query and at most seven check queries, including
+post-Stop. Route and DNS-ready times are recorded separately. Early reconnect,
+exhausted attempts/window or insufficient
 evidence is incomplete, followed by safe Stop. RESTORED reports active controls,
 not final cleanup. An external-only changed VPN identity still requires explicit
 review/rebaseline while stopped, never automatic baseline adoption.
+
+Use the intended order: review private differences, run
+`rebaseline --label vpn-rebuilt --accept-external-change`, then uninstall. Rebaseline
+needs no root and operates only while the same installed helper is idle at the
+reviewed version. It checks existing cleanup evidence and stable system/A/B
+preflights; it cannot accept owned-route residue. No new smoke is required merely
+to uninstall after rebaseline.
 
 Any error after READY also prints `RECONNECT: test ended; turn the VPN back on now`
 once, without waiting or delaying Stop. If the user has not restored the VPN,
