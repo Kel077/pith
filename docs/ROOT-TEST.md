@@ -138,6 +138,7 @@ mode-0600 files include:
 | `quic-plan.json` | Optional frozen HTTP/3 host/certificate name, request/packet/payload budgets and observable/fragmented Initial controls; its checksum binds the QUIC stage |
 | `bundle-plan.json` | Optional standalone tool checksum/size, exact bundle metadata/layout, TLS target and one/six-request smoke/batch limits for disposable bundle fixtures |
 | `webkit-plan.json` | Optional frozen Safari app/executable checksums, current A-record set and lookup time, nonce URL, manual/single-open trigger and a 60-second maximum delegation observation |
+| `process-audit-*.json` | Independent read-only inventory after browser observation/uninstall: all still-present processes whose kernel start time falls in the recorded observation/cleanup windows, regardless of owner or executable |
 | `install-plan.json`, `install.sh` | Exact scoped launchd arguments, fixed destinations, helper SHA-256 check, rollback, and authorization prompt |
 | `uninstall.sh` | Exact bootout, ownership-checked route cleanup, and managed-path removal |
 | `emergency-command.txt` | A standalone, single command that can be pasted into Terminal without IPC or the test executable |
@@ -568,7 +569,11 @@ WebKit socket and exit routing passed using `5a60671`, with one explicit
 LaunchServices open to a stable IPv4-only endpoint and Private Relay disabled by
 the user. The destination was recorded by its frozen ordinal; page-body content
 was not automatically verified. There were no authorization prompts and uninstall
-was clean. Earlier runs remained incomplete: even freezing every A record in an
+restored routing and helper state. Subsequent process review found Safari and a
+WebKit service left running by the former single-open implementation; the
+coordinator terminated only those new test processes. The bounded process cleanup
+below has synthetic coverage and needs its own reviewed hardware verification.
+Earlier runs remained incomplete: even freezing every A record in an
 answer missed later answers from a larger rotating CDN pool.
 
 The multi-host startup also exposed a RIB `ENOMEM` size/copy race. Extra buffer
@@ -622,12 +627,51 @@ trigger for an observation of at most 60 seconds:
 "$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --webkit 45s --webkit-open
 ```
 
-The second form executes only `/usr/bin/open -a <frozen app> <frozen URL>`, once,
-after READY. The short-lived `open` child is waited for with a five-second limit;
-there is no retry, AppleScript/osascript, Automation control, private-window
-creation, tab inspection/closing or browser/service termination. The first form
-never starts a browser process. The coordinator closes only the test tab afterward
-and may separately record the expected page. Existing Safari windows are untouched.
+The second form first records the process inventory and **refuses an already
+running Safari**. Use manual mode, or have the coordinator establish that Safari
+has exited before retrying this command. After READY it rechecks that prerequisite,
+then executes `/usr/bin/open -a <frozen app> <frozen URL>` exactly once. The
+short-lived `open` child is waited for with a five-second limit. There is no
+AppleScript/osascript, Automation control, private-window creation, tab inspection
+or tab closing. Do not independently launch Safari during this automatic stage.
+Manual mode never starts or terminates a browser; its test tab remains the
+coordinator's responsibility.
+
+On every automatic-open return, including incomplete evidence, errors and
+cancellation, a separate fifteen-second cleanup deadline applies. Identify the
+new Safari by the frozen executable, installing UID, kernel start time, unique
+process ID and exec generation. Send only that Safari SIGTERM and wait at most
+five seconds. Safari is never force-killed. Then observe a full three-second grace
+for its new WebKit WebContent/Networking/GPU services, including queued launches;
+only still-present, independently owned services may receive SIGKILL. Wait at most
+two more seconds to confirm their exit. A failed open can still have launched
+Safari; discovery during cleanup is bounded to two seconds.
+
+Services must have launchd as parent, the same UID, a trusted system WebKit path,
+a start time after the open attempt, and both coalitions matching that Safari.
+Its jetsam coalition must not have existed in the initial inventory. Name and
+time alone cannot authorize termination: another application's new WebKit process
+must remain untouched. Before every signal revalidate identity; the kernel's
+audit-token signal checks PID plus exec generation atomically. There is no fallback
+to a numeric-PID kill or process-group signal. Missing metadata, ambiguous ownership,
+a stubborn Safari or surviving owned service makes cleanup incomplete and retains
+details for review. Previously existing processes are never cleanup targets.
+
+The private check report records whether Safari already ran, newly owned processes,
+signals, normal/forced exits and unowned/uncertain survivors. Observation and cleanup
+start/end times are saved in the session. Successful uninstall independently lists
+**every** still-present process started in those windows, including unrelated and
+system-owned ones, rather than checking only helper names. Repeat that read-only
+inspection separately after uninstall:
+
+```sh
+"$PITH_TEST_BIN/rootcheck" audit-processes --session "$PITH_SESSION"
+```
+
+Review its private report before deleting the session. A listed process is evidence
+to investigate, never authorization to terminate it. Missing metadata is retained;
+an unfinished recorded window extends through the audit time. This command sends
+no signals and does not contact or reinstall the helper.
 
 The app/IP rule covers every frozen A record and directs fresh Safari TCP/UDP
 sockets to A. The observation summary records the actual destination's one-based

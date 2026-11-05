@@ -25,29 +25,32 @@ type webkitPCB struct {
 }
 
 type webkitEvidence struct {
-	URL              string          `json:"manualURL"`
-	Ready            time.Time       `json:"ready"`
-	OpenRequested    bool            `json:"openRequested"`
-	OpenAttempts     int             `json:"openAttempts"`
-	OpenError        string          `json:"openError,omitempty"`
-	Result           string          `json:"result"`
-	Reason           string          `json:"reason,omitempty"`
-	PageBodyVerified bool            `json:"pageBodyVerified"`
-	TargetIndex      int             `json:"frozenTargetIndex,omitempty"`
-	PrivateRelay     string          `json:"privateRelayStatus"`
-	Connection       *api.Connection `json:"connection,omitempty"`
-	PCB              *webkitPCB      `json:"pcb,omitempty"`
+	URL              string                `json:"manualURL"`
+	Ready            time.Time             `json:"ready"`
+	OpenRequested    bool                  `json:"openRequested"`
+	OpenAttempts     int                   `json:"openAttempts"`
+	OpenError        string                `json:"openError,omitempty"`
+	Result           string                `json:"result"`
+	Reason           string                `json:"reason,omitempty"`
+	PageBodyVerified bool                  `json:"pageBodyVerified"`
+	TargetIndex      int                   `json:"frozenTargetIndex,omitempty"`
+	PrivateRelay     string                `json:"privateRelayStatus"`
+	Connection       *api.Connection       `json:"connection,omitempty"`
+	PCB              *webkitPCB            `json:"pcb,omitempty"`
+	Cleanup          webkitProcessEvidence `json:"processCleanup"`
 }
 
 type webkitCheckDeps struct {
-	lookup func(context.Context, api.Protocol, netip.AddrPort, netip.AddrPort) (webkitPCB, error)
-	ready  func(string) error
-	open   func(context.Context, string, string) error
+	lookup    func(context.Context, api.Protocol, netip.AddrPort, netip.AddrPort) (webkitPCB, error)
+	ready     func(string) error
+	open      func(context.Context, string, string) error
+	processes webkitProcessOps
 }
 
 func liveWebKitChecks() webkitCheckDeps {
 	resolver := attribution.New()
 	return webkitCheckDeps{
+		processes: liveWebKitProcesses(),
 		ready: func(url string) error {
 			_, err := fmt.Println("READY: one Safari navigation to", url, "\nOnly delegated socket ownership and exit routing are checked; page content is not automatically verified.")
 			return err
@@ -97,8 +100,8 @@ func webkitOpenCommand(ctx context.Context, app, url string) *exec.Cmd {
 func openWebKitOnce(ctx context.Context, app, url string) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	// Run waits for our short-lived open process, never for Safari. Cancellation
-	// can terminate only that child; Safari and all of its services are untouched.
+	// Run reaps the short-lived open child. The separate identity-checked lifecycle
+	// handles Safari even if open returns an error after submitting its request.
 	return webkitOpenCommand(ctx, app, url).Run()
 }
 
@@ -188,7 +191,37 @@ func runWebKitCheck(parent context.Context, s *session, c api.Service, cfg api.C
 		}
 		if resultErr != nil {
 			evidence.Reason = resultErr.Error()
+			if evidence.Result == "passed" {
+				evidence.Result = "incomplete"
+			}
+		} else if evidence.Result == "passed" {
+			fmt.Printf("PASS: delegated WebKit socket and exit routing to frozen target #%d; page body was not automatically verified.\n", evidence.TargetIndex)
+			if launch {
+				fmt.Println("Automatic browser process cleanup completed.")
+			} else {
+				fmt.Println("Manual browser cleanup remains the coordinator's responsibility.")
+			}
 		}
+	}()
+	watch, err := beginWebKitProcesses(parent, s.WebKit, s.UID, launch, deps.processes, &evidence.Cleanup)
+	if err != nil {
+		return err
+	}
+	if len(s.ProcessWindows) >= 16 {
+		return errors.New("browser process observation limit reached; prepare a new session")
+	}
+	window := len(s.ProcessWindows)
+	s.ProcessWindows = append(s.ProcessWindows, processWindow{Started: deps.processes.now()})
+	if err := s.save(); err != nil {
+		return err
+	}
+	defer func() {
+		if err := watch.finish(); err != nil {
+			evidence.Result = "incomplete"
+			resultErr = errors.Join(resultErr, fmt.Errorf("browser process cleanup incomplete: %w", err))
+		}
+		s.ProcessWindows[window].Ended = deps.processes.now()
+		resultErr = errors.Join(resultErr, s.save())
 	}()
 	ctx, cancel := context.WithTimeout(parent, duration)
 	defer cancel()
@@ -197,6 +230,14 @@ func runWebKitCheck(parent context.Context, s *session, c api.Service, cfg api.C
 		return err
 	}
 	if launch {
+		// READY may involve coordinator interaction. Recheck immediately before
+		// the single open request; a newly opened user browser is not our process.
+		rechecked, err := beginWebKitProcesses(ctx, s.WebKit, s.UID, true, deps.processes, &evidence.Cleanup)
+		if err != nil {
+			return err
+		}
+		watch = rechecked
+		watch.attemptedOpen()
 		evidence.OpenAttempts = 1
 		if err := deps.open(ctx, s.WebKit.App.Path, evidence.URL); err != nil {
 			evidence.OpenError = err.Error()
@@ -205,6 +246,9 @@ func runWebKitCheck(parent context.Context, s *session, c api.Service, cfg api.C
 	}
 	proofs := make(map[uint64]webkitPCB)
 	err = waitUntil(ctx, func() (bool, error) {
+		if _, err := watch.observe(ctx, false); err != nil {
+			return false, fmt.Errorf("browser process observation: %w", err)
+		}
 		if err := sameRunningCapture(ctx, c, running); err != nil {
 			evidence.Result = "failed"
 			return false, err
@@ -239,6 +283,10 @@ func runWebKitCheck(parent context.Context, s *session, c api.Service, cfg api.C
 					evidence.Reason = err.Error()
 					continue
 				}
+				if launch && (watch.browser == nil || proof.EffectivePID != watch.browser.Process.PID) {
+					evidence.Reason = "delegation does not identify the browser launched by this observation"
+					continue
+				}
 				if len(proofs) < 500 {
 					proofs[conn.ID] = proof
 				}
@@ -265,9 +313,6 @@ func runWebKitCheck(parent context.Context, s *session, c api.Service, cfg api.C
 	})
 	if err != nil && evidence.Result == "incomplete" {
 		return fmt.Errorf("incomplete: %s: %w", evidence.Reason, err)
-	}
-	if err == nil {
-		fmt.Printf("PASS: delegated WebKit socket and exit routing to frozen target #%d; page body was not automatically verified.\n", evidence.TargetIndex)
 	}
 	return err
 }

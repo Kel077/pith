@@ -52,6 +52,7 @@ type session struct {
 	BundlePassed     bool                   `json:"bundlePassed,omitempty"`
 	WebKit           *webkitPlan            `json:"webKit,omitempty"`
 	WebKitPlanSHA256 string                 `json:"webKitPlanSHA256,omitempty"`
+	ProcessWindows   []processWindow        `json:"processObservationWindows,omitempty"`
 	Interfaces       [2]api.InterfaceRef    `json:"interfaces"`
 	Preflight        []preflight            `json:"preflight"`
 	TestProfile      *testprofile.Profile   `json:"testProfile,omitempty"`

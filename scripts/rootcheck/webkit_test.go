@@ -154,7 +154,7 @@ func TestWebKitFreshDelegationManualAndSingleOpen(t *testing.T) {
 			}
 			status, _ := c.Status(context.Background())
 			var report checkReport
-			if err := runWebKitCheck(context.Background(), s, c, cfg, status, &report, time.Second, launch, deps); err != nil {
+			if err := runWebKitCheck(context.Background(), s, c, cfg, status, &report, time.Second, launch, fakeWebKitLifecycle(t, s, deps)); err != nil {
 				t.Fatal(err)
 			}
 			want := []string{"ready"}
@@ -215,7 +215,7 @@ func TestWebKitIncompleteNeverRetriesOrClaimsPage(t *testing.T) {
 			}
 			status, _ := c.Status(context.Background())
 			var report checkReport
-			err := runWebKitCheck(context.Background(), s, c, cfg, status, &report, 15*time.Millisecond, true, deps)
+			err := runWebKitCheck(context.Background(), s, c, cfg, status, &report, 15*time.Millisecond, true, fakeWebKitLifecycle(t, s, deps))
 			if err == nil || !strings.Contains(err.Error(), "incomplete") || openCalls != 1 || report.WebKit.Result != "incomplete" || report.WebKit.PageBodyVerified {
 				t.Fatal(err, report.WebKit, openCalls)
 			}
@@ -253,7 +253,7 @@ func TestWebKitIndependentProofRejectsWrongHelperRecord(t *testing.T) {
 				return proof, nil
 			}}
 			var report checkReport
-			if err := runWebKitCheck(context.Background(), s, c, cfg, status, &report, time.Second, false, deps); err == nil || report.WebKit.Result != "failed" {
+			if err := runWebKitCheck(context.Background(), s, c, cfg, status, &report, time.Second, false, fakeWebKitLifecycle(t, s, deps)); err == nil || report.WebKit.Result != "failed" {
 				t.Fatal(err, report.WebKit)
 			}
 		})
@@ -296,7 +296,7 @@ func TestWebKitKeepsLivePCBProofWhileWaitingForCounters(t *testing.T) {
 	}
 	status, _ := c.Status(context.Background())
 	var report checkReport
-	if err := runWebKitCheck(context.Background(), s, c, cfg, status, &report, time.Second, false, deps); err != nil {
+	if err := runWebKitCheck(context.Background(), s, c, cfg, status, &report, time.Second, false, fakeWebKitLifecycle(t, s, deps)); err != nil {
 		t.Fatal(err)
 	}
 	if lookups != 1 || c.reads != 2 || report.WebKit.Result != "passed" {
@@ -340,7 +340,7 @@ func TestWebKitFreezesEveryARecordAndObservesItsOrdinal(t *testing.T) {
 	}}
 	status, _ := c.Status(context.Background())
 	var report checkReport
-	if err := runWebKitCheck(context.Background(), s, c, cfg, status, &report, time.Second, false, deps); err != nil {
+	if err := runWebKitCheck(context.Background(), s, c, cfg, status, &report, time.Second, false, fakeWebKitLifecycle(t, s, deps)); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 4 || report.WebKit.TargetIndex != 2 || report.WebKit.Connection.Remote != "" || report.WebKit.PCB.Socket.Remote.IsValid() || len(c.saved[0].Scenes[0].Rules[0].Targets) != 2 {

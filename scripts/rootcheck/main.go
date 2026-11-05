@@ -40,6 +40,7 @@ const usage = `rootcheck prepares a private, bounded acceptance session.
   stop      --session DIRECTORY
   rebaseline --session DIRECTORY --label MODE [--accept-external-change]
   uninstall --session DIRECTORY [--auth keychain:SERVICE]
+  audit-processes --session DIRECTORY
 
 prepare writes review material only to a fresh directory in TMPDIR. It reads
 system state and makes bounded, unprivileged TLS probes; it never opens an
@@ -144,6 +145,9 @@ func run(args []string) error {
 	}
 	// Deliberately never use the application's config directory or installer:
 	// the normal installer does not constrain capture to the reviewed hosts.
+	if args[0] == "audit-processes" {
+		return s.auditProcesses(ctx, liveProcessInventory)
+	}
 	c, err := client.New(client.Options{ConfigDir: filepath.Join(s.Dir, "config"), Version: s.Version})
 	if err != nil {
 		return err
@@ -335,7 +339,7 @@ func uninstall(ctx context.Context, s *session, c api.Service, auth authorizatio
 	}
 	fmt.Println("PASS: helper, launchd registration, socket, capture journal, and helper data are absent; current baseline routes and tunnels are restored.")
 	fmt.Println("Private review artifacts remain in the session directory for inspection; remove that directory when finished.")
-	return nil
+	return s.auditProcesses(ctx, liveProcessInventory)
 }
 
 func waitUntil(ctx context.Context, fn func() (bool, error)) error {

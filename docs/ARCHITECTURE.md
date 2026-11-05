@@ -47,6 +47,26 @@ explicitly unknown; private service preferences are not treated as proof.
 Network/site exceptions and availability make a global preference insufficient.
 The harness never changes Private Relay, account, browser or network settings.
 
+The optional single-open Safari acceptance mode owns its process lifecycle. It
+refuses a pre-existing Safari, records kernel process identities before one
+LaunchServices request, and always attempts bounded cleanup. Safari gets SIGTERM;
+after its exit and a grace period, only new system WebKit services independently
+associated with its new resource/jetsam coalitions can receive SIGKILL. A name,
+parent PID or start time alone is insufficient. Unknown ownership is reported,
+never guessed. No pre-existing process, unrelated app service or process group is
+signaled, and no AppleScript or Automation API is used. Manual mode stays manual.
+
+The pure-Go harness reads `kern.proc.all` and process identity/coalition flavors
+from XNU's [process ABI](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/proc_info_private.h).
+Signal targeting uses `PROC_INFO_CALL_SIGNAL_AUDITTOKEN`, whose
+[kernel implementation](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/proc_info.c)
+validates the PID/exec generation while holding the target identity; unsupported
+or denied calls fail without a numeric-PID fallback. This is confined to the
+explicit acceptance option, not the app/helper. Its private reports retain normal,
+forced and incomplete cleanup, and a separate post-uninstall inventory lists all
+still-present processes started in the recorded window. That inventory is read-only
+and cannot authorize future signals. These lifecycle changes await hardware review.
+
 ### Capture ownership
 
 `engine/capture` records the routing table, creates a WireGuard-Go utun, and
