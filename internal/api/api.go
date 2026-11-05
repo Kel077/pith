@@ -260,12 +260,28 @@ type Status struct {
 	Since    time.Time    `json:"since,omitzero"`    // when it started
 	Error    *Error       `json:"error,omitempty"`   // why it failed
 	Warnings []Warning    `json:"warnings,omitempty"`
+	// LastCapture identifies the most recently prepared capture in this helper
+	// process, including after Stop or a SafeStart failure. Nil before the first
+	// successful preparation and after a helper restart. This is historical
+	// ownership evidence, not proof that capture is active or cleanup succeeded.
+	LastCapture *CaptureIdentity `json:"lastCapture,omitempty"`
 
 	Open        int    `json:"open"`        // connections open now
 	Sent        uint64 `json:"sent"`        // bytes since Since
 	Received    uint64 `json:"received"`    // bytes since Since
 	SendRate    uint64 `json:"sendRate"`    // bytes a second, over the last second
 	ReceiveRate uint64 `json:"receiveRate"` // bytes a second, over the last second
+}
+
+// CaptureIdentity comes from the helper's capture journal. Token distinguishes
+// successive captures; names and indices may be reused by the OS. Callers must
+// independently observe cleanup and never use this value to delete routes.
+type CaptureIdentity struct {
+	BootSession string   `json:"bootSession"`
+	Token       string   `json:"token"`
+	Interface   string   `json:"interface"`
+	Index       int      `json:"index"`
+	Prefixes    []string `json:"prefixes"`
 }
 
 // HelperStatus reports the privileged helper.
