@@ -1,104 +1,94 @@
-# 橘核 Pith — interface design
+# Pith — interface design
 
-Pith does one thing: it decides which network each new connection leaves
-through. The interface keeps to that, and tries to make three answers
-obvious at a glance: **is routing on, by which rules, and where did each
-connection really go.**
+Pith decides which network each new connection leaves through. The
+interface keeps to that, and makes three things plain at a glance: whether
+routing is on, by which rules, and where each connection really went.
 
 ## Principles
 
-1. **A rule is a sentence.** "WeChat → iPhone USB › Ethernet › System" reads
-   left to right as what it does: these apps, to these places, go out
-   through these interfaces, in this order. No table of checkboxes.
-2. **Four places, not ten.** Rules (with scenes and the rule check),
-   Activity (connections, apps, traffic), Network (interfaces and tests),
-   Settings.
-3. **The switch is always in reach.** The routing switch sits at the foot
-   of the sidebar on every page and at the top of the menu bar panel,
-   with the scene that runs and for how long.
-4. **Saving applies.** Edits save as they are made and the running scene
-   picks them up for new connections; there is no "restart the scene"
-   step to remember.
-5. **Say where it really went.** Every connection shows the interface it
-   left through, filled in that interface's color when a rule sent it
-   there, and as a quiet outlined chip when macOS routed it.
-6. **Quiet by default.** Neutral surfaces from the system's light or dark
-   appearance; color only for state and for the user's next action.
+1. **Native and calm.** It looks like a Mac app of today: light glass over
+   a soft background, capsules, hairlines, the system font, the system's
+   light and dark appearances.
+2. **Say little.** Titles, labels, values and status words; no paragraphs.
+   What needs explaining goes in a tooltip, not on the page.
+3. **A rule is a sentence.** "WeChat → iPhone USB › Ethernet › System"
+   reads left to right as what it does.
+4. **Four places.** Rules (with scenes and the check), Activity
+   (connections, apps, traffic), Network (interfaces and tests), Settings.
+5. **The switch is always in reach**: the routing capsule at the top right
+   of the window, and at the top of the menu bar panel.
+6. **Saving applies.** Edits save as they are made, and the running scene
+   takes them for new connections.
+7. **Say where it really went.** A connection's interface shows in that
+   interface's color when a rule sent it there, and as a quiet outlined
+   chip when macOS routed it.
 
-## Color
+## The look
 
-- **Accent — tangerine** `#ee7a1e` (dark: `#ff9a45`): primary buttons,
-  the chosen scene, switches, the sidebar's icons. Nothing else is orange.
-- **Running — green**: the dot of routing that runs, open connections.
-- **Danger — red**: block rules and blocked connections. **Warning —
-  amber**: fallbacks and failures.
-- **Interfaces** each get one color from a calm palette by their kind —
-  Ethernet blue, cellular violet, Wi-Fi teal, then others — assigned so
-  that two never share one. The color follows the interface everywhere:
-  rule chips, the activity's chips and charts, the traffic bars, the
-  menu bar panel. A disconnected interface shows as a ring, faded.
+- **Ambient background.** A warm off-white (dark: near-black) with three
+  soft glows: tangerine at the top left, rose at the right, periwinkle at
+  the bottom (`ambient` in `internal/ui/glass.go`).
+- **Panes of light glass** over it (`glassy`, `pane`, `paneRow`,
+  `paneRows`): MyGo's glass material with some clarity, so the glows show
+  through; a one-pixel rim catching the light; a wide, faint shadow;
+  radius 18. Lists are one pane whose rows are divided by hairlines, as in
+  System Settings, never a stack of boxes.
+- **Capsules** for navigation and actions: the pages and the scenes as
+  segmented capsules of glass whose chosen segment is a bright pill
+  (`segmentedCapsule`, keyboard- and VoiceOver-friendly); quiet actions as
+  glass capsules (`glassCapsuleButton`); the page's main action as a
+  tangerine capsule lit from above (`primaryCapsule`).
+- **Color.** Tangerine (`#ee7a1e`, dark `#ff9a45`) only for the main
+  action, the chosen state and switches. Green for routing that runs, red
+  for blocking, amber for fallbacks and warnings. Each interface keeps one
+  calm color everywhere (Ethernet blue, cellular violet, Wi-Fi teal, then
+  others), shown as a dot, a chip, a chart's series; a disconnected one is
+  a faded ring.
+- **Type.** The system font. Page titles 28 pt bold; row titles 14 pt
+  semibold; body 13 pt; secondary 12 pt muted. Numbers that change use
+  tabular figures (`FontFeatures("tnum")`) so they don't jitter.
+- **Spacing.** A 4 pt grid; 32 pt page margins; panes 18 pt round,
+  capsules fully round.
 
-## Type and spacing
+## The window
 
-The system font (SF Pro / PingFang SC) through MyGo. Page titles 20 pt
-bold; row titles 14 pt semibold; body 13 pt; secondary 12 pt in the
-theme's muted text; numbers that change (speeds, bytes, times) in the
-monospaced face so they do not jitter. A 4 pt grid: 24 pt page margins,
-12 pt card radius, 8 pt between rows.
+A hidden title bar. At the top, a 64 pt bar: the traffic lights on the
+left, level with the capsule of the four pages in the middle, and the
+routing capsule on the right (a dot, the running scene, the switch). Each
+page has a large title and its actions on the right.
 
-## Pages
-
-- **Rules.** Scenes as pills under the title (the running one with a green
-  dot); "…" holds rename, duplicate, import, export and delete. Each rule
-  is a card: app icons and names, then its destinations and protocol in
-  muted text, then the route as chips, then its switch. Hover shows a
-  drag handle; right-click edits, duplicates, moves to the top or
-  deletes (with Undo). A banner offers to switch when the page shows a
-  scene other than the running one. New rules go to the top, since they
-  are usually exceptions to the rules below them.
-- **Rule editor.** One dialog, top to bottom in the order of the sentence:
-  apps (installed apps with icons and search, or any program), destinations
-  as chips (paste a list to add many; invalid ones stay in the field in
-  red), whether domains include subdomains, protocol, action, the ordered
-  interfaces, the fallback, a note. Problems show only after Save.
-- **Rule check.** Scene, app, destination (a URL works), optional actual
-  IP and protocol give the outcome first — "goes out through Ethernet, by
-  rule 3" — then each rule's verdict.
-- **Activity.** Connections (live, newest first; pause and clear; search),
-  Apps (traffic per app with a bar), and Traffic (stacked bars per
-  interface over an hour, a day or a week, with totals). Right-click a
-  connection to make a rule from its app or its destination.
-- **Network.** A card per connected interface (addresses, router, DNS,
-  hardware address, a test of latency and public IP; double-click the
-  name to rename it), a compact list of the others, and a reachability
-  test of one server through every interface.
-- **Settings.** General, Routing, Helper, Data, About, as grouped rows with
-  an explanation under each label.
+- **Rules.** The scenes as a segmented capsule (the running one with a
+  green dot), "+" and "…" beside it, and an ⓘ whose tooltip says how rules
+  decide. The rules are rows of one pane: app icons, names, what they
+  match, the route as chips, a switch. A rule an earlier rule covers says
+  so in amber. Hover shows a drag handle; right-click edits, duplicates,
+  moves to the top or deletes (with Undo).
+- **Rule editor** and **Check**: sheets of glass, labeled rows, chips,
+  segmented capsules, the ordered interfaces as a pane of rows.
+- **Activity.** Connections (live, newest first), Apps, and Traffic (bars
+  per interface over an hour, a day or a week), each as one pane.
+- **Network.** A pane per connected interface, a compact group for the
+  others, and a reachability test.
+- **Settings.** Groups of rows, as System Settings has them.
 
 ## The menu bar
 
-A template icon, faint while routing is off, solid while it runs,
-optionally followed by the download speed. A click opens a panel:
-the switch, the scenes (a check on the one that runs), the connected
-interfaces with their speed, totals, and buttons to open the window or
-quit. A right-click offers the same two in a menu.
-
-## First run
-
-The window opens on Rules with an empty state that explains rules in one
-sentence. Turning routing on without the helper explains, in three
-lines, what the helper does and does not do, before macOS asks for the
-password.
+A template icon, faint while routing is off and solid while it runs,
+optionally followed by the download speed. A click opens a native popover:
+the switch, the scenes, the interfaces with their speed, and buttons to
+open the window or quit.
 
 ## Language
 
-English and Simplified Chinese, following the system unless Settings
-chooses one. Strings live where they show, in both languages:
-`tr("Rules", "规则")`.
+English and Simplified Chinese, following the system unless Settings says
+otherwise. Messages live in `locales/en.json`, which describes them, and
+`locales/zh-Hans.json`; MyGo generates a function per message
+(`locales.AddRule()`), and the views say them every frame.
 
 ## Reviewing the views
 
-`go test ./internal/ui -run Snapshots -snapshots=DIR` renders every page,
-the editor, the check, the panel and the first run, light and dark, from
-the mock backend into PNGs. `go run ./cmd/pith -mock -page activity
--lang zh-Hans` runs the real app on the mock.
+`go test ./internal/ui -run 'Snapshots$' -snapshots=DIR -lang=en` (or
+`-lang=zh-Hans`) renders every page, the editor, the check, the panel,
+the warnings and the first launch, light and dark, from the mock backend.
+`go run ./cmd/pith -mock -page activity -lang zh-Hans` runs the real app
+on the mock.
