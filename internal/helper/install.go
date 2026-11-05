@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,22 +29,59 @@ type InstallPlan struct {
 }
 
 const (
-	InstallPrompt   = "Pith (橘核) needs your password to install its routing helper. 橘核需要您的密码来安装路由辅助程序。"
-	UpdatePrompt    = "Pith (橘核) needs your password to update its routing helper. 橘核需要您的密码来更新路由辅助程序。"
-	UninstallPrompt = "Pith (橘核) needs your password to remove its routing helper. 橘核需要您的密码来移除路由辅助程序。"
+	InstallPrompt   = "Pith needs your password to install its routing helper."
+	UpdatePrompt    = "Pith needs your password to update its routing helper."
+	UninstallPrompt = "Pith needs your password to remove its routing helper."
 )
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
 
-func launchPlist(uid uint32) ([]byte, error) {
+func launchPlist(uid uint32, extraArgs ...string) ([]byte, error) {
 	return plist.MarshalIndent(map[string]any{
 		"Label":            Label,
-		"ProgramArguments": []string{BinaryPath, "--owner-uid", strconv.FormatUint(uint64(uid), 10)},
+		"ProgramArguments": append([]string{BinaryPath, "--owner-uid", strconv.FormatUint(uint64(uid), 10)}, extraArgs...),
 		"RunAtLoad":        true, "KeepAlive": true, "ProcessType": "Background", "ThrottleInterval": 10, "ExitTimeOut": 5,
 	}, plist.XMLFormat, "  ")
 }
 
 func PlanInstall(source string, uid uint32) (InstallPlan, error) {
+	return planInstall(source, uid, nil)
+}
+
+// ScopedOptions restricts an explicitly authorized development installation to
+// individual test hosts. It is never used by the application's installer.
+type ScopedOptions struct {
+	Prefixes        []netip.Prefix
+	ProbeAddress    string // literal IP:port, included in Prefixes
+	ProbeServerName string // certificate-verified TLS name
+}
+
+// PlanScopedInstall has the same review/authorization boundary as PlanInstall.
+// Only /32 and /128 capture routes are accepted; launchd still starts idle.
+func PlanScopedInstall(source string, uid uint32, opts ScopedOptions) (InstallPlan, error) {
+	if len(opts.Prefixes) == 0 || len(opts.Prefixes) > 16 {
+		return InstallPlan{}, fmt.Errorf("scoped installation needs one to sixteen test hosts")
+	}
+	probe, err := netip.ParseAddrPort(opts.ProbeAddress)
+	if err != nil || probe.Port() == 0 || !probe.Addr().IsGlobalUnicast() || opts.ProbeServerName == "" || strings.ContainsAny(opts.ProbeServerName, "\x00\r\n") {
+		return InstallPlan{}, fmt.Errorf("scoped installation needs a TLS test IP:port and server name")
+	}
+	args := []string{"--safe-target", opts.ProbeAddress, "--safe-server-name", opts.ProbeServerName}
+	containsProbe := false
+	for _, p := range opts.Prefixes {
+		if !p.IsValid() || p.Bits() != p.Addr().BitLen() || !p.Addr().IsGlobalUnicast() || p.Addr().Is4In6() {
+			return InstallPlan{}, fmt.Errorf("scoped installation accepts only unicast /32 or /128 test hosts")
+		}
+		containsProbe = containsProbe || p.Contains(probe.Addr())
+		args = append(args, "--capture", p.String())
+	}
+	if !containsProbe {
+		return InstallPlan{}, fmt.Errorf("SafeStart address is outside the test capture")
+	}
+	return planInstall(source, uid, args)
+}
+
+func planInstall(source string, uid uint32, args []string) (InstallPlan, error) {
 	if uid == 0 {
 		return InstallPlan{}, fmt.Errorf("the helper must be installed for an unprivileged user")
 	}
@@ -67,7 +105,7 @@ func PlanInstall(source string, uid uint32) (InstallPlan, error) {
 		return InstallPlan{}, err
 	}
 	checksum := fmt.Sprintf("%x", hash.Sum(nil))
-	launch, err := launchPlist(uid)
+	launch, err := launchPlist(uid, args...)
 	if err != nil {
 		return InstallPlan{}, err
 	}
@@ -108,6 +146,7 @@ func PlanUninstall() InstallPlan {
 		"for path in " + shellQuote(BinaryPath) + " " + shellQuote(PlistPath) + " " + shellQuote(DataDir) + "; do [ ! -L \"$path\" ] || { echo 'refusing symlink installation path' >&2; exit 1; }; done\n" +
 		"if /bin/launchctl print \"$service\" >/dev/null 2>&1; then /bin/launchctl bootout \"$service\"; fi\n" +
 		waitForSocket() +
+		"if [ -f " + shellQuote(DataDir+"/capture.json") + " ]; then " + shellQuote(BinaryPath) + " --cleanup; fi\n" +
 		"/bin/rm -f " + shellQuote(BinaryPath) + " " + shellQuote(PlistPath) + "\n" +
 		"if [ -S " + shellQuote(SocketPath) + " ]; then /bin/rm -f " + shellQuote(SocketPath) + "; fi\n" +
 		"/bin/rm -rf " + shellQuote(DataDir) + "\n"

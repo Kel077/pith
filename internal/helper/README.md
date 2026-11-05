@@ -2,8 +2,8 @@
 
 The helper is a pure-Go arm64 executable. `pithd --version` is unprivileged;
 normal startup requires root and `--owner-uid <installing user's UID>`. Launchd
-starts it idle. The M2 build deliberately rejects Start until M3 supplies the
-real routing backend.
+starts it idle. The engine backend is linked into `cmd/pithd`; importing or
+constructing it never starts capture. The helper owns its complete shutdown.
 
 HTTP/JSON runs only over a Unix socket, with protocol version 1 in
 `X-Pith-Protocol`. The status response also announces its protocol/build
@@ -34,24 +34,14 @@ backup. No launchd command is called by tests: installer tests parse the shell
 with `sh -n` and decode the plist. Peer, request, subscription, cancellation,
 hot-reload and shutdown tests use a temporary socket and no elevated process.
 
-## Pending test requiring Claude's go-ahead
+## Pending authorized test
 
-1. Record whether the four paths and launchd service above already exist.
-   Do not replace a pre-existing unrelated installation. Keep the app's
-   config directory in `$TMPDIR` for this test.
-2. With the bundled M2 helper, invoke InstallHelper and first cancel the
-   administrator dialog: expect `ErrCanceled` and no installation.
-3. Invoke InstallHelper again and let the user enter the password. Verify
-   Status reports the app's version, Installed/Running true, State Stopped;
-   verify the first subscription events are Status and Interfaces.
-4. Start must fail explicitly in the M2-only build and leave Stopped. This
-   test does not create a utun or install any network route.
-5. Invoke UninstallHelper, let the user confirm, and verify the service,
-   binary, plist, socket and helper data are removed. Quit the test app.
-
-Uninstall removes helper logs/traffic data. Reinstalling restores the service,
-not removed history. A full engine test needs its own recorded route snapshot,
-scoped capture destinations, rollback checks and authorization in M3.
+Installation (including cancellation), real scoped routing and uninstall are
+reserved for one coordinated session after M3. No unit test installs the daemon,
+creates a real utun or changes routing. Uninstall removes helper logs/traffic;
+reinstalling restores the service, not deleted history. The consolidated procedure
+must record original routes/managed paths and include emergency undo before any
+authorization is requested. See [backend architecture](../../docs/ARCHITECTURE.md).
 
 System references: Apple's [launchd guide](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html),
 [AppleScript command invocation](https://developer.apple.com/library/archive/documentation/LanguagesUtilities/Conceptual/MacAutomationScriptingGuide/CallCommandLineUtilities.html),

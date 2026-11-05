@@ -1,0 +1,472 @@
+package main
+
+import (
+	"bufio"
+	"context"
+	"crypto/tls"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/netip"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/Kel077/pith/internal/api"
+	"github.com/Kel077/pith/internal/engine/capture"
+	"github.com/Kel077/pith/internal/netif"
+)
+
+type checkOptions struct {
+	batch       bool
+	safeFailure bool
+	preserve    bool
+	observe     time.Duration
+}
+
+type tlsEvidence struct {
+	StatusCode int    `json:"statusCode"`
+	BodyBytes  int    `json:"bodyBytes"`
+	PublicIP   string `json:"publicIP,omitempty"`
+}
+
+type preflight struct {
+	Interface string      `json:"interface"`
+	TLS       tlsEvidence `json:"tls"`
+}
+
+type checkCase struct {
+	Name       string         `json:"name"`
+	Connection api.Connection `json:"connection"`
+	TLS        tlsEvidence    `json:"tls"`
+	ExpectedIP string         `json:"expectedPublicIP,omitempty"`
+	Error      string         `json:"error,omitempty"`
+}
+
+type checkReport struct {
+	Started     time.Time   `json:"started"`
+	Finished    time.Time   `json:"finished"`
+	Mode        string      `json:"mode"`
+	Cases       []checkCase `json:"cases"`
+	Traffic     api.Traffic `json:"traffic"`
+	Events      []api.Event `json:"events"`
+	Before      snapshot    `json:"before"`
+	After       snapshot    `json:"after"`
+	Error       string      `json:"error,omitempty"`
+	StopError   string      `json:"stopError,omitempty"`
+	Restored    bool        `json:"restored"`
+	Observation bool        `json:"manualObservationOnly"`
+}
+
+func check(parent context.Context, s *session, c api.Service, opts checkOptions) (resultErr error) {
+	if !s.Installed || !s.CancelPassed {
+		return errors.New("check requires this session's successful cancellation and scoped installation")
+	}
+	choices := 0
+	for _, selected := range []bool{opts.batch, opts.safeFailure, opts.preserve, opts.observe != 0} {
+		if selected {
+			choices++
+		}
+	}
+	if choices > 1 || opts.observe < 0 || opts.observe > 90*time.Second {
+		return errors.New("choose at most one of --batch, --safe-failure, --preserve, or --observe with a duration in (0,90s]")
+	}
+	if choices != 0 && !s.SmokePassed {
+		return errors.New("run the default smoke check successfully before additional checks")
+	}
+	if err := s.verifyInstalled(); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(parent, 3*time.Minute)
+	defer cancel()
+	status, err := c.Status(ctx)
+	if err != nil || !status.Helper.Running || status.Helper.Outdated || status.State != api.Stopped {
+		return fmt.Errorf("check requires an idle, responding helper of the reviewed version: state=%s error=%v", status.State, err)
+	}
+	report := checkReport{Started: time.Now(), Mode: "smoke"}
+	if opts.batch {
+		report.Mode = "batch"
+	} else if opts.safeFailure {
+		report.Mode = "safe-failure"
+	} else if opts.preserve {
+		report.Mode = "preserve"
+	} else if opts.observe > 0 {
+		report.Mode, report.Observation = "observe", true
+	}
+	report.Before, err = takeSnapshot(ctx)
+	if err != nil {
+		return err
+	}
+	if !sameRoutes(s.Original.Routes, report.Before.Routes) || !sameTunnels(s.Original.Interfaces, report.Before.Interfaces) {
+		return errors.New("routing or tunnel inventory changed since preparation; do not start capture until the snapshots are reviewed")
+	}
+	for _, ref := range s.Interfaces {
+		if iface := ref.Resolve(report.Before.Interfaces); iface == nil || !iface.Up {
+			return errors.New("a reviewed interface is missing or down")
+		}
+	}
+	// The cleanup context is independent of signal cancellation and test timeout.
+	// The helper's scoped five-minute lease is the final bound if this process
+	// is killed before its deferred Stop can run.
+	defer func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cleanupCancel()
+		if err := c.Stop(cleanupCtx); err != nil {
+			report.StopError = err.Error()
+			resultErr = errors.Join(resultErr, fmt.Errorf("Stop failed: %w; use the reviewed emergency command", err))
+		}
+		report.After, err = takeSnapshot(cleanupCtx)
+		if err != nil {
+			resultErr = errors.Join(resultErr, err)
+		} else {
+			report.Restored = sameRoutes(report.Before.Routes, report.After.Routes) && sameTunnels(report.Before.Interfaces, report.After.Interfaces)
+			if !report.Restored {
+				resultErr = errors.Join(resultErr, errors.New("routes or tunnel inventory were not restored exactly; inspect the private snapshots"))
+			}
+		}
+		report.Finished = time.Now()
+		if resultErr != nil {
+			report.Error = resultErr.Error()
+		}
+		path := filepath.Join(s.Dir, "check-"+report.Mode+"-"+report.Started.Format("20060102T150405.000000000")+".json")
+		resultErr = errors.Join(resultErr, writeJSON(path, report))
+		fmt.Println("Private check report:", path)
+		if resultErr == nil && choices == 0 {
+			s.SmokePassed = true
+			resultErr = s.save()
+		}
+		if resultErr == nil {
+			fmt.Println("PASS: this command completed and routing is stopped; uninstall the idle helper when the session is finished.")
+		}
+	}()
+	settings := api.DefaultSettings()
+	settings.KeepRouting, settings.ResumeOnLaunch, settings.OpenAtLogin = false, false, false
+	settings.IPv6, settings.SafeStart, settings.SniffDomains, settings.LogDays = false, true, true, 1
+	cfg := api.Config{Version: api.ConfigVersion, Selected: "rootcheck", Scenes: []api.Scene{{ID: "rootcheck", Name: "Scoped acceptance"}}, Settings: settings}
+	address, _ := netip.ParseAddrPort(s.Target)
+	block := api.Rule{ID: "block", Enabled: true, Targets: []string{address.Addr().String()}, Protocol: api.TCP, Action: api.Block}
+	if opts.safeFailure {
+		cfg.Scenes[0].Rules = []api.Rule{block}
+	}
+	if err := c.SaveConfig(ctx, cfg); err != nil {
+		return err
+	}
+	if opts.safeFailure {
+		if err := c.Start(ctx, cfg.Selected); api.Code(err) != api.ErrNetworkLost {
+			return fmt.Errorf("blocked SafeStart returned %v, expected ErrNetworkLost", err)
+		}
+		status, err := c.Status(ctx)
+		if err != nil || status.State != api.Failed || status.Error == nil || status.Error.Code != api.ErrNetworkLost {
+			return fmt.Errorf("SafeStart did not report the expected failed status: state=%s error=%v", status.State, err)
+		}
+		fmt.Println("PASS: the blocked SafeStart returned ErrNetworkLost; checking route rollback next.")
+		return nil
+	}
+	eventCtx, eventCancel := context.WithCancel(ctx)
+	events, err := c.Subscribe(eventCtx)
+	if err != nil {
+		eventCancel()
+		return err
+	}
+	var eventMu sync.Mutex
+	eventsDone := make(chan struct{})
+	go func() {
+		defer close(eventsDone)
+		for event := range events {
+			eventMu.Lock()
+			if len(report.Events) < 2000 {
+				report.Events = append(report.Events, event)
+			}
+			eventMu.Unlock()
+		}
+	}()
+	defer func() { eventCancel(); <-eventsDone }()
+	var native *tls.Conn
+	if opts.preserve {
+		// A native kernel TCP socket is already established when the helper
+		// snapshots PCBs. Its next request must keep working after host capture.
+		native, err = connectTLS(ctx, s, "")
+		if err != nil {
+			return fmt.Errorf("open native connection before capture: %w", err)
+		}
+		defer native.Close()
+	}
+	if err := c.Start(ctx, cfg.Selected); err != nil {
+		return err
+	}
+	status, err = c.Status(ctx)
+	if err != nil || status.State != api.Running {
+		return fmt.Errorf("Start did not reach running: state=%s error=%v", status.State, err)
+	}
+	runningSince := status.Since
+	system := capture.SystemInterface(report.Before.Routes, address.Addr())
+	runCase := func(name string, rules []api.Rule, outcome api.Outcome, iface, ruleID string, existing *tls.Conn) error {
+		cfg.Scenes[0].Rules = rules
+		if err := c.SaveConfig(ctx, cfg); err != nil {
+			return err
+		}
+		last, err := c.Connections(ctx, api.ConnectionQuery{Limit: 500})
+		if err != nil {
+			return err
+		}
+		var maxID uint64
+		for _, conn := range last {
+			if conn.ID > maxID {
+				maxID = conn.ID
+			}
+		}
+		// Select the exact still-open connection before sending its HTTP request;
+		// an earlier closed connection with the same rule cannot satisfy this case.
+		var existingID uint64
+		if existing != nil {
+			maxID = 0
+			for _, conn := range last {
+				if conn.Process.PID == os.Getpid() && conn.Remote == s.Target && conn.RuleID == ruleID && conn.Ended.IsZero() && conn.ID > existingID {
+					existingID = conn.ID
+				}
+			}
+			if existingID == 0 {
+				return errors.New("the open connection has no attributed log entry before hot reload")
+			}
+		}
+		entry := checkCase{Name: name}
+		entry.TLS, err = exchangeTLS(ctx, s, "", existing)
+		expectSuccess := outcome != api.Blocked && outcome != api.Unreachable
+		if (err == nil) != expectSuccess {
+			entry.Error = fmt.Sprintf("TLS result does not match expected outcome %s: %v", outcome, err)
+			report.Cases = append(report.Cases, entry)
+			return errors.New(entry.Error)
+		}
+		pollCtx, pollCancel := context.WithTimeout(ctx, 4*time.Second)
+		defer pollCancel()
+		err = waitUntil(pollCtx, func() (bool, error) {
+			connections, err := c.Connections(pollCtx, api.ConnectionQuery{Limit: 500})
+			if err != nil {
+				return false, err
+			}
+			for _, conn := range connections {
+				if conn.ID <= maxID || conn.Process.PID != os.Getpid() || conn.Remote != s.Target || conn.Protocol != api.TCP || existing != nil && conn.ID != existingID {
+					continue
+				}
+				if conn.Ended.IsZero() {
+					continue
+				}
+				entry.Connection = conn
+				if conn.Outcome != outcome || conn.Interface != iface || conn.RuleID != ruleID {
+					return false, fmt.Errorf("connection log differs: outcome=%s interface=%s rule=%s", conn.Outcome, conn.Interface, conn.RuleID)
+				}
+				if expectSuccess && (conn.Sent == 0 || conn.Received == 0) {
+					return false, errors.New("successful connection has no bidirectional byte counts")
+				}
+				return true, nil
+			}
+			return false, nil
+		})
+		if err == nil && expectSuccess {
+			entry.ExpectedIP = s.baselineIP(iface)
+			if entry.ExpectedIP != "" && entry.TLS.PublicIP != entry.ExpectedIP {
+				err = errors.New("public-IP echo differs from the preflight for the expected interface")
+			}
+		}
+		if err == nil {
+			current, statusErr := c.Status(ctx)
+			if statusErr != nil || current.State != api.Running || !current.Since.Equal(runningSince) {
+				err = fmt.Errorf("hot reload restarted or stopped capture: state=%s error=%v", current.State, statusErr)
+			}
+		}
+		if err != nil {
+			entry.Error = err.Error()
+		}
+		report.Cases = append(report.Cases, entry)
+		if err == nil {
+			fmt.Println("PASS:", name)
+		}
+		return err
+	}
+	if err := runCase("system routing after SafeStart", nil, api.System, system, "", nil); err != nil {
+		return err
+	}
+	if native != nil {
+		entry := checkCase{Name: "native TCP connection survives capture activation", ExpectedIP: s.baselineIP("")}
+		entry.TLS, err = exchangeTLS(ctx, s, "", native)
+		if err == nil && entry.ExpectedIP != "" && entry.TLS.PublicIP != entry.ExpectedIP {
+			err = errors.New("preserved connection's public-IP echo differs from the system preflight")
+		}
+		if err != nil {
+			entry.Error = err.Error()
+		}
+		report.Cases = append(report.Cases, entry)
+		if err != nil {
+			return err
+		}
+		fmt.Println("PASS: native TCP connection survived host-route capture; this legacy flow is not a new proxied connection.")
+	}
+	route := func(id string, targets []string, via ...api.InterfaceRef) api.Rule {
+		return api.Rule{ID: id, Enabled: true, Targets: targets, Protocol: api.TCP, Action: api.Route, Via: via}
+	}
+	a := route("route-a", []string{address.Addr().String()}, s.Interfaces[0])
+	b := route("route-b", []string{address.Addr().String()}, s.Interfaces[1])
+	if err := runCase("IP rule through interface A", []api.Rule{a}, api.Routed, s.Interfaces[0].Name, a.ID, nil); err != nil {
+		return err
+	}
+	if opts.observe > 0 {
+		fmt.Printf("Manual observation window: %s. Capture remains limited to the reviewed hosts and stops when this command returns.\n", opts.observe)
+		deadline := time.NewTimer(opts.observe)
+		defer deadline.Stop()
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-deadline.C:
+				return nil
+			case <-ticker.C:
+				st, err := c.Status(ctx)
+				if err != nil || st.State != api.Running {
+					return fmt.Errorf("manual observation interrupted: state=%s error=%v", st.State, err)
+				}
+			}
+		}
+	}
+	if opts.batch {
+		if err := runCase("IP rule through interface B", []api.Rule{b}, api.Routed, s.Interfaces[1].Name, b.ID, nil); err != nil {
+			return err
+		}
+		domain := route("domain", []string{s.ServerName}, s.Interfaces[0])
+		if err := runCase("TLS SNI domain rule", []api.Rule{domain}, api.Routed, s.Interfaces[0].Name, domain.ID, nil); err != nil {
+			return err
+		}
+		multi := route("multi", []string{"unrelated.example", address.Addr().String()}, s.Interfaces[1])
+		if err := runCase("second target of one rule", []api.Rule{multi}, api.Routed, s.Interfaces[1].Name, multi.ID, nil); err != nil {
+			return err
+		}
+		if err := runCase("block wins over an earlier route", []api.Rule{a, block}, api.Blocked, "", block.ID, nil); err != nil {
+			return err
+		}
+		missing := api.InterfaceRef{Name: "pith-missing"}
+		fallback := route("ordered-fallback", a.Targets, missing, s.Interfaces[0])
+		if err := runCase("ordered interface fallback", []api.Rule{fallback}, api.Fallback, s.Interfaces[0].Name, fallback.ID, nil); err != nil {
+			return err
+		}
+		fallback = route("system-fallback", a.Targets, missing)
+		fallback.Fallback = true
+		if err := runCase("explicit fallback to system routing", []api.Rule{fallback}, api.System, system, fallback.ID, nil); err != nil {
+			return err
+		}
+		strict := route("strict", a.Targets, missing)
+		if err := runCase("missing interface without fallback", []api.Rule{strict}, api.Unreachable, "", strict.ID, nil); err != nil {
+			return err
+		}
+		// Complete TLS on A, then edit the rule before writing the HTTP request.
+		// The original connection must keep A while a new connection chooses B.
+		cfg.Scenes[0].Rules = []api.Rule{a}
+		if err := c.SaveConfig(ctx, cfg); err != nil {
+			return err
+		}
+		conn, err := connectTLS(ctx, s, "")
+		if err != nil {
+			return err
+		}
+		defer conn.Close()
+		if err := runCase("open connection survives hot reload", []api.Rule{b}, api.Routed, s.Interfaces[0].Name, a.ID, conn); err != nil {
+			return err
+		}
+		if err := runCase("new connection uses hot-reloaded route", []api.Rule{b}, api.Routed, s.Interfaces[1].Name, b.ID, nil); err != nil {
+			return err
+		}
+	}
+	since := report.Started.Truncate(time.Second)
+	report.Traffic, err = c.Traffic(ctx, api.TrafficQuery{Since: since, Step: time.Second})
+	if err != nil {
+		return err
+	}
+	var sent, received uint64
+	for _, sample := range report.Traffic.Series {
+		if sample.At.Before(since) || sample.At.Sub(since)%time.Second != 0 {
+			return errors.New("live traffic series is not aligned to the query's Since")
+		}
+		sent += sample.Sent
+		received += sample.Received
+	}
+	if sent == 0 || received == 0 || len(report.Traffic.Apps) == 0 {
+		return errors.New("traffic statistics are missing successful traffic or app totals")
+	}
+	fmt.Println("PASS: connection attribution, byte counts, live traffic, and app totals; checking Stop cleanup next.")
+	return nil
+}
+
+func connectTLS(ctx context.Context, s *session, iface string) (*tls.Conn, error) {
+	probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	dialer, err := netif.Dialer(iface, 3*time.Second, nil)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := dialer.DialContext(probeCtx, "tcp4", s.Target)
+	if err != nil {
+		return nil, err
+	}
+	tlsConn := tls.Client(conn, &tls.Config{ServerName: s.ServerName, MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}})
+	if err := tlsConn.HandshakeContext(probeCtx); err != nil {
+		tlsConn.Close()
+		return nil, err
+	}
+	return tlsConn, nil
+}
+
+func exchangeTLS(ctx context.Context, s *session, iface string, conn *tls.Conn) (tlsEvidence, error) {
+	var result tlsEvidence
+	var err error
+	if conn == nil {
+		conn, err = connectTLS(ctx, s, iface)
+		if err != nil {
+			return result, err
+		}
+	}
+	defer conn.Close()
+	stopCancel := context.AfterFunc(ctx, func() { conn.Close() })
+	defer stopCancel()
+	if err := conn.SetDeadline(time.Now().Add(8 * time.Second)); err != nil {
+		return result, err
+	}
+	_, port, _ := net.SplitHostPort(s.Target)
+	host := s.ServerName
+	if port != "443" {
+		host = net.JoinHostPort(host, port)
+	}
+	if _, err := fmt.Fprintf(conn, "GET / HTTP/1.1\r\nHost: %s\r\nConnection: close\r\nUser-Agent: Pith-rootcheck\r\n\r\n", host); err != nil {
+		return result, err
+	}
+	res, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		return result, err
+	}
+	defer res.Body.Close()
+	result.StatusCode = res.StatusCode
+	body, err := io.ReadAll(io.LimitReader(res.Body, 4096))
+	result.BodyBytes = len(body)
+	if err != nil {
+		return result, err
+	}
+	if res.StatusCode < 200 || res.StatusCode >= 400 {
+		return result, fmt.Errorf("test endpoint returned HTTP %d; choose a working HTTP/1.1 endpoint", res.StatusCode)
+	}
+	if addr, err := netip.ParseAddr(strings.TrimSpace(string(body))); err == nil && addr.IsGlobalUnicast() && !addr.IsPrivate() {
+		result.PublicIP = addr.String()
+	}
+	return result, nil
+}
+
+func (s *session) baselineIP(iface string) string {
+	for _, probe := range s.Preflight {
+		if probe.Interface == iface {
+			return probe.TLS.PublicIP
+		}
+	}
+	return ""
+}

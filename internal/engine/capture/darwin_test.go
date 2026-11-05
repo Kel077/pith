@@ -21,6 +21,15 @@ func TestDarwinRouteDecoding(t *testing.T) {
 }
 
 func TestLiveSnapshotIsReadOnly(t *testing.T) {
+	driver := nativeDriver{}
+	boot, err := driver.BootSession()
+	if err != nil || boot == "" {
+		t.Fatal("cannot read the current boot session", err)
+	}
+	again, err := driver.BootSession()
+	if err != nil || again != boot {
+		t.Fatal("boot session identity is unstable", err)
+	}
 	routes, err := Snapshot()
 	if err != nil {
 		t.Fatal(err)

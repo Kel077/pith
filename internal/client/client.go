@@ -25,6 +25,15 @@ type Options struct {
 	Version string
 	// SocketPath overrides the helper socket, primarily for development tests.
 	SocketPath string
+	// Prompts supplies localized authorization dialog text. Empty fields use
+	// English defaults; the client does not choose or load a UI locale.
+	Prompts Prompts
+}
+
+type Prompts struct {
+	Install   string
+	Update    string
+	Uninstall string
 }
 
 type Client struct {

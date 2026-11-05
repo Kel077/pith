@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/Kel077/pith/internal/api"
@@ -158,7 +159,10 @@ func AppForPath(path string) (api.AppRef, error) {
 		return api.AppRef{Path: path, Name: filepath.Base(path)}, nil
 	}
 	app := api.AppRef{Path: bundle, Name: strings.TrimSuffix(filepath.Base(bundle), filepath.Ext(bundle))}
-	f, err := os.Open(filepath.Join(bundle, "Contents", "Info.plist"))
+	// Bundle metadata is writable by the app's user. A FIFO must not block the
+	// resolver (and tunnel shutdown) while opening or reading it. Follow ordinary
+	// symlinks, but inspect the opened descriptor before accepting any contents.
+	f, err := os.OpenFile(filepath.Join(bundle, "Contents", "Info.plist"), os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) {
 		return app, nil
 	}
@@ -166,6 +170,13 @@ func AppForPath(path string) (api.AppRef, error) {
 		return app, err
 	}
 	defer f.Close()
+	stat, err := f.Stat()
+	if err != nil {
+		return app, err
+	}
+	if !stat.Mode().IsRegular() {
+		return app, nil
+	}
 	data, err := io.ReadAll(io.LimitReader(f, 1<<20+1))
 	if err != nil {
 		return app, err

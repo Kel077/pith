@@ -1,0 +1,56 @@
+name: macOS ARM64
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # GitHub's standard macos-15 image is Apple Silicon; macos-15-intel is not.
+    runs-on: macos-15
+    timeout-minutes: 25
+    env:
+      CGO_ENABLED: '0'
+      GOENV: 'off'
+      GOCACHE: ${{ runner.temp }}/pith-go-build
+      GOMODCACHE: ${{ runner.temp }}/pith-go-mod
+      GOPATH: ${{ runner.temp }}/pith-go-path
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          architecture: arm64
+          cache-dependency-path: go.sum
+
+      - name: Check architecture
+        run: test "$(uname -m)" = arm64
+
+      - name: Vet and test
+        run: make check
+
+      - name: Build and verify app
+        run: make archive
+
+      - name: Upload app archive
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pith-darwin-arm64
+          path: build/pith-*-arm64.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7

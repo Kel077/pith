@@ -25,6 +25,7 @@ const MTU = 1500
 
 // Driver separates planning/rollback tests from every privileged system call.
 type Driver interface {
+	BootSession() (string, error)
 	Snapshot() ([]Route, error)
 	Create(int) (tun.Device, error)
 	Index(string) (int, error)
@@ -42,13 +43,14 @@ type Options struct {
 }
 
 type journal struct {
-	Version   int       `json:"version"`
-	Token     string    `json:"token"`
-	PID       int       `json:"pid"`
-	Created   time.Time `json:"created"`
-	Interface string    `json:"interface"`
-	Index     int       `json:"index"`
-	Plan      Plan      `json:"plan"`
+	Version     int       `json:"version"`
+	BootSession string    `json:"bootSession,omitempty"`
+	Token       string    `json:"token"`
+	PID         int       `json:"pid"`
+	Created     time.Time `json:"created"`
+	Interface   string    `json:"interface"`
+	Index       int       `json:"index"`
+	Plan        Plan      `json:"plan"`
 }
 
 type Capture struct {
@@ -82,12 +84,19 @@ func Prepare(ctx context.Context, opts Options) (*Capture, error) {
 	if err := Recover(opts.StatePath, opts.Driver); err != nil {
 		return nil, err
 	}
+	boot, err := opts.Driver.BootSession()
+	if err != nil || boot == "" {
+		return nil, fmt.Errorf("read capture boot session: %w", errors.Join(err, errors.New("boot identity is required")))
+	}
 	before, err := opts.Driver.Snapshot()
 	if err != nil {
 		return nil, err
 	}
 	for _, r := range before {
-		if r.Local && (r.Prefix.Contains(netip.MustParseAddr("198.18.0.1")) || opts.IPv6 && r.Prefix.Contains(netip.MustParseAddr("fd7a:7069:7468::1"))) {
+		// Assigning a tunnel address makes it local, even in a scoped test. Do
+		// not take an address already covered by a specific physical/VPN route.
+		// Defaults and global split routes do not identify an occupied subnet.
+		if (r.Local || r.Prefix.Bits() > 1) && (r.Prefix.Contains(netip.MustParseAddr("198.18.0.1")) || opts.IPv6 && r.Prefix.Contains(netip.MustParseAddr("fd7a:7069:7468::1"))) {
 			return nil, &api.Error{Code: api.ErrRouteConflict, Detail: "Pith tunnel address is already in use"}
 		}
 	}
@@ -111,7 +120,7 @@ func Prepare(ctx context.Context, opts Options) (*Capture, error) {
 	}
 	faults := make(chan error, 1)
 	c := &Capture{Device: device, Name: name, Plan: plan, Faults: faults, opts: opts, drained: make(chan struct{})}
-	c.state = journal{Version: 1, Token: rand.Text(), PID: os.Getpid(), Created: time.Now(), Interface: name, Index: index, Plan: plan}
+	c.state = journal{Version: 2, BootSession: boot, Token: rand.Text(), PID: os.Getpid(), Created: time.Now(), Interface: name, Index: index, Plan: plan}
 	go func() {
 		defer close(c.drained)
 		defer close(faults)
@@ -252,12 +261,101 @@ func Recover(path string, driver Driver) error {
 	if driver == nil {
 		driver = nativeDriver{}
 	}
+	previousBoot, err := fromPreviousBoot(state, driver)
+	if err != nil {
+		return err
+	}
+	if previousBoot {
+		return removeState(path, state)
+	}
 	routes, err := driver.Snapshot()
 	if err != nil {
 		return err
 	}
 	if ownsRoutes(state, routes) {
 		return &api.Error{Code: api.ErrRouteConflict, Detail: "capture journal still has routes on " + state.Interface}
+	}
+	return removeState(path, state)
+}
+
+// CleanupStale is for explicit emergency recovery after launchd bootout. It
+// refuses to touch a live owner and deletes only journaled routes with the same
+// utun name AND index. Normal startup uses the more conservative Recover.
+func CleanupStale(ctx context.Context, path string, driver Driver) error {
+	return cleanupStale(ctx, path, driver, func(pid int) bool {
+		err := syscall.Kill(pid, 0)
+		return !errors.Is(err, syscall.ESRCH)
+	})
+}
+
+func cleanupStale(ctx context.Context, path string, driver Driver, alive func(int) bool) error {
+	state, err := readState(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if driver == nil {
+		driver = nativeDriver{}
+	}
+	previousBoot, err := fromPreviousBoot(state, driver)
+	if err != nil {
+		return err
+	}
+	if previousBoot {
+		// Both the PID and utun name/index may be reused after a reboot. Only
+		// remove the old metadata; none of this boot's routes can belong to it.
+		return removeState(path, state)
+	}
+	if alive(state.PID) {
+		return fmt.Errorf("capture owner %d is still running; stop it before recovery", state.PID)
+	}
+	routes, err := driver.Snapshot()
+	if err != nil {
+		return err
+	}
+	if state.BootSession == "" && ownsRoutes(state, routes) {
+		return errors.New("legacy capture journal cannot prove route ownership across boots")
+	}
+	for i := len(state.Plan.Prefixes) - 1; i >= 0; i-- {
+		prefix := state.Plan.Prefixes[i]
+		if slices.ContainsFunc(routes, func(r Route) bool {
+			return !r.Scoped && r.Interface == state.Interface && r.Index == state.Index && r.Prefix == prefix
+		}) {
+			if err := driver.Delete(ctx, prefix, state.Interface); err != nil {
+				return err
+			}
+		}
+	}
+	routes, err = driver.Snapshot()
+	if err != nil {
+		return err
+	}
+	if ownsRoutes(state, routes) {
+		return errors.New("journaled capture routes remain after recovery")
+	}
+	return removeState(path, state)
+}
+
+func fromPreviousBoot(state journal, driver Driver) (bool, error) {
+	if state.BootSession == "" {
+		return false, nil // Legacy journals may never authorize route deletion.
+	}
+	boot, err := driver.BootSession()
+	if err != nil || boot == "" {
+		return false, fmt.Errorf("verify capture boot session: %w", errors.Join(err, errors.New("boot identity is required")))
+	}
+	return state.BootSession != boot, nil
+}
+
+func removeState(path string, state journal) error {
+	current, err := readState(path)
+	if err != nil {
+		return err
+	}
+	if current.Token != state.Token {
+		return errors.New("capture owner changed during recovery")
 	}
 	return os.Remove(path)
 }
@@ -283,7 +381,7 @@ func readState(path string) (journal, error) {
 	if err := d.Decode(&state); err != nil {
 		return journal{}, err
 	}
-	if state.Version != 1 || state.Token == "" || !validName(state.Interface) || state.Index <= 0 {
+	if (state.Version != 1 && state.Version != 2) || state.Version == 2 && state.BootSession == "" || state.Token == "" || !validName(state.Interface) || state.Index <= 0 || state.PID <= 0 {
 		return journal{}, fmt.Errorf("invalid capture journal")
 	}
 	for _, prefix := range state.Plan.Prefixes {

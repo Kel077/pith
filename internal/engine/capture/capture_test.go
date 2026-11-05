@@ -75,13 +75,133 @@ func TestRouteConflictsAndVPNDefault(t *testing.T) {
 	}
 }
 
+func TestSystemRoutePreservesRejectAndLocalDestinations(t *testing.T) {
+	for _, terminal := range []Route{
+		{Prefix: prefix("198.51.100.0/24"), Interface: "lo0", Reject: true},
+		{Prefix: prefix("198.51.100.10/32"), Interface: "lo0", Local: true},
+		{Prefix: prefix("198.51.100.0/24")},
+	} {
+		for _, routes := range [][]Route{append(baseRoutes(), terminal), append([]Route{terminal}, baseRoutes()...)} {
+			if got := SystemInterface(routes, addr("198.51.100.10")); got != "" {
+				t.Fatalf("terminal route escaped through %s", got)
+			}
+			if got := SystemInterface(routes, addr("203.0.113.10")); got != "en0" {
+				t.Fatalf("unrelated route changed to %s", got)
+			}
+		}
+	}
+}
+
+func TestEmergencyRecoveryRefusesLiveOwnerAndPreservesReusedName(t *testing.T) {
+	driver := &fakeDriver{routes: baseRoutes()}
+	path := filepath.Join(t.TempDir(), "capture.json")
+	c, err := Prepare(context.Background(), Options{StatePath: path, Driver: driver, Scopes: []netip.Prefix{prefix("198.51.100.10/32")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err := c.Activate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := cleanupStale(context.Background(), path, driver, func(int) bool { return true }); err == nil {
+		t.Fatal("removed a live owner's routes")
+	}
+	// Simulate a route still referring to the dead owner's index, plus a route
+	// using the same BSD name with a new index that must remain untouched.
+	driver.routes = append(driver.routes, Route{Prefix: prefix("203.0.113.1/32"), Interface: "utun42", Index: 99})
+	if err := cleanupStale(context.Background(), path, driver, func(int) bool { return false }); err != nil {
+		t.Fatal(err)
+	}
+	if ownsRoutes(c.state, driver.routes) {
+		t.Fatal("left journaled route")
+	}
+	if !slices.ContainsFunc(driver.routes, func(r Route) bool { return r.Index == 99 }) {
+		t.Fatal("changed reused interface")
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+}
+
+func TestRecoveryAcrossBootsNeverDeletesReusedTunnelRoutes(t *testing.T) {
+	for _, emergency := range []bool{false, true} {
+		t.Run(fmt.Sprintf("emergency=%t", emergency), func(t *testing.T) {
+			d := &fakeDriver{routes: baseRoutes()}
+			opts := fakeOptions(t, d)
+			c, err := Prepare(context.Background(), opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := c.Activate(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			// Simulate the old process's kernel fd closing at reboot. Do not call
+			// its normal Close after reusing the fake interface in the next boot.
+			if err := c.Device.Close(); err != nil {
+				t.Fatal(err)
+			}
+			<-c.drained
+			d.boot = "test-boot-two"
+			foreign := Route{Prefix: c.Plan.Prefixes[0], Interface: c.Name, Index: c.state.Index}
+			d.routes = append(d.routes, foreign)
+			if emergency {
+				err = cleanupStale(context.Background(), opts.StatePath, d, func(int) bool {
+					t.Error("queried a PID from another boot")
+					return false
+				})
+			} else {
+				err = Recover(opts.StatePath, d)
+			}
+			if err != nil || !slices.Contains(d.routes, foreign) {
+				t.Fatal("recovery touched a route from a later boot", err)
+			}
+			if _, err := os.Stat(opts.StatePath); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("previous-boot metadata remained", err)
+			}
+		})
+	}
+}
+
+func TestLegacyJournalCannotAuthorizeEmergencyRouteDeletion(t *testing.T) {
+	d := &fakeDriver{routes: baseRoutes()}
+	opts := fakeOptions(t, d)
+	c, err := Prepare(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err := c.Activate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	c.state.Version, c.state.BootSession = 1, ""
+	if err := c.writeState(); err != nil {
+		t.Fatal(err)
+	}
+	before := slices.Clone(d.routes)
+	if err := cleanupStale(context.Background(), opts.StatePath, d, func(int) bool { return false }); err == nil {
+		t.Fatal("legacy journal authorized deletion without boot identity")
+	}
+	if !reflect.DeepEqual(before, d.routes) {
+		t.Fatal("legacy recovery changed routes")
+	}
+}
+
 type fakeDriver struct {
+	boot                      string
 	routes                    []Route
 	device                    *fakeDevice
 	operations                []string
 	failConfigure, failDelete bool
 	failAdd, adds             int
 }
+
+func (d *fakeDriver) BootSession() (string, error) {
+	if d.boot == "" {
+		return "test-boot-one", nil
+	}
+	return d.boot, nil
+}
+
 type fakeDevice struct {
 	owner  *fakeDriver
 	events chan tun.Event
@@ -178,6 +298,26 @@ func TestPrepareActivateAndStopAreReversible(t *testing.T) {
 	want := []string{"create", "configure", "add 0.0.0.0/1", "add 128.0.0.0/1", "delete 128.0.0.0/1", "delete 0.0.0.0/1", "close"}
 	if !reflect.DeepEqual(d.operations, want) {
 		t.Fatal(d.operations)
+	}
+}
+
+func TestScopedCaptureCannotClaimAddressFromExistingNetwork(t *testing.T) {
+	for _, r := range []Route{
+		{Prefix: prefix("198.18.0.0/15"), Interface: "en0"},
+		{Prefix: prefix("198.18.0.1/32"), Interface: "en5", Scoped: true},
+		{Prefix: prefix("198.18.0.0/24"), Interface: "lo0", Reject: true},
+		{Prefix: prefix("fd7a:7069:7468::/64"), Interface: "utun7"},
+	} {
+		d := &fakeDriver{routes: append(baseRoutes(), r)}
+		opts := fakeOptions(t, d)
+		opts.Scopes = []netip.Prefix{prefix("192.0.2.10/32")}
+		opts.IPv6 = true
+		if _, err := Prepare(context.Background(), opts); api.Code(err) != api.ErrRouteConflict {
+			t.Fatal("claimed a tunnel address from another network", r.Prefix, err)
+		}
+		if d.device != nil {
+			t.Fatal("created utun before checking address conflicts")
+		}
 	}
 }
 
