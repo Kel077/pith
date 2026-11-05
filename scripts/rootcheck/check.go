@@ -37,6 +37,8 @@ type checkOptions struct {
 	quicBatch      bool
 	appBundle      bool
 	appBundleBatch bool
+	webkit         time.Duration
+	webkitOpen     bool
 }
 
 type tlsEvidence struct {
@@ -88,6 +90,7 @@ type checkReport struct {
 	Connections      []api.Connection       `json:"connections,omitempty"`
 	LogError         string                 `json:"connectionLogError,omitempty"`
 	RouteDiagnostics []string               `json:"routeDiagnostics,omitempty"`
+	WebKit           *webkitEvidence        `json:"webKit,omitempty"`
 }
 
 func check(parent context.Context, s *session, c api.Service, opts checkOptions) (resultErr error) {
@@ -99,13 +102,16 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		return errors.New("check requires recorded cancellation or a managed skip, and this session's reviewed installation")
 	}
 	choices := 0
-	for _, selected := range []bool{opts.batch, opts.safeFailure, opts.preserve, opts.appBypass, opts.crash, opts.observe != 0, opts.udpDNS, opts.udpDNSBatch, opts.quic, opts.quicBatch, opts.appBundle, opts.appBundleBatch} {
+	for _, selected := range []bool{opts.batch, opts.safeFailure, opts.preserve, opts.appBypass, opts.crash, opts.observe != 0, opts.udpDNS, opts.udpDNSBatch, opts.quic, opts.quicBatch, opts.appBundle, opts.appBundleBatch, opts.webkit != 0} {
 		if selected {
 			choices++
 		}
 	}
-	if choices > 1 || opts.observe < 0 || opts.observe > 90*time.Second {
-		return errors.New("choose one check mode: batch, safe-failure, preserve, app-bypass, crash, udp-dns, udp-dns-batch, quic, quic-batch, app-bundle, app-bundle-batch, or observe with a duration in (0,90s]")
+	if choices > 1 || opts.observe < 0 || opts.observe > 90*time.Second || opts.webkit < 0 || opts.webkit > 60*time.Second {
+		return errors.New("choose one check mode: batch, safe-failure, preserve, app-bypass, crash, udp-dns, udp-dns-batch, quic, quic-batch, app-bundle, app-bundle-batch, webkit in (0,60s], or observe in (0,90s]")
+	}
+	if opts.webkitOpen && opts.webkit == 0 {
+		return errors.New("--webkit-open requires an explicit --webkit observation duration")
 	}
 	if opts.renewHotspot && opts.observe == 0 {
 		return errors.New("--renew-hotspot requires an explicit --observe duration")
@@ -138,6 +144,11 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		}
 		if opts.appBundleBatch && !s.BundlePassed {
 			return errors.New("run --app-bundle successfully before --app-bundle-batch")
+		}
+	}
+	if opts.webkit != 0 {
+		if err := s.reviewedWebKitPlan(); err != nil {
+			return err
 		}
 	}
 	if opts.appBypass || opts.renewHotspot || opts.appBundle || opts.appBundleBatch {
@@ -175,6 +186,8 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		report.Mode = "app-bundle"
 	} else if opts.appBundleBatch {
 		report.Mode = "app-bundle-batch"
+	} else if opts.webkit != 0 {
+		report.Mode, report.Observation = "webkit", true
 	} else if opts.safeFailure {
 		report.Mode = "safe-failure"
 	} else if opts.preserve {
@@ -445,6 +458,9 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 			return err
 		}
 		return collectTraffic(ctx, c, &report)
+	}
+	if opts.webkit != 0 {
+		return runWebKitCheck(ctx, s, c, cfg, status, &report, opts.webkit, opts.webkitOpen, liveWebKitChecks())
 	}
 	if opts.crash {
 		err := crashCapture(ctx, s, c, opts.auth, ops)

@@ -137,6 +137,7 @@ mode-0600 files include:
 | `dns-plan.json` | Optional frozen resolver endpoints, question name, A/AAAA types, request counts, response/idle bounds and evidence limits; its checksum binds the automatic DNS stage |
 | `quic-plan.json` | Optional frozen HTTP/3 host/certificate name, request/packet/payload budgets and observable/fragmented Initial controls; its checksum binds the QUIC stage |
 | `bundle-plan.json` | Optional standalone tool checksum/size, exact bundle metadata/layout, TLS target and one/six-request smoke/batch limits for disposable bundle fixtures |
+| `webkit-plan.json` | Optional frozen Safari app/executable checksums, existing capture target, nonce URL, manual/single-open trigger and a 60-second maximum delegation observation |
 | `install-plan.json`, `install.sh` | Exact scoped launchd arguments, fixed destinations, helper SHA-256 check, rollback, and authorization prompt |
 | `uninstall.sh` | Exact bootout, ownership-checked route cleanup, and managed-path removal |
 | `emergency-command.txt` | A standalone, single command that can be pasted into Terminal without IPC or the test executable |
@@ -504,6 +505,14 @@ The acceptance tool uses MIT-licensed
 
 ## Disposable application bundle stage
 
+Hardware acceptance of `fb94688` passed TCP smoke, the main executable's IP-rule
+smoke through A, and all six batch cases listed below. Nested helper inheritance,
+outside controls, parent Bundle ID/domain matching and parent block priority all
+passed their process/tuple/app/rule/exit/byte checks. Uninstall restored the
+baseline; temporary apps were deleted and independent system checks were clean.
+The coordinator reviewed and deleted the private reports. This result does not
+establish XPC launch or delegated WebKit attribution.
+
 Add `--app-bundle` to a new `host-ipv4` preparation. It freezes this standalone
 rootcheck executable's checksum and size, the existing TLS endpoint, both
 Info.plists and the relative fixture layout in `bundle-plan.json`. No app is
@@ -551,6 +560,58 @@ delegated WebKit sockets. Safari requires its separate reviewed observation;
 background URLSession is explicitly skipped this round. Synthetic policy tests
 and real copied Go protocol children cover preparation, tampering, attribution,
 block priority and process cleanup without accessing a helper or network.
+
+## Bounded Safari/WebKit observation
+
+This separate stage is implemented with synthetic tests; hardware acceptance is
+pending. Add `--webkit-app '<absolute Safari .app path>'` to a new `host-ipv4`
+preparation. It resolves the app's canonical path, requires the Safari identifier,
+and freezes its Info.plist/executable hashes and one nonce-bearing HTTPS URL in
+`webkit-plan.json`. The URL uses the existing TLS name and port; the existing
+literal `/32` is the only capture scope. No browser runs during preparation.
+
+After private plan review, installation and default TCP smoke, choose exactly one
+trigger for an observation of at most 60 seconds:
+
+```sh
+# Manual: navigate once to the printed URL after READY.
+"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --webkit 45s
+# Explicit alternative: one LaunchServices navigation after READY.
+"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --webkit 45s --webkit-open
+```
+
+The second form executes only `/usr/bin/open -a <frozen app> <frozen URL>`, once,
+after READY. The short-lived `open` child is waited for with a five-second limit;
+there is no retry, AppleScript/osascript, Automation control, private-window
+creation, tab inspection/closing or browser/service termination. The first form
+never starts a browser process. The coordinator closes only the test tab afterward
+and may separately record the expected page. Existing Safari windows are untouched.
+
+The app/IP rule directs fresh Safari TCP/UDP sockets to A. A successful automatic
+observation requires a new post-READY helper record and an independent unprivileged
+PCB sample for the exact connected local/remote tuple. Its actual socket owner
+must be the WebKit networking process, with a different delegated PID resolving
+to the frozen Safari executable and app. Kernel owner/effective PID and PCB
+generation, helper process/app/rule/exit, outbound tuple and bidirectional byte
+counts are retained privately. Process name alone is never attribution proof.
+The [WebKit launcher](https://github.com/WebKit/WebKit/blob/main/Source/WebKit/UIProcess/Launcher/cocoa/ProcessLauncherCocoa.mm)
+identifies the networking service; policy continues to use kernel delegation.
+
+Automatic `passed` means **delegated socket ownership and exit routing only**.
+The encrypted page body, HTTP response and navigation nonce are not automatically
+verified; `pageBodyVerified` remains false. If Safari resolves an uncaptured
+address, reuses an existing native connection, or the PCB/delegation cannot be
+sampled, the private report records `incomplete` and the command exits unsuccessfully.
+It does not retry navigation or expand capture. Independent positive delegation
+paired with an incorrect helper route/owner is a failure. A changed Safari binary
+invalidates the frozen plan. Stop and baseline verification run on every active
+return, including incomplete observations.
+
+One navigation can cause multiple or background browser requests. The observation
+bounds capture duration, not Safari's total network bytes, and does not override
+DNS, proxies, certificates or ECH. Use the approved small endpoint only. Background
+URLSession remains skipped. The coordinator decides whether manual page evidence
+is sufficient separately from the automatic socket result.
 
 ## Ordered execution
 

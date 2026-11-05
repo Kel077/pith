@@ -50,6 +50,8 @@ type session struct {
 	Bundle           *bundlePlan            `json:"bundle,omitempty"`
 	BundlePlanSHA256 string                 `json:"bundlePlanSHA256,omitempty"`
 	BundlePassed     bool                   `json:"bundlePassed,omitempty"`
+	WebKit           *webkitPlan            `json:"webKit,omitempty"`
+	WebKitPlanSHA256 string                 `json:"webKitPlanSHA256,omitempty"`
 	Interfaces       [2]api.InterfaceRef    `json:"interfaces"`
 	Preflight        []preflight            `json:"preflight"`
 	TestProfile      *testprofile.Profile   `json:"testProfile,omitempty"`
@@ -113,6 +115,7 @@ func prepare(ctx context.Context, args []string) error {
 	fs.StringVar(&s.QUICTarget, "quic-target", "", "optional reviewed public HTTP/3 IPv4:443")
 	fs.StringVar(&s.QUICServerName, "quic-server-name", "", "reviewed HTTP/3 TLS certificate name")
 	bundle := fs.Bool("app-bundle", false, "freeze a disposable pure-Go app and helper fixture using this rootcheck executable")
+	webkit := fs.String("webkit-app", "", "freeze an absolute Safari .app path for explicit bounded delegation observation")
 	mode := fs.String("capture-mode", "host-ipv4", "reviewed installation mode: host-ipv4, full-ipv4 or host-ipv6")
 	lease := fs.Duration("test-lease", 0, "profile lease: default/max 120s for full-ipv4, 60s for host-ipv6; minimum 30s")
 	if err := fs.Parse(args); err != nil {
@@ -147,6 +150,9 @@ func prepare(ctx context.Context, args []string) error {
 	}
 	if *bundle && s.TestProfile != nil {
 		return errors.New("app-bundle acceptance currently requires host-ipv4")
+	}
+	if *webkit != "" && s.TestProfile != nil {
+		return errors.New("webkit acceptance currently requires host-ipv4")
 	}
 	if _, err := s.scopes(); err != nil {
 		return err
@@ -229,6 +235,11 @@ func prepare(ctx context.Context, args []string) error {
 	}
 	if *bundle {
 		if err := s.writeBundlePlan(); err != nil {
+			return err
+		}
+	}
+	if *webkit != "" {
+		if err := s.writeWebKitPlan(*webkit); err != nil {
 			return err
 		}
 	}
