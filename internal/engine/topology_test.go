@@ -59,20 +59,11 @@ func waitTopologyStop(t *testing.T, e *Engine, d *testDriver) {
 }
 
 func TestTopologySnapshotFaultsStopWithoutRewritingExternalRoutes(t *testing.T) {
-	for _, mode := range []string{"vpn-withdrawal", "vpn-new-index", "capture-removed", "capture-replaced", "capture-duplicate", "shadow-route", "interface-reindexed", "snapshot-error"} {
+	for _, mode := range []string{"capture-removed", "capture-replaced", "capture-duplicate", "shadow-route", "snapshot-error"} {
 		t.Run(mode, func(t *testing.T) {
 			e, d := startTopology(t)
 			d.mu.Lock()
 			switch mode {
-			case "vpn-withdrawal":
-				d.routes = slices.DeleteFunc(d.routes, func(r capture.Route) bool { return r.Index == 50 })
-			case "vpn-new-index":
-				for i := range d.routes {
-					if d.routes[i].Index == 50 {
-						d.routes[i].Index = 51
-						d.routes[i].Interface = "utun51"
-					}
-				}
 			case "capture-removed":
 				d.routes = slices.DeleteFunc(d.routes, func(r capture.Route) bool { return r.Prefix == netip.MustParsePrefix("0.0.0.0/1") })
 			case "capture-replaced":
@@ -86,8 +77,6 @@ func TestTopologySnapshotFaultsStopWithoutRewritingExternalRoutes(t *testing.T) 
 				d.routes = append(d.routes, d.routes[len(d.routes)-1])
 			case "shadow-route":
 				d.routes = append(d.routes, capture.Route{Prefix: netip.MustParsePrefix("198.51.100.0/24"), Interface: "utun51", Index: 51})
-			case "interface-reindexed":
-				d.indices = map[string]int{"en0": 99}
 			case "snapshot-error":
 				d.snapshotErr = errors.New("test observation failed")
 			}
@@ -105,8 +94,8 @@ func TestTopologySnapshotFaultsStopWithoutRewritingExternalRoutes(t *testing.T) 
 	}
 }
 
-func TestTopologyEventsRejectIdenticalRebuildAndObserverFailure(t *testing.T) {
-	for _, event := range []capture.Change{{Index: 50, Interface: true, Up: false}, {Index: 50, Prefix: netip.MustParsePrefix("192.0.2.0/24")}, {Err: errors.New("route observer overflow")}} {
+func TestCaptureEventsAndOwnershipObserverFailureStop(t *testing.T) {
+	for _, event := range []capture.Change{{Index: 42, Prefix: netip.MustParsePrefix("0.0.0.0/1")}, {Err: errors.New("route observer overflow")}} {
 		t.Run("event", func(t *testing.T) { e, d := startTopology(t); d.changes <- event; waitTopologyStop(t, e, d) })
 	}
 }
@@ -134,8 +123,13 @@ func TestVPNWithdrawalPacketsNeverReachRulesOrNativeRelays(t *testing.T) {
 					packet[6] = proto
 					copy(packet[24:40], netip.MustParseAddr("2001:db8:50::8").AsSlice())
 				}
+				if !e.run.guard.Packet(packet) {
+					t.Fatal("VPN packet admitted")
+				}
 				d.devices[len(d.devices)-1].packets <- packet
-				waitTopologyStop(t, e, d)
+				if e.run.guard.Err() != nil {
+					t.Fatal("VPN withdrawal revoked capture")
+				}
 			})
 		}
 	}
@@ -162,7 +156,7 @@ func TestTopologyDialCancellationHasNoFallback(t *testing.T) {
 		result <- err
 	}()
 	<-started
-	d.changes <- capture.Change{Index: 50, Interface: true}
+	d.changes <- capture.Change{Index: 42, Prefix: netip.MustParsePrefix("0.0.0.0/1")}
 	select {
 	case err := <-result:
 		if err == nil {
@@ -203,7 +197,7 @@ func TestTopologyClosesEstablishedConnectionsAndRejectsLateDialResults(t *testin
 					t.Fatal(err)
 				}
 				defer result.Conn.Close()
-				d.changes <- capture.Change{Index: 50, Interface: true}
+				d.changes <- capture.Change{Index: 42, Prefix: netip.MustParsePrefix("0.0.0.0/1")}
 			}
 			peer.SetReadDeadline(time.Now().Add(time.Second))
 			if _, err := peer.Read(make([]byte, 1)); err == nil {
@@ -211,7 +205,11 @@ func TestTopologyClosesEstablishedConnectionsAndRejectsLateDialResults(t *testin
 			} else if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
 				t.Fatal("connection was not closed")
 			}
-			waitTopologyStop(t, e, d)
+			if !late {
+				waitTopologyStop(t, e, d)
+			} else if guard.Err() != nil {
+				t.Fatal("late dial revoked capture")
+			}
 		})
 	}
 }
@@ -225,8 +223,11 @@ func TestObserverSetupFailureDoesNotCreateCapture(t *testing.T) {
 	}
 }
 
-func TestClosedInterfaceObserverStopsCapture(t *testing.T) {
-	e, d := newTestEngine(t, nil)
+func TestClosedInterfaceObserverFallsBackToPolling(t *testing.T) {
+	e, _ := newTestEngine(t, nil)
+	var polls atomic.Int32
+	read := e.opts.Interfaces
+	e.opts.Interfaces = func(ctx context.Context) ([]api.Interface, error) { polls.Add(1); return read(ctx) }
 	e.opts.WatchInterfaces = func(context.Context) (<-chan []api.Interface, error) {
 		ch := make(chan []api.Interface)
 		close(ch)
@@ -236,7 +237,18 @@ func TestClosedInterfaceObserverStopsCapture(t *testing.T) {
 	if err := e.Start(context.Background(), cfg.Scenes[0], cfg.Settings); err != nil {
 		t.Fatal(err)
 	}
-	waitTopologyStop(t, e, d)
+	deadline := time.After(3 * time.Second)
+	for polls.Load() < 2 {
+		select {
+		case <-deadline:
+			t.Fatal("metadata poll did not recover")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	status, _ := e.Status(context.Background())
+	if status.State != api.Running {
+		t.Fatal(status)
+	}
 }
 
 func TestStableGenerationAndScopedVPNAdmission(t *testing.T) {
@@ -259,8 +271,10 @@ func TestStableGenerationAndScopedVPNAdmission(t *testing.T) {
 	if err := g.Interfaces([]api.Interface{{Name: "en0", Label: "Renamed service", Up: true}}); err != nil {
 		t.Fatal("label changed generation", err)
 	}
-	if err := g.Interfaces([]api.Interface{{Name: "en0", Up: false}}); err == nil {
-		t.Fatal("accepted a down interface")
+	if err := g.Interfaces([]api.Interface{{Name: "en0", Up: false}}); err != nil {
+		t.Fatal("down interface stopped routing", err)
 	}
-	waitTopologyStop(t, e, d)
+	if _, err := g.Binding("en0"); err == nil {
+		t.Fatal("bound a down interface")
+	}
 }

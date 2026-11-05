@@ -39,6 +39,7 @@ type Table struct {
 	existing map[key]uint64
 	proxied  map[key]struct{}
 	faults   chan error
+	bindings map[string]capture.Binding
 }
 
 func New(opts Options) (*Table, error) {
@@ -48,7 +49,14 @@ func New(opts Options) (*Table, error) {
 	if opts.Sender == nil {
 		opts.Sender = newSender(opts.Guard)
 	}
-	t := &Table{opts: opts, existing: make(map[key]uint64), proxied: make(map[key]struct{}), faults: make(chan error, 1)}
+	t := &Table{opts: opts, existing: make(map[key]uint64), proxied: make(map[key]struct{}), faults: make(chan error, 1), bindings: make(map[string]capture.Binding)}
+	if opts.Guard != nil {
+		for _, route := range opts.Routes {
+			if b, err := opts.Guard.Binding(route.Interface); err == nil {
+				t.bindings[route.Interface] = b
+			}
+		}
+	}
 	for _, proto := range []api.Protocol{api.TCP, api.UDP} {
 		sockets, err := opts.Snapshot(proto)
 		if err != nil {
@@ -177,21 +185,18 @@ func (t *Table) process(p Packet, adopt bool) bool {
 	iface := capture.SystemInterface(t.opts.Routes, p.Remote.Addr())
 	if t.opts.Guard != nil {
 		if err := t.opts.Guard.Admit(p.Remote.Addr()); err != nil {
-			t.fault(err)
 			return true
 		}
-		if err := t.opts.Guard.Check(iface); err != nil {
-			t.fault(err)
+		if err := t.bindings[iface].Check(); err != nil {
 			return true
 		}
 	}
 	if iface == "" {
-		t.fault(errors.New("original native socket route is unavailable"))
 		return true
 	}
-	if err := t.opts.Sender.Send(iface, p); err != nil {
-		t.fault(err)
-	}
+	// A disconnected original egress ends this native flow, not every flow.
+	// Keep consuming its packets so they cannot be adopted by a different route.
+	_ = t.opts.Sender.Send(iface, p)
 	return true
 }
 func (t *Table) fault(err error) {

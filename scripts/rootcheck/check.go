@@ -26,6 +26,8 @@ type checkOptions struct {
 	safeFailure bool
 	preserve    bool
 	appBypass   bool
+	crash       bool
+	auth        authorization
 	observe     time.Duration
 }
 
@@ -74,17 +76,17 @@ func check(parent context.Context, s *session, c api.Service, opts checkOptions)
 }
 
 func checkWithOps(parent context.Context, s *session, c api.Service, opts checkOptions, ops rootcheckOps) (resultErr error) {
-	if !s.Installed || !s.CancelPassed {
-		return errors.New("check requires this session's successful cancellation and scoped installation")
+	if !s.Installed || !s.cancellationRecorded() {
+		return errors.New("check requires recorded cancellation or a managed skip, and this session's scoped installation")
 	}
 	choices := 0
-	for _, selected := range []bool{opts.batch, opts.safeFailure, opts.preserve, opts.appBypass, opts.observe != 0} {
+	for _, selected := range []bool{opts.batch, opts.safeFailure, opts.preserve, opts.appBypass, opts.crash, opts.observe != 0} {
 		if selected {
 			choices++
 		}
 	}
 	if choices > 1 || opts.observe < 0 || opts.observe > 90*time.Second {
-		return errors.New("choose at most one of --batch, --safe-failure, --preserve, --app-bypass, or --observe with a duration in (0,90s]")
+		return errors.New("choose at most one of --batch, --safe-failure, --preserve, --app-bypass, --crash, or --observe with a duration in (0,90s]")
 	}
 	if choices != 0 && !s.SmokePassed {
 		return errors.New("run the default smoke check successfully before additional checks")
@@ -107,6 +109,9 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		return err
 	}
 	report := checkReport{Started: time.Now(), Mode: "smoke", Baseline: s.BaselineLabel, BaselineSHA: s.baselineDigest()}
+	if s.CancelSkipped {
+		report.Notes = append(report.Notes, "Manual cancellation dialog skipped under explicit managed authorization; not passed.")
+	}
 	if opts.batch {
 		report.Mode = "batch"
 	} else if opts.safeFailure {
@@ -115,6 +120,8 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		report.Mode = "preserve"
 	} else if opts.appBypass {
 		report.Mode = "app-bypass"
+	} else if opts.crash {
+		report.Mode = "crash"
 	} else if opts.observe > 0 {
 		report.Mode, report.Observation = "observe", true
 	}
@@ -318,6 +325,15 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		return err
 	}
 	if err := runCase("system routing after SafeStart", nil, api.System, system, "", nil); err != nil {
+		return err
+	}
+	if opts.crash {
+		err := crashCapture(ctx, s, c, opts.auth, ops)
+		entry := checkCase{Name: "crash removes owned capture and helper restarts idle"}
+		if err != nil {
+			entry.Error = err.Error()
+		}
+		report.Cases = append(report.Cases, entry)
 		return err
 	}
 	if native != nil {

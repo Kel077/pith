@@ -65,7 +65,7 @@ does not itself prove that a test request traversed it.
 
 ## Required full-capture VPN restart acceptance
 
-The conservative-stop implementation in [architecture](ARCHITECTURE.md) has
+The live-egress implementation in [architecture](ARCHITECTURE.md) has
 synthetic coverage for withdrawal, name/index reuse, replacement/shadowing of
 capture routes, observer failure, pending and established sockets, and VPN
 packets arriving before notifications. This is not hardware acceptance.
@@ -80,19 +80,40 @@ undo. The user performs the approved VPN restart; no agent silently updates it.
    addresses and DNS. Verify one public, tailnet and MagicDNS request first.
 2. Start full capture, repeat the controls, then perform exactly one approved
    restart. Issue only a bounded set of requests during withdrawal and rebuilding;
-   retain independent path evidence and the helper's fault/cleanup timestamps.
-3. Require automatic `ErrNetworkLost`, removal of Pith's `/1` and DNS host routes,
-   closure of its relays, and an idle helper. No new physical/fallback forwarding
-   of previously bypassed VPN destinations is permitted while capture remains.
-   A reused external utun name/index must not keep the old routing generation
-   usable. External rebuilt routes must survive Pith cleanup unchanged.
-4. After Stop, macOS and the VPN own ordinary routing again; Pith cannot guarantee
-   the VPN's kill-switch policy. Verify restored tailnet/MagicDNS reachability,
-   inspect external changes explicitly, and only then establish a new baseline
-   and Start/SafeStart once more. Rebaseline alone is not a runtime pass.
+   retain independent path evidence and the helper's state/generation timestamps.
+3. Require Pith to remain Running with the same owned utun and capture routes.
+   Tailnet/MagicDNS packets caught during withdrawal must never reach a physical
+   rule or fallback. Unavailable or ambiguous system requests fail locally; a VPN
+   default withdrawal permits at most a three-second settling interval before a
+   stable physical default becomes usable. Existing physical connections survive.
+   A rebuilt VPN is selected by its current name/index lifetime for new requests;
+   old sockets never migrate onto a reused index. Verify public and private
+   controls again after reconstruction, without Stop/Start.
+4. Stop explicitly, confirm owned-route cleanup and restored tailnet/MagicDNS
+   reachability. Inspect external changes before rebaseline. A damaged Pith route
+   or utun must still trigger automatic `ErrNetworkLost` and safe cleanup; this
+   distinct fault test must not be confused with ordinary VPN reconstruction.
 
 If self-restart cannot be reproduced safely, record this required item as pending,
 not passed. An unplanned VPN change in a throughput stage still aborts that stage.
+
+## Required adapter renewal and fallback acceptance
+
+During approved capture, renew the selected cellular hotspot's public connection
+once through the app. Record an IPv6 prefix/privacy-address and DNS change when
+the device supplies them. Require Pith to remain Running, keep its owned routes,
+and send subsequent rule-matched connections through that adapter using current
+addresses and DNS. Existing sockets keep their bindings and may naturally fail
+when the provider invalidates their addresses; they must not migrate to another
+interface. Include DHCP/address renewal on the system-default adapter as well.
+
+Then, in a separately approved bounded case, unplug the preferred hotspot while
+its rule lists a second available adapter. A new connection must use that next
+adapter with outcome Fallback. Reconnect the first adapter (including a changed
+index), verify new connections use it again without Start/Stop, and keep an
+unrelated control connection alive throughout. Restore the approved physical
+setup and verify cleanup against the accepted baseline. Record actual adapter
+names, public addresses and device actions only in the private session.
 
 Full IPv6 capture (`::/1` and `8000::/1`) is a later, separately approved extension
 after `/128`, UDP/QUIC and full IPv4 stages. Verify both native IPv6 and dual-stack

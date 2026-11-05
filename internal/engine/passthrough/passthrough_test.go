@@ -83,7 +83,7 @@ func TestPreserveNativeSocketsAndRejectTupleReuse(t *testing.T) {
 	}
 }
 
-func TestNewUDPIsNeverAdoptedAndSendFailureIsReported(t *testing.T) {
+func TestNewUDPIsNeverAdoptedAndSendFailureDoesNotRevokeCapture(t *testing.T) {
 	socket := legacySocket()
 	var live []attribution.Socket
 	sender := &fakeSender{err: errors.New("native send failed")}
@@ -101,11 +101,8 @@ func TestNewUDPIsNeverAdoptedAndSendFailureIsReported(t *testing.T) {
 	}
 	select {
 	case err := <-table.Faults():
-		if err != sender.err {
-			t.Fatal(err)
-		}
+		t.Fatal("ordinary send failure became a capture fault", err)
 	default:
-		t.Fatal("silently dropped native socket data")
 	}
 }
 

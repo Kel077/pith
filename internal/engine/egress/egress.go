@@ -51,10 +51,15 @@ type Router struct {
 	Timeout time.Duration
 	// Resolve is a test seam; nil uses interface-bound DNS. Set it before use.
 	Resolve ResolveFunc
+	// Current refreshes kernel link identities while retaining notified DNS metadata.
+	// Nil uses the supplied interface list in tests with an injected dial function.
+	Current func([]api.Interface) ([]api.Interface, error)
 }
 
 func New(routes []capture.Route, ifaces []api.Interface, dial DialFunc) *Router {
+	var current func([]api.Interface) ([]api.Interface, error)
 	if dial == nil {
+		current = netif.Current
 		dial = func(ctx context.Context, name, network, target string) (net.Conn, error) {
 			if name == "" {
 				return nil, errors.New("refusing an unbound socket during capture")
@@ -66,7 +71,7 @@ func New(routes []capture.Route, ifaces []api.Interface, dial DialFunc) *Router 
 			return d.DialContext(ctx, network, target)
 		}
 	}
-	r := &Router{routes: slices.Clone(routes), dial: dial, Timeout: 3 * time.Second}
+	r := &Router{routes: slices.Clone(routes), dial: dial, Timeout: 3 * time.Second, Current: current}
 	r.Interfaces(ifaces)
 	return r
 }
@@ -103,11 +108,14 @@ type Result struct {
 }
 
 func (r *Router) System(remote netip.Addr) string {
-	name := capture.SystemInterface(r.routes, remote)
-	if name != "" && r.Guard != nil && r.Guard.Check(name) != nil {
-		return ""
+	if r.Guard != nil {
+		b, err := r.Guard.System(remote)
+		if err != nil {
+			return ""
+		}
+		return b.Name
 	}
-	return name
+	return capture.SystemInterface(r.routes, remote)
 }
 
 func (r *Router) Dial(ctx context.Context, d rules.Decision, proto api.Protocol, remote netip.AddrPort) (Result, error) {
@@ -159,7 +167,6 @@ func (r *Router) dialDomain(ctx context.Context, d rules.Decision, proto api.Pro
 		d.Via, d.Fallback = nil, true
 		note = "fake-IP destination has no observed domain; using its pre-capture system route"
 	}
-	ifaces := *r.ifaces.Load()
 	var failures []error
 	attempt := func(name string, outcome api.Outcome, iface *api.Interface) (Result, bool, error) {
 		if name == "" {
@@ -171,12 +178,37 @@ func (r *Router) dialDomain(ctx context.Context, d rules.Decision, proto api.Pro
 		}
 		attemptCtx, cancel := context.WithTimeout(ctx, r.Timeout)
 		defer cancel()
+		var binding capture.Binding
+		checkBinding := func() error { return nil }
 		if r.Guard != nil {
-			index, err := r.Guard.Index(name)
-			if err != nil {
-				return Result{Outcome: api.Unreachable, RuleID: d.RuleID}, true, err
+			var err error
+			if iface == nil {
+				binding, err = r.Guard.System(remote.Addr())
+				name = binding.Name
+			} else {
+				binding, err = r.Guard.Binding(name)
 			}
-			attemptCtx = netif.WithBinding(attemptCtx, index, func() error { return r.Guard.Check(name) })
+			if err != nil {
+				failures = append(failures, err)
+				return Result{}, false, nil
+			}
+			checkBinding = func() error {
+				if err := binding.Check(); err != nil {
+					return err
+				}
+				if iface != nil && r.Current != nil {
+					current, err := r.Current(*r.ifaces.Load())
+					if err != nil {
+						return err
+					}
+					found := (api.InterfaceRef{Name: iface.Name, HardwareAddr: iface.HardwareAddr}).Resolve(current)
+					if found == nil || !found.Up || found.Name != iface.Name {
+						return capture.ErrEgressChanged
+					}
+				}
+				return nil
+			}
+			attemptCtx = netif.WithBinding(attemptCtx, binding.Index, checkBinding)
 		}
 		targets := []netip.AddrPort{remote}
 		var blocked rules.Decision
@@ -233,14 +265,15 @@ func (r *Router) dialDomain(ctx context.Context, d rules.Decision, proto api.Pro
 			conn, err := r.dial(dialCtx, name, network, target.String())
 			dialCancel()
 			if r.Guard != nil {
-				if guardErr := r.Guard.Check(name); guardErr != nil {
+				if guardErr := checkBinding(); guardErr != nil {
 					if conn != nil {
 						conn.Close()
 					}
-					return Result{Outcome: api.Unreachable, RuleID: d.RuleID}, true, guardErr
+					failures = append(failures, guardErr)
+					return Result{}, false, nil
 				}
 				if err == nil {
-					conn = r.Guard.Conn(conn)
+					conn = r.Guard.Conn(conn, binding)
 				}
 			}
 			if err != nil {
@@ -258,6 +291,23 @@ func (r *Router) dialDomain(ctx context.Context, d rules.Decision, proto api.Pro
 		return Result{}, false, nil
 	}
 	for i, ref := range d.Via {
+		ifaces := *r.ifaces.Load()
+		if r.Current != nil {
+			var err error
+			ifaces, err = r.Current(ifaces)
+			if err != nil {
+				failures = append(failures, err)
+				continue
+			}
+		}
+		if r.Guard != nil {
+			if err := r.Guard.Err(); err != nil {
+				return Result{Outcome: api.Unreachable, RuleID: d.RuleID}, err
+			}
+			if err := r.Guard.Interfaces(ifaces); err != nil {
+				return Result{}, err
+			}
+		}
 		iface := ref.Resolve(ifaces)
 		if iface == nil || !iface.Up {
 			continue

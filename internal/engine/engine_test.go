@@ -26,6 +26,7 @@ type testDriver struct {
 	changes     chan capture.Change
 	snapshotErr error
 	indices     map[string]int
+	assigned    []netip.Prefix
 }
 type testDevice struct {
 	driver  *testDriver
@@ -68,8 +69,12 @@ func (d *testDriver) Snapshot() ([]capture.Route, error) {
 	defer d.mu.Unlock()
 	return slices.Clone(d.routes), d.snapshotErr
 }
-func (d *testDriver) BootSession() (string, error)               { return "test-boot-one", nil }
-func (d *testDriver) InterfacePrefixes() ([]netip.Prefix, error) { return nil, nil }
+func (d *testDriver) BootSession() (string, error) { return "test-boot-one", nil }
+func (d *testDriver) InterfacePrefixes() ([]netip.Prefix, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return slices.Clone(d.assigned), nil
+}
 func (d *testDriver) Index(name string) (int, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()

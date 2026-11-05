@@ -126,6 +126,43 @@ and do not retry capture. A separately proven external-only change can instead
 use the explicit acceptance procedure below; it is not a successful check.
 Concurrent commands on the same session are refused by an advisory lock.
 
+### Optional delegated authorization
+
+Only the coordinator may opt into a password that the user has explicitly
+delegated for this session. Use `--auth keychain:REVIEWED_SERVICE` on **each**
+privileged invocation. The default remains the ordinary administrator dialog;
+the session never remembers permission to read a keychain item on a later
+invocation. Other agents must not read or use the delegated item, the hotspot's
+administrator item, or the app's stored hotspot credentials.
+
+In this mode, `cancel --auth keychain:REVIEWED_SERVICE` performs the original-state
+checks and records the manual cancel case as **skipped**, without opening a
+dialog or reading a password. `install` with the same explicit option may record
+that skip itself if the cancel step was omitted. `cancelPassed` stays false;
+session/check reports retain `cancelSkipped` and an explanatory note. Managed
+installation and uninstall each use the delegated credential once. An optional
+`check --crash --auth keychain:REVIEWED_SERVICE` uses it once more. No manual
+cancel click or administrator-password dialog is expected; Keychain access may
+still be denied or require user authorization under the user's macOS settings.
+
+The harness reads `/usr/bin/security find-generic-password -s SERVICE -w` into a
+bounded memory buffer and passes it only on stdin to `/usr/bin/sudo -S -k -p ''`.
+Only the frozen reviewed script goes in the command arguments. Passwords never
+enter arguments, reports, files or forwarded child output, and temporary buffers
+are cleared afterward. Each use records its operation, mode, script checksum,
+attempt and result in private authorization reports; subprocess diagnostic text
+is discarded to prevent it echoing credentials. A command success is not a test
+pass: the existing independent identity/state/cleanup checks still decide that.
+
+Fresh prepare output includes `install.sh`, `uninstall.sh`, and optional
+`crash.sh` with frozen checksums. A missing or changed script refuses managed
+execution. Announce the root session beforehand and report every credential use
+afterward. A skipped cancellation case does not establish cancellation behavior.
+The emergency command remains an independently reviewed, manual recovery path;
+this option does not broaden it or automatically authorize retries.
+
+### Dialog mode
+
 The complete session requests **one cancellation dialog and two password
 authorizations**, for installation and final uninstall. There is no additional
 authorization for any `check`, `stop`, or `rebaseline`, regardless of the number
@@ -288,7 +325,15 @@ observation automatically and treats an unexpected helper stop as a failure.
   in both cases is the pass; a server that filters echo is inconclusive. The
   current engine sends ICMP through the saved system route; TCP/UDP rule
   outcomes and traffic counters do not represent ICMP routing.
-* **Crash cleanup:** only after the coordinator approves this deliberate fault,
+* **Crash cleanup:** prefer `check --session "$PITH_SESSION" --crash` after a
+  passed smoke check. It holds the session lock, starts the reviewed host capture,
+  verifies one system request and the active helper/capture identity, then runs
+  the frozen `crash.sh` with the separate crash prompt. Add the explicit managed
+  auth option above to use the stdin mechanism instead. It allows ten seconds
+  for capture disappearance and an authenticated idle restart, and always runs
+  independent Stop/cleanup afterward. Its report is a distinct crash check, not
+  a smoke pass. For a manually observed crash, only after the coordinator approves
+  this deliberate fault,
   interrupt the *managed service only* during observation with an administrator
   dialog running `/bin/launchctl kill SIGKILL system/io.github.kel077.pith.helper`.
   Kernel utun ownership must remove capture when the process dies. Launchd may
