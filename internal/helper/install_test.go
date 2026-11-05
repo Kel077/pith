@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -31,6 +32,17 @@ func TestInstallPlanIsQuotedAndParseable(t *testing.T) {
 		cmd.Stdin = strings.NewReader(script)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("invalid installation script: %v: %s", err, output)
+		}
+	}
+	if runtime.GOOS == "darwin" {
+		// Compilation validates AppleScript quoting and the prompt clause without
+		// executing the shell script or presenting an authorization dialog.
+		for _, prompt := range []string{InstallPrompt, UpdatePrompt, UninstallPrompt} {
+			plan.Prompt = prompt
+			cmd := exec.Command("/usr/bin/osacompile", "-o", filepath.Join(t.TempDir(), "plan.scpt"), "-e", plan.appleScript())
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("invalid authorization script: %v: %s", err, output)
+			}
 		}
 	}
 	if _, err := PlanInstall(source, 0); err == nil {
