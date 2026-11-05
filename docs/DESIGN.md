@@ -68,7 +68,11 @@ page has a large title and its actions on the right.
 - **Activity.** Connections (live, newest first), Apps, and Traffic (bars
   per interface over an hour, a day or a week), each as one pane.
 - **Network.** A pane per connected interface, a compact group for the
-  others, and a reachability test.
+  others, and a reachability test. A hotspot Pith can talk to shows its
+  signal on its pane: the bars in the interface's color, 5G or LTE, the
+  band as a chip (its frequency in the tooltip), the carrier, and the
+  signal's strength and SNR. A lock asks for its admin password; "Change
+  hotspot IP" has it reconnect, and then says the old and the new IP.
 - **Settings.** Groups of rows, as System Settings has them.
 
 ## The menu bar

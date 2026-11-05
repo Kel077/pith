@@ -106,6 +106,8 @@ One set of rules for home, another for the office. Switch between them from the 
 
 Every interface with its addresses, router and DNS; a test of its latency and public address; and one server reached through each interface, to compare them. Interfaces can be renamed.
 
+A mobile hotspot from Inseego, such as the MiFi M2000, shows its signal too: the bars, 5G or LTE, the band in use (n41, n71…) and the carrier. **Change hotspot IP** has it reconnect to its carrier for a new public IP. This takes the hotspot's admin password, which Pith keeps in your keychain.
+
 ### Also
 
 - **Safe start**: if the Mac loses the internet right after routing starts, Pith undoes it.
@@ -115,7 +117,7 @@ Every interface with its addresses, router and DNS; a test of its latency and pu
 
 ## Privacy
 
-Pith reads where connections go — addresses, ports, and host names from TLS SNI, the HTTP Host or DNS — and never what they carry: no decryption, no certificates installed. Rules, the connection log and traffic totals stay on your Mac, and the log keeps as many days as Settings says. Pith sends nothing anywhere by itself; only a test you start on the Network page contacts [ipify](https://www.ipify.org) to learn an interface's public address.
+Pith reads where connections go — addresses, ports, and host names from TLS SNI, the HTTP Host or DNS — and never what they carry: no decryption, no certificates installed. Rules, the connection log and traffic totals stay on your Mac, and the log keeps as many days as Settings says. Pith sends nothing anywhere by itself; only a test you start on the Network page contacts [ipify](https://www.ipify.org) to learn an interface's public address. With a hotspot's admin password, Pith reads the hotspot's own admin page, on your local network, while the Network page is open.
 
 ## Documentation
 
