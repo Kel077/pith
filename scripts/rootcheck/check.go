@@ -57,23 +57,24 @@ type checkCase struct {
 }
 
 type checkReport struct {
-	Started     time.Time           `json:"started"`
-	Finished    time.Time           `json:"finished"`
-	Mode        string              `json:"mode"`
-	Baseline    string              `json:"baselineLabel"`
-	BaselineSHA string              `json:"baselineSHA256"`
-	CaptureMode string              `json:"captureMode"`
-	Cases       []checkCase         `json:"cases"`
-	Traffic     api.Traffic         `json:"traffic"`
-	Events      []api.Event         `json:"events"`
-	Before      snapshot            `json:"before"`
-	After       snapshot            `json:"after"`
-	Error       string              `json:"error,omitempty"`
-	StopError   string              `json:"stopError,omitempty"`
-	Restored    bool                `json:"restored"`
-	Observation bool                `json:"manualObservationOnly"`
-	Notes       []string            `json:"notes,omitempty"`
-	Hotspot     *hotspotObservation `json:"hotspotRenewal,omitempty"`
+	Started     time.Time              `json:"started"`
+	Finished    time.Time              `json:"finished"`
+	Mode        string                 `json:"mode"`
+	Baseline    string                 `json:"baselineLabel"`
+	BaselineSHA string                 `json:"baselineSHA256"`
+	CaptureMode string                 `json:"captureMode"`
+	Cases       []checkCase            `json:"cases"`
+	Traffic     api.Traffic            `json:"traffic"`
+	Events      []api.Event            `json:"events"`
+	Before      snapshot               `json:"before"`
+	After       snapshot               `json:"after"`
+	Error       string                 `json:"error,omitempty"`
+	StopError   string                 `json:"stopError,omitempty"`
+	Restored    bool                   `json:"restored"`
+	Observation bool                   `json:"manualObservationOnly"`
+	Notes       []string               `json:"notes,omitempty"`
+	Hotspot     *hotspotObservation    `json:"hotspotRenewal,omitempty"`
+	SkippedDNS  []capture.DNSExclusion `json:"skippedDNS,omitempty"`
 }
 
 func check(parent context.Context, s *session, c api.Service, opts checkOptions) (resultErr error) {
@@ -146,9 +147,11 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 	if !sameCleanupBaseline(s.Original, report.Before) {
 		return errors.New("routing or tunnel inventory changed since the current baseline; use rebaseline only after a verified stop and an approved mode change")
 	}
-	if err := s.validateSnapshotScope(report.Before); err != nil {
+	plan, err := s.snapshotPlan(report.Before)
+	if err != nil {
 		return err
 	}
+	report.SkippedDNS = plan.SkippedDNS
 	for _, ref := range s.Interfaces {
 		if iface := ref.Resolve(report.Before.Interfaces); iface == nil || !iface.Up {
 			return errors.New("a reviewed interface is missing or down")

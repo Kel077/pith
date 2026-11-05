@@ -332,18 +332,19 @@ func archiveJSON(s *session, prefix string, value any) (name string, resultErr e
 }
 
 type rebaselineReport struct {
-	Started                time.Time       `json:"started"`
-	Finished               time.Time       `json:"finished"`
-	Label                  string          `json:"label"`
-	PreviousFile           string          `json:"previousBaselineFile"`
-	PreviousSHA256         string          `json:"previousBaselineSHA256"`
-	Before                 snapshot        `json:"before"`
-	After                  snapshot        `json:"after"`
-	Preflight              []preflight     `json:"preflight"`
-	Error                  string          `json:"error,omitempty"`
-	AcceptedExternalChange bool            `json:"acceptedExternalChange,omitempty"`
-	Cleanup                *cleanupProof   `json:"cleanupProof,omitempty"`
-	External               *externalChange `json:"externalChange,omitempty"`
+	Started                time.Time              `json:"started"`
+	Finished               time.Time              `json:"finished"`
+	Label                  string                 `json:"label"`
+	PreviousFile           string                 `json:"previousBaselineFile"`
+	PreviousSHA256         string                 `json:"previousBaselineSHA256"`
+	Before                 snapshot               `json:"before"`
+	After                  snapshot               `json:"after"`
+	Preflight              []preflight            `json:"preflight"`
+	Error                  string                 `json:"error,omitempty"`
+	AcceptedExternalChange bool                   `json:"acceptedExternalChange,omitempty"`
+	Cleanup                *cleanupProof          `json:"cleanupProof,omitempty"`
+	External               *externalChange        `json:"externalChange,omitempty"`
+	SkippedDNS             []capture.DNSExclusion `json:"skippedDNS,omitempty"`
 }
 
 func rebaseline(ctx context.Context, s *session, c api.Service, label string, acceptExternal bool) error {
@@ -408,9 +409,11 @@ func rebaselineWithOps(parent context.Context, s *session, c api.Service, label 
 	if resolved[0].Name == resolved[1].Name {
 		return errors.New("reviewed interfaces no longer resolve to two distinct adapters")
 	}
-	if err := s.validateSnapshotScope(report.Before); err != nil {
+	plan, err := s.snapshotPlan(report.Before)
+	if err != nil {
 		return fmt.Errorf("new baseline conflicts with the frozen capture: %w", err)
 	}
+	report.SkippedDNS = plan.SkippedDNS
 	target, _ := netip.ParseAddrPort(s.Target)
 	if capture.SystemInterface(report.Before.Routes, target.Addr()) == "" {
 		return errors.New("the frozen test destination has no effective system route")
@@ -431,9 +434,11 @@ func rebaselineWithOps(parent context.Context, s *session, c api.Service, label 
 	if !stableSnapshots(report.Before, report.After) {
 		return errors.New("routes or interfaces changed during rebaseline preflight; previous baseline remains active")
 	}
-	if err := s.validateSnapshotScope(report.After); err != nil {
+	plan, err = s.snapshotPlan(report.After)
+	if err != nil {
 		return err
 	}
+	report.SkippedDNS = plan.SkippedDNS
 	if err := ops.verifyInstalled(s); err != nil {
 		return err
 	}
@@ -465,6 +470,7 @@ func rebaselineWithOps(parent context.Context, s *session, c api.Service, label 
 	// both the in-memory session and its atomic on-disk version keep the old phase.
 	next := *s
 	next.Original, next.Preflight, next.Interfaces = report.After, report.Preflight, resolved
+	next.SkippedDNS = report.SkippedDNS
 	next.BaselineLabel, next.BaselineFile = label, name
 	next.SmokePassed, next.Cleanup = false, nil
 	if err := ops.save(&next); err != nil {

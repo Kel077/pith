@@ -31,17 +31,18 @@ import (
 )
 
 type session struct {
-	Dir          string               `json:"directory"`
-	UID          int                  `json:"uid"`
-	Helper       string               `json:"helper"`
-	HelperSHA256 string               `json:"helperSHA256"`
-	Version      string               `json:"version"`
-	Target       string               `json:"target"`
-	ServerName   string               `json:"serverName"`
-	DNSTarget    string               `json:"dnsTarget,omitempty"`
-	Interfaces   [2]api.InterfaceRef  `json:"interfaces"`
-	Preflight    []preflight          `json:"preflight"`
-	TestProfile  *testprofile.Profile `json:"testProfile,omitempty"`
+	Dir          string                 `json:"directory"`
+	UID          int                    `json:"uid"`
+	Helper       string                 `json:"helper"`
+	HelperSHA256 string                 `json:"helperSHA256"`
+	Version      string                 `json:"version"`
+	Target       string                 `json:"target"`
+	ServerName   string                 `json:"serverName"`
+	DNSTarget    string                 `json:"dnsTarget,omitempty"`
+	Interfaces   [2]api.InterfaceRef    `json:"interfaces"`
+	Preflight    []preflight            `json:"preflight"`
+	TestProfile  *testprofile.Profile   `json:"testProfile,omitempty"`
+	SkippedDNS   []capture.DNSExclusion `json:"skippedDNS,omitempty"`
 	// Original is the active rollback baseline; original.json is never replaced.
 	Original               snapshot        `json:"original"`
 	BaselineLabel          string          `json:"baselineLabel"`
@@ -210,6 +211,11 @@ func prepare(ctx context.Context, args []string) error {
 	if err := writeJSON(filepath.Join(s.Dir, "preflight.json"), s.Preflight); err != nil {
 		return err
 	}
+	if s.TestProfile != nil && s.TestProfile.Mode == testprofile.FullIPv4 {
+		if err := writeJSON(filepath.Join(s.Dir, "dns-skips.json"), s.SkippedDNS); err != nil {
+			return err
+		}
+	}
 	if err := writePrivate(filepath.Join(s.Dir, "install.sh"), []byte(plan.Script)); err != nil {
 		return err
 	}
@@ -226,6 +232,9 @@ func prepare(ctx context.Context, args []string) error {
 	fmt.Println("Prepared private review material:", s.Dir)
 	fmt.Println("Helper SHA-256:", s.HelperSHA256)
 	fmt.Println("Capture mode:", s.captureMode())
+	for _, skipped := range s.SkippedDNS {
+		fmt.Printf("DNS capture skipped for %s: %s\n", skipped.Address, skipped.Reason)
+	}
 	fmt.Println("Review install-plan.json, install.sh, uninstall.sh, original.json, and emergency-command.txt before authorization.")
 	fmt.Println("No helper was installed and no routing was changed.")
 	fmt.Println("Next command: rootcheck cancel --session " + shellQuote(s.Dir))

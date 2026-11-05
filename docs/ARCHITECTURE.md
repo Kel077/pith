@@ -28,9 +28,17 @@ its public addresses, LAN addresses or DNS do not by themselves stop routing.
 journals its name, index, boot session, random ownership token and intended prefixes before
 installing any route. A ready gVisor netstack receives `0.0.0.0/1`, `128.0.0.0/1`
 and, when enabled, `::/1` and `8000::/1`. The system default is never replaced.
-LAN DNS servers get host routes so their answers can feed the DNS cache. Existing
-more-specific VPN/Tailscale routes and MagicDNS are preserved. Exact capture-route
-conflicts fail with `ErrRouteConflict`; a VPN default is reported as `WarnVPN`.
+LAN DNS servers get optional host routes so their answers can feed the DNS cache.
+If a DNS address already has a configured host route, including a gateway's
+macOS host route or a scoped copy, Pith preserves it and skips that DNS capture
+route. `WarnDNSUnobserved` identifies the server; the plan and private reports
+retain the existing routes and reason. Queries using that route are not observed,
+so domain rules need another observed name, such as TLS SNI, HTTP Host or QUIC
+SNI when sniffing is enabled. No gateway route is deleted or replaced to observe
+DNS. Existing more-specific VPN/Tailscale routes and MagicDNS are preserved.
+Both `/1` routes and explicitly requested scoped prefixes still fail with
+`ErrRouteConflict` on an exact unscoped conflict; a VPN default is reported as
+`WarnVPN`.
 
 Routing snapshots omit `RTF_WASCLONED` host routes and `RTF_LLINFO` neighbor
 cache entries. Ordinary traffic can add or expire those entries without changing
@@ -238,7 +246,9 @@ unprivileged live tests only read interface/socket metadata or use loopback.
 Full IPv4 acceptance uses a separate `--test-profile full-ipv4` installation,
 never an omitted `--capture` flag on the production installer. Its immutable
 launch arguments freeze a literal TLS endpoint, IPv4-only capture, the exact
-LAN-DNS host routes and a lease of at most 120 seconds. The engine rejects mixed
+LAN-DNS host routes and a lease of at most 120 seconds. DNS hosts skipped because
+of existing configured host routes are excluded from that frozen set, with the
+same diagnostics as production. The engine rejects mixed
 scoped/profile arguments, disabled SafeStart, IPv6 enablement, and changed DNS
 capture scope before creating a tunnel. Ordinary production capture planning is
 used, including both IPv4 `/1`s and LAN-DNS routes, then checked against that

@@ -21,11 +21,20 @@ type Route struct {
 }
 
 type Plan struct {
-	Addresses TunnelAddresses `json:"addresses"`
-	Prefixes  []netip.Prefix  `json:"prefixes"`
-	Before    []Route         `json:"before"`
-	Warnings  []api.Warning   `json:"warnings,omitempty"`
-	Scoped    bool            `json:"scoped"`
+	Addresses  TunnelAddresses `json:"addresses"`
+	Prefixes   []netip.Prefix  `json:"prefixes"`
+	Before     []Route         `json:"before"`
+	Warnings   []api.Warning   `json:"warnings,omitempty"`
+	SkippedDNS []DNSExclusion  `json:"skippedDNS,omitempty"`
+	Scoped     bool            `json:"scoped"`
+}
+
+// DNSExclusion explains why an optional DNS host route was not added. Routes
+// are existing forwarding policy, never routes owned or removed by Pith.
+type DNSExclusion struct {
+	Address netip.Addr `json:"address"`
+	Reason  string     `json:"reason"`
+	Routes  []Route    `json:"routes"`
 }
 
 // SystemInterface preserves the effective pre-capture route, including a VPN
@@ -61,7 +70,8 @@ func SystemInterface(routes []Route, address netip.Addr) string {
 }
 
 // Build is read-only. A scoped plan captures only the supplied prefixes and
-// never adds global DNS host routes. Exact pre-existing configured routes conflict;
+// never adds global DNS host routes. Exact pre-existing configured routes conflict
+// with required capture prefixes. Optional DNS host capture is skipped instead;
 // more specific routes (including Tailscale's routes) remain in place.
 func Build(routes []Route, dns []netip.Addr, ipv6 bool, scopes []netip.Prefix) (Plan, error) {
 	p := Plan{Before: slices.Clone(routes), Scoped: len(scopes) > 0}
@@ -77,9 +87,29 @@ func Build(routes []Route, dns []netip.Addr, ipv6 bool, scopes []netip.Prefix) (
 		if ipv6 {
 			p.Prefixes = append(p.Prefixes, netip.MustParsePrefix("::/1"), netip.MustParsePrefix("8000::/1"))
 		}
+		seenDNS := make(map[netip.Addr]bool)
 		for _, addr := range dns {
 			addr = addr.Unmap().WithZone("")
-			if !addr.IsValid() || addr.IsLoopback() || addr.IsUnspecified() || addr.IsMulticast() || addr.IsLinkLocalUnicast() || addr.Is6() && !ipv6 {
+			if !addr.IsValid() || addr.IsLoopback() || addr.IsUnspecified() || addr.IsMulticast() || addr.IsLinkLocalUnicast() || addr.Is6() && !ipv6 || seenDNS[addr] {
+				continue
+			}
+			seenDNS[addr] = true
+			host := netip.PrefixFrom(addr, addr.BitLen())
+			var existing []Route
+			for _, r := range routes {
+				if r.Prefix == host {
+					existing = append(existing, r)
+				}
+			}
+			if len(existing) > 0 {
+				// macOS can install a configured host route for a LAN gateway that
+				// also provides DNS. Preserve every existing route, including scoped
+				// copies, rather than replacing one merely to observe DNS answers.
+				p.SkippedDNS = append(p.SkippedDNS, DNSExclusion{
+					Address: addr, Routes: existing,
+					Reason: "An existing configured host route is preserved. DNS queries using that route are not observed; domain rules rely on other observed names, such as TLS SNI, HTTP Host or QUIC SNI when sniffing is enabled.",
+				})
+				p.Warnings = append(p.Warnings, api.Warning{Code: api.WarnDNSUnobserved, Detail: addr.String()})
 				continue
 			}
 			iface := SystemInterface(routes, addr)
@@ -89,7 +119,7 @@ func Build(routes []Route, dns []netip.Addr, ipv6 bool, scopes []netip.Prefix) (
 			}
 			for _, r := range routes {
 				if !r.Scoped && !r.Local && !r.Reject && !r.Gateway.IsValid() && r.Interface == iface && r.Prefix.Bits() > 1 && r.Prefix.Contains(addr) {
-					p.Prefixes = append(p.Prefixes, netip.PrefixFrom(addr, addr.BitLen()))
+					p.Prefixes = append(p.Prefixes, host)
 					break
 				}
 			}

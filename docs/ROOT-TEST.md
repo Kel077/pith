@@ -131,6 +131,15 @@ With a newly built, reviewed helper and the same privately chosen variables:
 The session records `testProfile`, including mode, lease, literal TLS endpoint,
 certificate name, and the exact LAN-DNS addresses selected by production capture
 planning. Review both IPv4 `/1` routes and every DNS `/32` before authorization.
+An existing configured DNS host route, including a gateway's host route or a
+scoped copy, is preserved and excluded from the frozen DNS capture set. Review
+`dns-skips.json` and `session.json` for each skipped address, its reason and the
+existing routes; prepare also prints this warning. Check and rebaseline reports
+record the current exclusions. DNS queries retaining those routes are not
+observed, so domain rules need other observed names (TLS SNI, HTTP Host or QUIC
+SNI when sniffing is enabled). This does not relax `/1` conflicts or permit
+deleting, replacing or replaying gateway routes. If later DNS/route changes alter
+the frozen capture set, prepare and review a new installation.
 The helper receives explicit `--test-profile full-ipv4`, `--test-lease`, and
 repeated `--test-dns-host` arguments; no `--capture` argument is used. Tailscale
 DNS and DNS routed through another tunnel are excluded by the production plan.

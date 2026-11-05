@@ -70,31 +70,36 @@ func (s *session) freezeFullScope(before snapshot) error {
 		}
 	}
 	slices.SortFunc(s.TestProfile.DNSHosts, func(a, b netip.Addr) int { return a.Compare(b) })
+	s.SkippedDNS = slices.Clone(plan.SkippedDNS)
 	return s.TestProfile.Validate()
 }
 
 func (s *session) validateSnapshotScope(before snapshot) error {
+	_, err := s.snapshotPlan(before)
+	return err
+}
+
+func (s *session) snapshotPlan(before snapshot) (capture.Plan, error) {
 	scopes, err := s.scopes()
 	if err != nil {
-		return err
+		return capture.Plan{}, err
 	}
 	if s.TestProfile == nil || s.ipv6() {
-		_, err := capture.Build(before.Routes, nil, s.ipv6(), scopes)
-		return err
+		return capture.Build(before.Routes, nil, s.ipv6(), scopes)
 	}
 	plan, err := capture.Build(before.Routes, snapshotDNS(before), false, nil)
 	if err != nil {
-		return err
+		return capture.Plan{}, err
 	}
 	if len(plan.Prefixes) != len(scopes) {
-		return errors.New("full capture DNS scope changed; prepare and review a new installation")
+		return capture.Plan{}, errors.New("full capture DNS scope changed; prepare and review a new installation")
 	}
 	for _, prefix := range scopes {
 		if !slices.Contains(plan.Prefixes, prefix) {
-			return errors.New("full capture DNS scope changed; prepare and review a new installation")
+			return capture.Plan{}, errors.New("full capture DNS scope changed; prepare and review a new installation")
 		}
 	}
-	return nil
+	return plan, nil
 }
 
 func (s *session) checkTimeout() time.Duration {

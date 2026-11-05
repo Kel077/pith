@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/netip"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -40,6 +41,42 @@ func fullTestConfig() api.Config {
 	cfg := api.DefaultConfig()
 	cfg.Settings.IPv6, cfg.Settings.SafeStart = false, true
 	return cfg
+}
+
+func TestFullProfileStartsWithGatewayDNSAndReportsSkippedObservation(t *testing.T) {
+	e, d := newFullTestEngine(t, nil)
+	d.routes = []capture.Route{
+		{Prefix: netip.MustParsePrefix("0.0.0.0/0"), Gateway: netip.MustParseAddr("192.0.2.1"), Interface: "example0", Index: 1},
+		{Prefix: netip.MustParsePrefix("192.0.2.0/24"), Interface: "example0", Index: 1},
+		{Prefix: netip.MustParsePrefix("192.0.2.1/32"), Interface: "example0", Index: 1},
+	}
+	e.opts.Interfaces = func(context.Context) ([]api.Interface, error) {
+		return []api.Interface{{Name: "example0", Up: true, DNS: []string{"192.0.2.1"}}}, nil
+	}
+	before, _ := d.Snapshot()
+	cfg := fullTestConfig()
+	if err := e.Start(context.Background(), cfg.Scenes[0], cfg.Settings); err != nil {
+		t.Fatal("full profile failed on configured gateway DNS", err)
+	}
+	want := api.Warning{Code: api.WarnDNSUnobserved, Detail: "192.0.2.1"}
+	status, err := e.Status(context.Background())
+	if err != nil || !slices.Contains(status.Warnings, want) {
+		t.Fatal("running status omitted DNS observation warning", status, err)
+	}
+	if err := e.Reload(context.Background(), cfg.Scenes[0], cfg.Settings); err != nil {
+		t.Fatal(err)
+	}
+	status, err = e.Status(context.Background())
+	if err != nil || !slices.Contains(status.Warnings, want) {
+		t.Fatal("reload lost DNS warning", status, err)
+	}
+	if err := e.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := d.Snapshot()
+	if !slices.Equal(before, after) {
+		t.Fatal("full capture cleanup altered the gateway route")
+	}
 }
 
 func TestFullProfileLeaseClosesCaptureWithoutControllerOrLifecycleLock(t *testing.T) {
