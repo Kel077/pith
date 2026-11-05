@@ -31,3 +31,17 @@ func TestRouteEventsPreserveTransitionsButIgnoreCacheChurn(t *testing.T) {
 		t.Fatal(events)
 	}
 }
+
+func TestUnscopedAddEchoGetsIndexFromLinkAddress(t *testing.T) {
+	m := &route.RouteMessage{Type: unix.RTM_ADD, Flags: unix.RTF_UP | unix.RTF_HOST, Addrs: []route.Addr{&route.Inet4Addr{IP: [4]byte{192, 0, 2, 10}}, &route.LinkAddr{Index: 42, Name: "utun42"}, nil}}
+	events := changes([]route.Message{m})
+	if len(events) != 1 || events[0].Index != 42 || !events[0].Added {
+		t.Fatal("own route acknowledgement lost its interface", events)
+	}
+	if got := messageIndex(50, m.Addrs); got != 50 {
+		t.Fatal("overrode explicit header identity", got)
+	}
+	if got := messageIndex(0, []route.Addr{&route.LinkAddr{Name: "utun42"}}); got != 0 {
+		t.Fatal("guessed a live index from a name")
+	}
+}

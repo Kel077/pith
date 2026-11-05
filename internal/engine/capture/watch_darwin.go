@@ -83,12 +83,30 @@ func changes(messages []route.Message) []Change {
 				result = append(result, Change{Err: errors.New("unreadable configured route event")})
 				continue
 			}
-			result = append(result, Change{Index: m.Index, Prefix: routes[0].Prefix, Added: m.Type == unix.RTM_ADD})
+			result = append(result, Change{Index: messageIndex(m.Index, m.Addrs), Prefix: routes[0].Prefix, Added: m.Type == unix.RTM_ADD})
 		case *route.InterfaceMessage:
-			result = append(result, Change{Index: m.Index, Interface: true, Up: m.Flags&unix.IFF_UP != 0})
+			result = append(result, Change{Index: messageIndex(m.Index, m.Addrs), Interface: true, Up: m.Flags&unix.IFF_UP != 0})
 		case *route.InterfaceAddrMessage:
-			result = append(result, Change{Index: m.Index, Added: m.Type == unix.RTM_NEWADDR})
+			result = append(result, Change{Index: messageIndex(m.Index, m.Addrs), Added: m.Type == unix.RTM_NEWADDR})
 		}
 	}
 	return result
+}
+
+// An unscoped RTM_ADD echo can retain the request's zero header index. Its
+// AF_LINK sockaddr still identifies the requested interface. Do not resolve a
+// name against the current table and accidentally accept a different lifetime.
+// API references (no implementation copied):
+// https://github.com/apple-oss-distributions/xnu/blob/main/bsd/net/rtsock.c
+// https://github.com/apple-oss-distributions/network_cmds/blob/main/route.tproj/route.c
+func messageIndex(index int, addrs []route.Addr) int {
+	if index > 0 {
+		return index
+	}
+	for _, addr := range addrs {
+		if link, ok := addr.(*route.LinkAddr); ok && link.Index > 0 {
+			return link.Index
+		}
+	}
+	return 0
 }
