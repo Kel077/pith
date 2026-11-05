@@ -131,11 +131,15 @@ func (nativeDriver) InterfacePrefixes() ([]netip.Prefix, error) {
 	return result, nil
 }
 func (nativeDriver) Index(name string) (int, error) {
+	index, _, err := (nativeDriver{}).InterfaceState(name)
+	return index, err
+}
+func (nativeDriver) InterfaceState(name string) (int, bool, error) {
 	iface, err := net.InterfaceByName(name)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
-	return iface.Index, nil
+	return iface.Index, iface.Flags&net.FlagUp != 0, nil
 }
 func (nativeDriver) Create(mtu int) (tun.Device, error) {
 	if os.Geteuid() != 0 {

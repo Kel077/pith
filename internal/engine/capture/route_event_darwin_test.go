@@ -3,13 +3,17 @@
 package capture
 
 import (
+	"context"
 	"encoding/binary"
+	"fmt"
 	"net"
 	"net/netip"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/Kel077/pith/internal/api"
 	"golang.org/x/net/route"
 	"golang.org/x/sys/unix"
 )
@@ -25,6 +29,14 @@ func wireIPv6(ip string, embedded, zone int) []byte {
 		binary.BigEndian.PutUint16(b[10:12], uint16(embedded))
 	}
 	binary.NativeEndian.PutUint32(b[24:28], uint32(zone))
+	return b
+}
+
+func wireIPv4(ip string) []byte {
+	b := make([]byte, unix.SizeofSockaddrInet4)
+	b[0], b[1] = byte(len(b)), unix.AF_INET
+	a := addr(ip).As4()
+	copy(b[4:8], a[:])
 	return b
 }
 
@@ -59,8 +71,27 @@ func wireMessage(typ, flags, index int, addrs map[int][]byte, padded bool) []byt
 		size, indexOffset, bitmapOffset = unix.SizeofIfMsghdr, 12, 4
 	} else if typ == unix.RTM_IFINFO2 {
 		size, indexOffset, bitmapOffset = unix.SizeofIfMsghdr2, 12, 4
+	} else if typ == unix.RTM_NEWMADDR || typ == unix.RTM_DELMADDR {
+		size, indexOffset, bitmapOffset = unix.SizeofIfmaMsghdr, 12, 4
+	} else if typ == unix.RTM_NEWMADDR2 {
+		size, indexOffset, bitmapOffset = unix.SizeofIfmaMsghdr2, 12, 4
 	}
 	b := make([]byte, size)
+	// Darwin embeds if_data (96 bytes) after the 16-byte IFINFO prefix, and
+	// if_data64 (128 bytes) after IFINFO2's 32-byte prefix. Statistics are not
+	// sockaddrs, even when there are no trailing addresses at all.
+	dataOffset := 0
+	if typ == unix.RTM_IFINFO {
+		dataOffset = 16
+	} else if typ == unix.RTM_IFINFO2 {
+		dataOffset = 32
+	}
+	if dataOffset != 0 {
+		b[dataOffset] = 1 // IFT_OTHER
+		binary.NativeEndian.PutUint32(b[dataOffset+8:dataOffset+12], 1500)
+		binary.NativeEndian.PutUint32(b[dataOffset+16:dataOffset+20], 1000000)
+		binary.NativeEndian.PutUint32(b[dataOffset+24:dataOffset+28], 7)
+	}
 	b[2], b[3] = unix.RTM_VERSION, byte(typ)
 	binary.NativeEndian.PutUint16(b[indexOffset:indexOffset+2], uint16(index))
 	binary.NativeEndian.PutUint32(b[8:12], uint32(flags))
@@ -84,6 +115,115 @@ func wireMessage(typ, flags, index int, addrs map[int][]byte, padded bool) []byt
 	binary.NativeEndian.PutUint32(b[bitmapOffset:bitmapOffset+4], bitmap)
 	binary.NativeEndian.PutUint16(b[:2], uint16(len(b)))
 	return b
+}
+
+func TestDarwinIfInfoWithoutSockaddrs(t *testing.T) {
+	for _, tc := range []struct{ typ, size int }{{unix.RTM_IFINFO, 16 + 96}, {unix.RTM_IFINFO2, 32 + 128}} {
+		b := wireMessage(tc.typ, unix.IFF_UP|unix.IFF_POINTOPOINT|unix.IFF_RUNNING|unix.IFF_MULTICAST, 42, nil, false)
+		if len(b) != tc.size {
+			t.Fatal("incorrect Darwin interface header including if_data", len(b), tc.size)
+		}
+		// x/net intentionally skips this normal PF_ROUTE notification because it
+		// has no RTA_IFP/name. A watcher still needs its header's index and flags.
+		messages, err := route.ParseRIB(route.RIBTypeRoute, b)
+		if err != nil || len(messages) != 0 {
+			t.Fatal("unexpected dependency behavior", messages, err)
+		}
+		events := parseRouteEvents(b)
+		if len(events) != 1 || !events[0].Interface || !events[0].Up || events[0].Index != 42 || events[0].Err != nil || events[0].Unparsed || events[0].Diagnostic != "" {
+			t.Fatalf("normal IFINFO became a capture fault: %+v", events)
+		}
+	}
+}
+
+func TestDarwinNotificationHeaderFamilies(t *testing.T) {
+	for _, tc := range []struct {
+		typ, size  int
+		iface, add bool
+	}{
+		{unix.RTM_IFINFO, 112, true, false},
+		{unix.RTM_IFINFO2, 160, true, false},
+		{unix.RTM_NEWADDR, 20, false, true},
+		{unix.RTM_DELADDR, 20, false, false},
+		{unix.RTM_NEWMADDR, 16, false, true},
+		{unix.RTM_DELMADDR, 16, false, false},
+		{unix.RTM_NEWMADDR2, 20, false, true},
+	} {
+		addrs := map[int][]byte{unix.RTAX_IFP: wireLink(42)}
+		if !tc.iface {
+			addrs[unix.RTAX_IFA] = wireIPv6("ff02::1", 42, 0)
+		}
+		b := wireMessage(tc.typ, unix.IFF_UP|unix.IFF_MULTICAST, 42, addrs, false)
+		if tc.iface && (int(b[tc.size]) != len(wireLink(42)) || b[tc.size+1] != unix.AF_LINK) {
+			t.Fatal("sockaddr was not placed after embedded interface data")
+		}
+		meta, known := routeHeader(b)
+		if !known || meta.route || !meta.complete || meta.size != tc.size {
+			t.Fatalf("type=%d: wrong Darwin header layout: %+v", tc.typ, meta)
+		}
+		events := parseRouteEvents(b)
+		if len(events) != 1 || events[0].Err != nil || events[0].Unparsed || events[0].Index != 42 || events[0].Interface != tc.iface || events[0].Address == tc.iface || events[0].Added != tc.add || events[0].Up != tc.iface || events[0].Prefix.IsValid() {
+			t.Fatalf("type=%d: notification interpreted as routing policy: %+v", tc.typ, events)
+		}
+	}
+}
+
+func TestDarwinUtunStartupSequencePreservesCapture(t *testing.T) {
+	for _, ipv6 := range []bool{false, true} {
+		for _, delayed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("ipv6=%t/delayed=%t", ipv6, delayed), func(t *testing.T) {
+				target := prefix("198.51.100.9/32")
+				dst, assigned, mask := wireIPv4("198.51.100.9"), wireIPv4("192.0.2.1"), wireIPv4("255.255.255.0")
+				if ipv6 {
+					target = prefix("2001:db8:2::9/128")
+					dst, assigned, mask = wireIPv6("2001:db8:2::9", 0, 0), wireIPv6("2001:db8:1::1", 0, 0), wireMask(126, true)
+				}
+				d := &notificationDriver{liveDriver: liveDriver{fakeDriver: fakeDriver{routes: []Route{{Prefix: prefix("0.0.0.0/0"), Interface: "test0", Index: 1}, {Prefix: prefix("::/0"), Interface: "test0", Index: 1}}}, indices: map[string]int{"test0": 1}}, up: true}
+				c, err := Prepare(context.Background(), Options{Driver: d, IPv6: ipv6, Scopes: []netip.Prefix{target}, StatePath: filepath.Join(t.TempDir(), "capture.json")})
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer c.Close()
+				g, err := NewGuard(c, []api.Interface{{Name: "test0", Up: true}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				up := wireMessage(unix.RTM_IFINFO, unix.IFF_UP|unix.IFF_POINTOPOINT|unix.IFF_RUNNING|unix.IFF_MULTICAST, 42, nil, false)
+				address := wireMessage(unix.RTM_NEWADDR, 0, 42, map[int][]byte{unix.RTAX_IFP: wireLink(42), unix.RTAX_IFA: assigned, unix.RTAX_NETMASK: mask}, false)
+				add := wireMessage(unix.RTM_ADD, unix.RTF_UP|unix.RTF_HOST|unix.RTF_STATIC, 42, map[int][]byte{unix.RTAX_DST: dst, unix.RTAX_GATEWAY: wireLink(42)}, false)
+				batch := append(append(append([]byte(nil), up...), address...), add...)
+				events := parseRouteEvents(batch)
+				if len(events) != 3 {
+					t.Fatal("startup sequence lost events", events)
+				}
+				if delayed {
+					if err := c.Activate(context.Background()); err != nil {
+						t.Fatal(err)
+					}
+				}
+				for i, event := range events {
+					if i == 2 && !delayed {
+						if err := c.Activate(context.Background()); err != nil {
+							t.Fatal(err)
+						}
+					}
+					reads := d.reads
+					if event.Unparsed || event.Err != nil || event.Diagnostic != "" {
+						t.Fatalf("normal startup event became a diagnostic: %+v", event)
+					}
+					if err := g.Observe(event); err != nil || g.Err() != nil || c.closed.Load() || d.reads <= reads {
+						t.Fatal("startup sequence stopped capture or skipped verification", i, err)
+					}
+				}
+				if !c.active.Load() || d.device.closed {
+					t.Fatal("startup notifications ended capture")
+				}
+				if binding, err := g.System(target.Addr()); err != nil || binding.Name != "test0" {
+					t.Fatal("immediate SafeStart system egress was lost", binding, err)
+				}
+			})
+		}
+	}
 }
 
 func TestDarwinIPv6RoutingMessages(t *testing.T) {
@@ -158,15 +298,25 @@ func TestDarwinAddressMessages(t *testing.T) {
 }
 
 func TestUnreadableInterfaceNotificationRetainsHeaderIdentity(t *testing.T) {
-	for _, typ := range []int{unix.RTM_NEWADDR, unix.RTM_DELADDR, unix.RTM_IFINFO, unix.RTM_IFINFO2} {
+	for _, typ := range []int{unix.RTM_NEWADDR, unix.RTM_DELADDR, unix.RTM_IFINFO, unix.RTM_IFINFO2, unix.RTM_NEWMADDR, unix.RTM_DELMADDR, unix.RTM_NEWMADDR2} {
 		link := wireLink(50)
 		link[5] = 254
 		b := wireMessage(typ, unix.IFF_UP, 50, map[int][]byte{unix.RTAX_IFP: link}, false)
 		events := parseRouteEvents(b)
-		address := typ == unix.RTM_NEWADDR || typ == unix.RTM_DELADDR
+		address := typ != unix.RTM_IFINFO && typ != unix.RTM_IFINFO2
 		if len(events) != 1 || events[0].Err != nil || !events[0].Unparsed || events[0].Index != 50 || events[0].Address != address || events[0].Interface == address || !strings.Contains(events[0].Diagnostic, "family=18/len=14") {
 			t.Fatalf("type=%d: %+v", typ, events)
 		}
+	}
+}
+
+func TestTruncatedNotificationRequestsSnapshot(t *testing.T) {
+	b := wireMessage(unix.RTM_IFINFO, unix.IFF_UP, 42, nil, false)
+	b = b[:20] // Fixed identity fields exist, but most if_data is missing.
+	binary.NativeEndian.PutUint16(b[:2], uint16(len(b)))
+	events := parseRouteEvents(b)
+	if len(events) != 1 || !events[0].Interface || !events[0].Unparsed || events[0].Index != 42 || events[0].Err != nil || !strings.Contains(events[0].Diagnostic, "truncated notification header") {
+		t.Fatal("notification payload directly revoked capture", events)
 	}
 }
 
@@ -264,6 +414,9 @@ func TestHostPrefixWithoutMaskSlot(t *testing.T) {
 }
 
 func FuzzRouteEventFrames(f *testing.F) {
+	f.Add(wireMessage(unix.RTM_IFINFO, unix.IFF_UP, 42, nil, false))
+	f.Add(wireMessage(unix.RTM_IFINFO2, unix.IFF_UP, 42, map[int][]byte{unix.RTAX_IFP: wireLink(42)}, false))
+	f.Add(wireMessage(unix.RTM_NEWMADDR2, 0, 42, map[int][]byte{unix.RTAX_IFA: wireIPv6("ff02::1", 42, 0)}, false))
 	f.Add(wireMessage(unix.RTM_ADD, unix.RTF_UP|unix.RTF_HOST, 42, map[int][]byte{unix.RTAX_DST: wireIPv6("2001:db8::9", 0, 0), unix.RTAX_GATEWAY: wireLink(42)}, false))
 	f.Add(wireMessage(unix.RTM_CHANGE, unix.RTF_UP|unix.RTF_IFSCOPE, 50, map[int][]byte{unix.RTAX_DST: wireIPv6("ff00::", 0, 0), unix.RTAX_GATEWAY: wireLink(50), unix.RTAX_NETMASK: wireMask(8, true)}, false))
 	f.Fuzz(func(t *testing.T, b []byte) {

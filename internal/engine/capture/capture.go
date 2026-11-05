@@ -42,6 +42,13 @@ type addressExclusionReader interface {
 	AddressExclusions() ([]netip.Prefix, error)
 }
 
+// interfaceStateReader supplies current flags rather than relying on delayed
+// IFINFO notifications. The native driver implements it; memory-only drivers
+// can omit flags when their device does not model an OS interface.
+type interfaceStateReader interface {
+	InterfaceState(string) (index int, up bool, err error)
+}
+
 type Options struct {
 	IPv6             bool
 	Scopes           []netip.Prefix

@@ -81,7 +81,17 @@ payload. `x/net/route` normalizes KAME embedded scope and `sin6_scope_id`; scope
 bytes never enter the prefix. Synthetic wire-format tests cover scoped defaults,
 link-local destinations/gateways, multicast, link gateways, and address events.
 
-An unreadable IP event on the owned interface, with unknown interface identity,
+Interface notifications use `if_msghdr`/`if_msghdr2` (112/160 bytes, including
+96/128 bytes of embedded interface data); address notifications use `ifa_msghdr`
+(20 bytes), and multicast notifications use `ifma_msghdr`/`ifma_msghdr2` (16/20
+bytes). Only route events use `rt_msghdr`. XNU's `rt_ifmsg` sends a normal IFINFO
+with `ifm_addrs=0`: `x/net/route` skips it because it lacks `RTA_IFP`, not because
+it is malformed. The observer reads notification indices/flags directly from
+their respective headers and validates optional address payload separately.
+See Apple's [if.h](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/net/if.h)
+and [rtsock.c](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/net/rtsock.c).
+
+An unreadable IP route event on the owned interface, with unknown interface identity,
 or with an uncertain unscoped overlap cannot exclude a capture conflict: stop
 safely and retain the reason. A proven non-IP route, an external scoped route,
 or an independently decoded external link-local/multicast key unequal to every
@@ -89,9 +99,13 @@ capture prefix cannot replace Pith's unscoped capture; record the event,
 invalidate affected external bindings, and independently verify the complete
 owned route set before continuing. A key recovered from an otherwise malformed
 message is used only for relevance, never as a routing or deletion record.
-Unreadable address/interface notifications with a complete header and a known
-external index likewise refresh that interface and recheck capture; missing
-identity or an unreadable notification on the owned utun remains fatal.
+Interface and unicast/multicast address notifications only trigger a complete
+capture snapshot, even if their address payload or owned interface notification
+is unreadable. The check is serialized with activation to avoid inspecting a
+partially installed capture. Native ownership checks also read current interface
+flags: a genuinely down or missing utun fails, while a delayed DOWN notification
+followed by a currently healthy UP does not. Bad notification payloads alone do
+not revoke capture; failed ownership observation still does.
 Do not guess a host mask or ignore an unknown unscoped route just because its
 destination looks link-local. Stream/framing failures remain ownership faults.
 `Status.RouteDiagnostics` retains the latest 32 distinct technical summaries,

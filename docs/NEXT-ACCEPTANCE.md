@@ -146,6 +146,14 @@ both binaries and prepare a new session; the corrected IPv6 hardware run is stil
 pending. Inspect the new `routeDiagnostics` field even on failed startup: it
 records address formats and the ownership decision without address payloads.
 
+A subsequent retry and scoped IPv4 control both exposed a notification regression:
+normal IFINFO with `ifm_addrs=0` was skipped by `x/net/route` and misclassified as
+unreadable. Header decoding and snapshot-based notification handling are now
+corrected. Synthetic IPv4/IPv6 startup sequences cover immediate and queued
+IFINFO/NEWADDR/route-ADD delivery without stopping capture, plus actual link-down
+and failed ownership checks. The next reviewed regression order is scoped IPv4,
+host IPv6, then full IPv4; hardware confirmation remains pending.
+
 1. Confirm the two adapters and one permitted IPv6 TLS endpoint. It must support
    certificate-verified HTTP/1.1 `GET /`; a plain-text IPv6 exit echo also enables
    the optional tool-bypass check. Freeze a literal `[IPv6]:port` and certificate

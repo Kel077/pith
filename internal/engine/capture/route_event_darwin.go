@@ -40,13 +40,30 @@ func parseRouteEvents(data []byte) []Change {
 			continue // GET replies and other non-policy notifications.
 		}
 		if !meta.complete {
-			result = append(result, routeFrameFault(meta.summary()+": truncated policy header"))
+			if meta.route {
+				result = append(result, routeFrameFault(meta.summary()+": truncated policy header"))
+			} else {
+				result = append(result, meta.notification("truncated notification header"))
+			}
 			continue
 		}
 		if meta.route && (meta.flags&(unix.RTF_WASCLONED|unix.RTF_LLINFO) != 0 || binary.NativeEndian.Uint32(frame[28:32]) != 0) {
 			continue // Neighbor/cache churn and unsuccessful requests.
 		}
 		aligned, problem := meta.sockaddrs(frame)
+		if !meta.route {
+			// XNU rt_ifmsg sends ifm_addrs=0. x/net's RIB parser intentionally
+			// skips IFINFO without RTA_IFP, which is not a malformed notification.
+			// Read the type-specific header ourselves; parse optional sockaddrs
+			// only to diagnose their encoding, never to infer a route mutation.
+			if problem == "" {
+				if _, err := route.ParseRIB(route.RIBTypeRoute, aligned); err != nil {
+					problem = "invalid notification sockaddr encoding"
+				}
+			}
+			result = append(result, meta.notification(problem))
+			continue
+		}
 		if problem == "" {
 			messages, err := route.ParseRIB(route.RIBTypeRoute, aligned)
 			if err == nil && len(messages) == 1 {
@@ -61,12 +78,7 @@ func parseRouteEvents(data []byte) []Change {
 			problem = "invalid routing sockaddr encoding"
 		}
 		diagnostic := meta.summary() + ": " + problem
-		if meta.route {
-			result = append(result, Change{Index: meta.index, Prefix: meta.prefixHint(frame), Added: meta.typ == unix.RTM_ADD, Scoped: meta.flags&unix.RTF_IFSCOPE != 0, Unparsed: true, NonIP: meta.nonIP, Diagnostic: diagnostic})
-		} else {
-			address := meta.typ == unix.RTM_NEWADDR || meta.typ == unix.RTM_DELADDR
-			result = append(result, Change{Index: meta.index, Address: address, Interface: !address, Added: meta.typ == unix.RTM_NEWADDR, Up: meta.flags&unix.IFF_UP != 0, Unparsed: true, Diagnostic: diagnostic})
-		}
+		result = append(result, Change{Index: meta.index, Prefix: meta.prefixHint(frame), Added: meta.typ == unix.RTM_ADD, Scoped: meta.flags&unix.RTF_IFSCOPE != 0, Unparsed: true, NonIP: meta.nonIP, Diagnostic: diagnostic})
 	}
 	return result
 }
@@ -90,6 +102,10 @@ func routeHeader(b []byte) (m routeEventHeader, known bool) {
 		m.size, m.route = unix.SizeofRtMsghdr, true
 	case unix.RTM_NEWADDR, unix.RTM_DELADDR:
 		m.size = unix.SizeofIfaMsghdr
+	case unix.RTM_NEWMADDR, unix.RTM_DELMADDR:
+		m.size = unix.SizeofIfmaMsghdr
+	case unix.RTM_NEWMADDR2:
+		m.size = unix.SizeofIfmaMsghdr2
 	case unix.RTM_IFINFO:
 		m.size = unix.SizeofIfMsghdr
 	case unix.RTM_IFINFO2:
@@ -110,6 +126,17 @@ func routeHeader(b []byte) (m routeEventHeader, known bool) {
 		m.attrs = binary.NativeEndian.Uint32(b[4:8])
 	}
 	return m, true
+}
+
+func (m *routeEventHeader) notification(problem string) Change {
+	iface := m.typ == unix.RTM_IFINFO || m.typ == unix.RTM_IFINFO2
+	event := Change{Index: m.index, Interface: iface, Address: !iface,
+		Added: m.typ == unix.RTM_NEWADDR || m.typ == unix.RTM_NEWMADDR || m.typ == unix.RTM_NEWMADDR2,
+		Up:    iface && m.complete && m.flags&unix.IFF_UP != 0}
+	if problem != "" {
+		event.Unparsed, event.Diagnostic = true, m.summary()+": "+problem
+	}
+	return event
 }
 
 func (m *routeEventHeader) summary() string {

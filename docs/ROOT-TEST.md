@@ -241,6 +241,16 @@ The original failed report contained no event metadata, so the exact event is
 not retrospectively proven. A corrected hardware pass remains pending: rebuild
 the helper and harness, then prepare and review a new session before retrying.
 
+The subsequent IPv6 smoke and a scoped IPv4 regression exposed another startup
+fault: a normal utun IFINFO with no sockaddrs was mistaken for a decoder failure.
+`x/net/route` deliberately skips IFINFO without `RTA_IFP`; the observer must read
+its interface header directly. That classification is corrected, with synthetic
+IPv4/IPv6 IFINFO, NEWADDR and route-ADD startup sequences, both immediate and
+delayed delivery. Notifications now verify the complete capture and current link
+state instead of treating the owned interface's notification as a route fault.
+Repeat scoped IPv4, then IPv6 host capture, then full IPv4 after review; this
+correction still requires hardware confirmation and does not authorize a run.
+
 IPv6 `/128` acceptance is another new installation and private session, selected
 explicitly by `--capture-mode host-ipv6`. Both reviewed adapters must be up and
 have a global, non-private IPv6 address. A missing IPv6 path is a prerequisite

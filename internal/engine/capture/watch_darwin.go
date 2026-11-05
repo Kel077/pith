@@ -11,7 +11,8 @@ import (
 )
 
 // Watch observes PF_ROUTE without writing to it. SDK net/route.h defines
-// RTM_ADD/DELETE/CHANGE, NEWADDR/DELADDR and IFINFO; Darwin has no IFANNOUNCE.
+// Route, interface, unicast-address and multicast-address messages have distinct
+// headers; Darwin has no IFANNOUNCE.
 // Address withdrawal and IFINFO retain lifetime transitions between snapshots.
 // The nonblocking os.File uses Go's poller; cancellation closes and drains it.
 func Watch(ctx context.Context) (<-chan Change, error) {
@@ -80,6 +81,8 @@ func changes(messages []route.Message) []Change {
 			result = append(result, Change{Index: messageIndex(m.Index, m.Addrs), Interface: true, Up: m.Flags&unix.IFF_UP != 0})
 		case *route.InterfaceAddrMessage:
 			result = append(result, Change{Index: messageIndex(m.Index, m.Addrs), Address: true, Added: m.Type == unix.RTM_NEWADDR})
+		case *route.InterfaceMulticastAddrMessage:
+			result = append(result, Change{Index: messageIndex(m.Index, m.Addrs), Address: true, Added: m.Type == unix.RTM_NEWMADDR || m.Type == unix.RTM_NEWMADDR2})
 		}
 	}
 	return result

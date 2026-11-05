@@ -144,6 +144,24 @@ func (g *Guard) Observe(event Change) error {
 	if event.Err != nil {
 		return g.Revoke(event.Err)
 	}
+	if event.Interface || event.Address {
+		// Notifications are observation triggers, not route additions/deletions.
+		// Serialize with Activate so a setup event cannot inspect a partial set.
+		// Validate reads current link flags: a queued DOWN followed by UP must
+		// not tear down a now-healthy tunnel merely because delivery was late.
+		g.c.lifecycle.Lock()
+		defer g.c.lifecycle.Unlock()
+		if event.Interface && event.Index != g.c.state.Index && !event.Up {
+			g.mu.Lock()
+			for name, index := range g.indices {
+				if index == event.Index {
+					g.epochs[name]++
+				}
+			}
+			g.mu.Unlock()
+		}
+		return g.Validate(g.c.active.Load())
+	}
 	if event.Unparsed {
 		if _, safe := g.unparsedDisposition(event); !safe {
 			return g.Revoke(errors.New(g.RouteDiagnostic(event)))
@@ -186,6 +204,9 @@ func (g *Guard) RouteDiagnostic(event Change) string {
 }
 
 func (g *Guard) unparsedDisposition(event Change) (string, bool) {
+	if event.Address || event.Interface {
+		return "interface notification; verify current capture snapshot", true
+	}
 	if event.NonIP {
 		return "non-IP route; verify capture and continue", true
 	}
@@ -194,9 +215,6 @@ func (g *Guard) unparsedDisposition(event Change) (string, bool) {
 	}
 	if event.Index == g.c.state.Index {
 		return "owned interface; capture ownership cannot be established", false
-	}
-	if event.Address || event.Interface {
-		return "external interface notification; verify capture and continue", true
 	}
 	if event.Scoped {
 		return "external scoped route; verify capture and continue", true
@@ -330,9 +348,18 @@ func (g *Guard) Validate(active bool) error {
 			return g.Revoke(fmt.Errorf("capture route missing or duplicated: %s", p))
 		}
 	}
-	index, err := g.c.opts.Driver.Index(g.c.Name)
+	var index int
+	up := true
+	if reader, ok := g.c.opts.Driver.(interfaceStateReader); ok {
+		index, up, err = reader.InterfaceState(g.c.Name)
+	} else {
+		index, err = g.c.opts.Driver.Index(g.c.Name)
+	}
 	if err != nil || index != g.c.state.Index {
 		return g.Revoke(errors.New("capture interface generation changed"))
+	}
+	if !up {
+		return g.Revoke(errors.New("capture interface is down"))
 	}
 	if !maps.Equal(routeCounts(g.routes), routeCounts(external)) {
 		for _, old := range g.routes {
