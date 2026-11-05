@@ -575,6 +575,7 @@ func (s *Service) openLocked(sc *api.Scene, now time.Time) {
 		App:       a.ref,
 		Process:   api.Process{PID: 400 + int(hash(a.ref.Path)%9000), Name: a.process, Path: a.exec},
 		Protocol:  proto,
+		Local:     netip.AddrPortFrom(netip.MustParseAddr("192.0.2.10"), 49152+uint16(s.nextID%16384)).String(),
 		Remote:    netip.AddrPortFrom(addr, uint16(port)).String(),
 		Domain:    domain,
 		Outcome:   outcome,
@@ -592,6 +593,7 @@ func (s *Service) openLocked(sc *api.Scene, now time.Time) {
 			c.Problem = "connect: network is unreachable"
 		}
 	default:
+		c.OutboundLocal = netip.AddrPortFrom(netip.MustParseAddr("198.51.100.10"), 49152+uint16(s.nextID%16384)).String()
 		s.open[c.ID] = f
 	}
 	s.conns = append(s.conns, c)

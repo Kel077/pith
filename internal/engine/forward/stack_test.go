@@ -159,13 +159,19 @@ func (x *fixtureStack) dialTCP(ctx context.Context, remote string) (*gonet.TCPCo
 	return gonet.DialContextTCP(ctx, x.app, tcpip.FullAddress{NIC: 1, Addr: tcpip.AddrFromSlice(ap.Addr().AsSlice()), Port: ap.Port()}, proto)
 }
 
+type tupleConn struct{ net.Conn }
+
+func (tupleConn) LocalAddr() net.Addr {
+	return &net.UDPAddr{IP: net.ParseIP("198.51.100.10"), Port: 50001}
+}
+
 func echoDial(t *testing.T) egress.DialFunc {
 	return func(ctx context.Context, iface, network, address string) (net.Conn, error) {
 		a, b := net.Pipe()
 		done := make(chan struct{})
 		go func() { defer close(done); defer b.Close(); io.Copy(b, b) }()
 		t.Cleanup(func() { a.Close(); b.Close(); <-done })
-		return a, nil
+		return tupleConn{a}, nil
 	}
 }
 
@@ -206,7 +212,13 @@ func TestTCPRelayIPv4IPv6AndHotRules(t *testing.T) {
 			}
 			found := false
 			for _, c := range x.store.Connections(api.ConnectionQuery{}) {
+				if c.Local == "" || c.Outcome == api.Blocked && c.OutboundLocal != "" {
+					t.Fatal("missing application tuple or invented blocked egress", c)
+				}
 				if c.Outcome == api.System && c.Domain == "example.com" && c.Sent > 0 && c.Received > 0 && c.Interface == "en0" {
+					if c.Local != conn.LocalAddr().String() || c.OutboundLocal != "198.51.100.10:50001" {
+						t.Fatal("incorrect TCP socket tuples", c)
+					}
 					found = true
 				}
 			}
@@ -307,6 +319,9 @@ func TestUDPRelayAndIdleExpiry(t *testing.T) {
 	for time.Now().Before(deadline) {
 		rows := x.store.Connections(api.ConnectionQuery{})
 		if len(rows) == 1 && !rows[0].Ended.IsZero() {
+			if rows[0].Local != conn.LocalAddr().String() || rows[0].OutboundLocal != "198.51.100.10:50001" {
+				t.Fatal("incorrect UDP socket tuples", rows)
+			}
 			if rows[0].Sent != 29 || rows[0].Received != 29 {
 				t.Fatal(rows)
 			}

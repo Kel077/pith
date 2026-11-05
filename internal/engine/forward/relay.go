@@ -50,7 +50,7 @@ func (f *Forwarder) tcp(req *tcp.ForwarderRequest) {
 	policy := f.opts.Router.Policy()
 	f.rememberTCP(local, remote)
 	a, _ := f.opts.Lookup(f.ctx, api.TCP, local, remote)
-	c := api.Connection{Started: time.Now(), App: a.App, Process: a.Process, Protocol: api.TCP, Remote: remote.String(), Domain: f.cache.Lookup(remote.Addr(), time.Now())}
+	c := api.Connection{Started: time.Now(), App: a.App, Process: a.Process, Protocol: api.TCP, Local: local.String(), Remote: remote.String(), Domain: f.cache.Lookup(remote.Addr(), time.Now())}
 	// Only an address/app block can refuse the SYN before accepting it. A cached
 	// name may describe another host sharing this address; sniffing gets the
 	// opportunity to replace it before any domain rule is applied.
@@ -96,6 +96,7 @@ func (f *Forwarder) tcp(req *tcp.ForwarderRequest) {
 		return
 	}
 	out := result.Conn
+	c.OutboundLocal = out.LocalAddr().String()
 	defer out.Close()
 	stopOut := context.AfterFunc(f.ctx, func() { out.Close() })
 	defer stopOut()
@@ -204,7 +205,7 @@ func (f *Forwarder) udp(req *udp.ForwarderRequest) bool {
 		if err != nil {
 			return
 		}
-		c := api.Connection{Started: time.Now(), App: a.App, Process: a.Process, Protocol: api.UDP, Remote: remote.String(), Domain: f.cache.Lookup(remote.Addr(), time.Now())}
+		c := api.Connection{Started: time.Now(), App: a.App, Process: a.Process, Protocol: api.UDP, Local: local.String(), Remote: remote.String(), Domain: f.cache.Lookup(remote.Addr(), time.Now())}
 		if policy.Sniff {
 			if host := domains.QUIC(data[:n]); host != "" {
 				c.Domain = host
@@ -220,6 +221,7 @@ func (f *Forwarder) udp(req *udp.ForwarderRequest) bool {
 			return
 		}
 		out := result.Conn
+		c.OutboundLocal = out.LocalAddr().String()
 		defer out.Close()
 		stopOut := context.AfterFunc(f.ctx, func() { out.Close() })
 		defer stopOut()

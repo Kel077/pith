@@ -136,7 +136,9 @@ func TestHistoryDoesNotDoubleCountRetentionLevels(t *testing.T) {
 func TestPersistenceRetentionAndMemoryOnlyLogs(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "data")
 	s, now := testStore(t, Options{Dir: dir, LogDays: 2})
-	id := s.Add(fixture())
+	connection := fixture()
+	connection.Local, connection.OutboundLocal = "192.0.2.10:50000", "198.51.100.10:50001"
+	id := s.Add(connection)
 	s.AddBytes(id, 123, 456)
 	s.End(id, "")
 	flush(t, s, true)
@@ -154,6 +156,9 @@ func TestPersistenceRetentionAndMemoryOnlyLogs(t *testing.T) {
 	connections := reopened.Connections(api.ConnectionQuery{})
 	if len(connections) != 1 || connections[0].Sent != 123 || connections[0].Ended.IsZero() {
 		t.Fatal(connections)
+	}
+	if connections[0].Local != connection.Local || connections[0].OutboundLocal != connection.OutboundLocal {
+		t.Fatal("persisted connection lost its local tuples", connections)
 	}
 	traffic := reopened.Traffic(api.TrafficQuery{Step: time.Second})
 	if len(traffic.Apps) != 1 || traffic.Apps[0].Sent != 123 || traffic.Apps[0].Received != 456 {

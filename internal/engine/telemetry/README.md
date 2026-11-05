@@ -6,6 +6,12 @@ are coalesced per connection; opening and terminal snapshots are preserved.
 Open connections are checkpointed to JSONL at most every ten seconds, and closed
 connections immediately at the next flush. A forced flush synchronizes files.
 
+Connection snapshots include the application-side local tuple and, after a
+successful dial, the outbound socket's pre-NAT local tuple. They add at most
+125 JSON bytes per snapshot for unzoned IP endpoints, without new records,
+packet logging or additional write frequency. They cannot reveal a carrier's
+public NAT port. Missing fields in old JSONL records remain empty.
+
 Daily `connections-YYYY-MM-DD.jsonl` files obey `LogDays`; zero deletes stored
 connection logs and keeps new records in memory only. JSONL can contain several
 snapshots for one ID. Recovery keeps the last snapshot, ignores incomplete JSON
