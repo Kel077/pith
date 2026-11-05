@@ -87,7 +87,10 @@ func Prepare(ctx context.Context, opts Options) (*Capture, error) {
 		return nil, err
 	}
 	for _, r := range before {
-		if r.Local && (r.Prefix.Contains(netip.MustParseAddr("198.18.0.1")) || opts.IPv6 && r.Prefix.Contains(netip.MustParseAddr("fd7a:7069:7468::1"))) {
+		// Assigning a tunnel address makes it local, even in a scoped test. Do
+		// not take an address already covered by a specific physical/VPN route.
+		// Defaults and global split routes do not identify an occupied subnet.
+		if (r.Local || r.Prefix.Bits() > 1) && (r.Prefix.Contains(netip.MustParseAddr("198.18.0.1")) || opts.IPv6 && r.Prefix.Contains(netip.MustParseAddr("fd7a:7069:7468::1"))) {
 			return nil, &api.Error{Code: api.ErrRouteConflict, Detail: "Pith tunnel address is already in use"}
 		}
 	}

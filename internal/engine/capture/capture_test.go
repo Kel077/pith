@@ -229,6 +229,26 @@ func TestPrepareActivateAndStopAreReversible(t *testing.T) {
 	}
 }
 
+func TestScopedCaptureCannotClaimAddressFromExistingNetwork(t *testing.T) {
+	for _, r := range []Route{
+		{Prefix: prefix("198.18.0.0/15"), Interface: "en0"},
+		{Prefix: prefix("198.18.0.1/32"), Interface: "en5", Scoped: true},
+		{Prefix: prefix("198.18.0.0/24"), Interface: "lo0", Reject: true},
+		{Prefix: prefix("fd7a:7069:7468::/64"), Interface: "utun7"},
+	} {
+		d := &fakeDriver{routes: append(baseRoutes(), r)}
+		opts := fakeOptions(t, d)
+		opts.Scopes = []netip.Prefix{prefix("192.0.2.10/32")}
+		opts.IPv6 = true
+		if _, err := Prepare(context.Background(), opts); api.Code(err) != api.ErrRouteConflict {
+			t.Fatal("claimed a tunnel address from another network", r.Prefix, err)
+		}
+		if d.device != nil {
+			t.Fatal("created utun before checking address conflicts")
+		}
+	}
+}
+
 func TestEveryPartialActivationFailureClosesTunnel(t *testing.T) {
 	for _, fail := range []int{1, 2} {
 		d := &fakeDriver{routes: baseRoutes(), failAdd: fail}
