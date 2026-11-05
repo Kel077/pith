@@ -32,6 +32,10 @@ func (a *App) rulesView(c *ui.Context) {
 			a.openEditor(sc.ID, -1)
 		}
 	})
+	if a.loadErr != nil {
+		a.loadErrorView(c)
+		return
+	}
 	if sc == nil {
 		return
 	}
@@ -87,6 +91,39 @@ func (a *App) rulesView(c *ui.Context) {
 		ui.Text(c, tr("Block rules always win; otherwise the first matching rule from the top decides. Drag to reorder.",
 			"拦截规则总是优先；其余从上往下，第一条匹配的规则生效。拖动可以调整顺序。")).FontSize(12).TextColor(t.TextMuted)
 	})
+}
+
+// loadErrorView explains that the configuration could not be read, and
+// offers to read it again or to start over.
+func (a *App) loadErrorView(c *ui.Context) {
+	emptyState(c, icAlert, tr("Your rules can't be read", "无法读取规则"),
+		errorText(a.loadErr)+" "+tr("Pith saves nothing over the file until you decide.", "在你决定之前，橘核不会覆盖这个文件。"),
+		func() {
+			if ui.Button(c, tr("Try Again", "重试")).Clicked() {
+				a.reload()
+			}
+			if ui.Button(c, tr("Start Over…", "重新开始…")).Clicked() {
+				a.confirm = &confirmation{
+					title:  tr("Start over with no rules?", "清空规则重新开始？"),
+					body:   tr("Pith saves an empty configuration in place of the one it can't read.", "橘核会用一份空白配置替换无法读取的那份。"),
+					action: tr("Start Over", "重新开始"),
+					danger: true,
+					do: func() {
+						a.setConfig(api.DefaultConfig())
+						a.change(func(*api.Config) {})
+					},
+				}
+			}
+		})
+}
+
+// reload reads the configuration again.
+func (a *App) reload() {
+	var cfg api.Config
+	a.async(func(ctx context.Context) (err error) {
+		cfg, err = a.Service.LoadConfig(ctx)
+		return err
+	}, func() { a.setConfig(cfg) }, func(err error) { a.loadErr = err })
 }
 
 // sceneBar chooses the scene the page shows, which the switch starts.

@@ -30,9 +30,23 @@ func AppIcon(size int) *image.RGBA {
 	}, size, size, 1)
 }
 
+var trayIcons [2][]byte
+
 // TrayIcon renders the menu bar icon as a template PNG, 18 points square at
-// twice the resolution: the mark, faint while routing is off.
+// twice the resolution: the mark, faint while routing is off. Call it on
+// the main thread.
 func TrayIcon(on bool) []byte {
+	k := 0
+	if on {
+		k = 1
+	}
+	if trayIcons[k] == nil {
+		trayIcons[k] = renderTrayIcon(on)
+	}
+	return trayIcons[k]
+}
+
+func renderTrayIcon(on bool) []byte {
 	alpha := float32(1)
 	if !on {
 		alpha = 0.5

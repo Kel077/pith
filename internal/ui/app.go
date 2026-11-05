@@ -71,6 +71,7 @@ type App struct {
 
 	cfg       api.Config
 	loaded    bool
+	loadErr   error // the configuration could not be read: nothing is saved over it
 	status    api.Status
 	ifaces    []api.Interface
 	conns     []*api.Connection // newest first
@@ -140,7 +141,7 @@ func (a *App) Run(ctx context.Context) {
 		cfg, err := a.Service.LoadConfig(ctx)
 		a.Post(func() {
 			if err != nil {
-				a.toast(errorText(err))
+				a.loadErr = err
 				return
 			}
 			a.setConfig(cfg)
@@ -295,7 +296,7 @@ func (a *App) setConnections(conns []api.Connection) {
 
 func (a *App) setConfig(cfg api.Config) {
 	a.cfg = cfg
-	a.loaded = true
+	a.loaded, a.loadErr = true, nil
 	if a.scene(a.sceneID) == nil {
 		a.sceneID = cfg.Selected
 	}
@@ -329,6 +330,9 @@ func sceneName(s *api.Scene) string {
 // change changes the configuration and saves it; the backend applies the
 // rules of the running scene at once.
 func (a *App) change(fn func(cfg *api.Config)) {
+	if !a.loaded {
+		return // never save over a configuration that could not be read
+	}
 	fn(&a.cfg)
 	cfg := cloneConfig(a.cfg)
 	a.async(func(ctx context.Context) error { return a.Service.SaveConfig(ctx, cfg) }, nil, func(error) {
