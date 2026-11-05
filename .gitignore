@@ -1,0 +1,11 @@
+# Build products
+/build/
+/dist/
+/resources/darwin-arm64/bin/
+*.dmg
+
+# Local state, logs and captures (never commit the user's network data)
+*.log
+*.pcap
+/tmp/
+.DS_Store
