@@ -355,8 +355,8 @@ func rebaselineWithOps(parent context.Context, s *session, c api.Service, label 
 	}) != -1 {
 		return errors.New("label must start with a lowercase letter and contain 1-40 lowercase letters, digits, hyphens, or underscores")
 	}
-	if !s.Installed || !s.CancelPassed || s.Installation == nil {
-		return errors.New("rebaseline requires this session's successful cancellation and recorded scoped installation")
+	if !s.Installed || !s.cancellationRecorded() || s.Installation == nil {
+		return errors.New("rebaseline requires recorded cancellation or a managed skip, and the recorded scoped installation")
 	}
 	ctx, cancel := context.WithTimeout(parent, 40*time.Second)
 	defer cancel()

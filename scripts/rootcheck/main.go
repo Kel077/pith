@@ -24,12 +24,13 @@ const usage = `rootcheck prepares a private, scoped acceptance session.
   prepare   --helper ABSOLUTE_PATH --interface-a NAME --interface-b NAME
             --target IP:PORT --server-name TLS_NAME [--version dev]
             [--dns-target IP:53]
-  cancel    --session DIRECTORY
-  install   --session DIRECTORY
+  cancel    --session DIRECTORY [--auth keychain:SERVICE]
+  install   --session DIRECTORY [--auth keychain:SERVICE]
   check     --session DIRECTORY [--batch | --safe-failure | --preserve | --app-bypass | --observe 90s]
+  check     --session DIRECTORY --crash [--auth keychain:SERVICE]
   stop      --session DIRECTORY
   rebaseline --session DIRECTORY --label MODE [--accept-external-change]
-  uninstall --session DIRECTORY
+  uninstall --session DIRECTORY [--auth keychain:SERVICE]
 
 prepare writes review material only to a fresh directory in TMPDIR. It reads
 system state and makes bounded, unprivileged TLS probes; it never opens an
@@ -38,6 +39,10 @@ authorization dialog. All other commands need that session directory.
 cancel expects the user to cancel the install dialog. install and uninstall
 request administrator authorization. check starts routing only to the reviewed
 IPv4 test host(s), always stops it on return, and never installs the helper.
+Explicit --auth keychain:SERVICE uses a delegated password via stdin for that
+invocation only. It skips the manual cancel case and reports it as skipped.
+check --crash requires prior smoke, kills only the reviewed running helper, and
+verifies owned capture removal and idle restart. It needs separate authorization.
 rebaseline records an approved mode change only while stopped, after verified
 cleanup, without an authorization dialog. It requires a new smoke check.
 Read docs/ROOT-TEST.md before use. Do not run from an unattended agent.
@@ -78,11 +83,13 @@ func run(args []string) error {
 		fs.BoolVar(&acceptExternal, "accept-external-change", false, "accept reviewed external-only differences after proven Pith cleanup")
 	}
 	var opts checkOptions
+	authFlag := fs.String("auth", "dialog", "explicit authorization for this invocation: dialog or keychain:SERVICE")
 	if args[0] == "check" {
 		fs.BoolVar(&opts.batch, "batch", false, "run the remaining automatic cases after the smoke check")
 		fs.BoolVar(&opts.safeFailure, "safe-failure", false, "verify that a blocked SafeStart rolls back capture")
 		fs.BoolVar(&opts.preserve, "preserve", false, "verify a native TCP connection opened before capture survives activation")
 		fs.BoolVar(&opts.appBypass, "app-bypass", false, "verify app-specific IP/domain routing and an unmatched process using the same frozen target")
+		fs.BoolVar(&opts.crash, "crash", false, "deliberately crash the reviewed active helper once, then verify cleanup and idle restart")
 		fs.DurationVar(&opts.observe, "observe", 0, "manual observation window, at most 90s; always stops afterward")
 	}
 	if err := fs.Parse(args[1:]); err != nil {
@@ -91,6 +98,14 @@ func run(args []string) error {
 	if fs.NArg() != 0 || *dir == "" {
 		return errors.New("supply --session DIRECTORY and no positional arguments")
 	}
+	auth, err := parseAuthorization(*authFlag)
+	if err != nil {
+		return err
+	}
+	if auth.service != "" && args[0] != "cancel" && args[0] != "install" && args[0] != "uninstall" && !(args[0] == "check" && opts.crash) {
+		return errors.New("managed auth applies only to cancel, install, uninstall, or check --crash")
+	}
+	opts.auth = auth
 	s, err := loadSession(*dir)
 	if err != nil {
 		return err
@@ -113,9 +128,9 @@ func run(args []string) error {
 	}
 	switch args[0] {
 	case "cancel":
-		return cancelInstall(ctx, s)
+		return cancelInstall(ctx, s, auth)
 	case "install":
-		return install(ctx, s, c)
+		return install(ctx, s, c, auth)
 	case "check":
 		return check(ctx, s, c, opts)
 	case "stop":
@@ -123,13 +138,13 @@ func run(args []string) error {
 	case "rebaseline":
 		return rebaseline(ctx, s, c, label, acceptExternal)
 	case "uninstall":
-		return uninstall(ctx, s, c)
+		return uninstall(ctx, s, c, auth)
 	default:
 		return fmt.Errorf("unknown command %q; use help", args[0])
 	}
 }
 
-func cancelInstall(ctx context.Context, s *session) error {
+func cancelInstall(ctx context.Context, s *session, auth authorization) error {
 	if s.CancelPassed {
 		return errors.New("the cancellation case already passed; continue with install")
 	}
@@ -139,6 +154,9 @@ func cancelInstall(ctx context.Context, s *session) error {
 	}
 	if err := s.expectOriginal(ctx, "before-cancel"); err != nil {
 		return err
+	}
+	if auth.service != "" {
+		return s.skipCancellation(auth, liveOps())
 	}
 	// Record intent first: entering a password by mistake still leaves a session
 	// that can run uninstall, without claiming cancellation passed.
@@ -164,8 +182,8 @@ func cancelInstall(ctx context.Context, s *session) error {
 	return nil
 }
 
-func install(ctx context.Context, s *session, c api.Service) error {
-	if !s.CancelPassed || s.Installed {
+func install(ctx context.Context, s *session, c api.Service, auth authorization) error {
+	if (!s.CancelPassed && auth.service == "") || s.Installed {
 		return errors.New("install requires a passed cancellation case and no installation in this session")
 	}
 	plan, err := s.reviewedPlan(ctx)
@@ -175,6 +193,11 @@ func install(ctx context.Context, s *session, c api.Service) error {
 	if err := s.expectOriginal(ctx, "before-install"); err != nil {
 		return err
 	}
+	if auth.service != "" {
+		if err := s.skipCancellation(auth, liveOps()); err != nil {
+			return err
+		}
+	}
 	s.AuthorizationAttempted = true
 	if err := s.save(); err != nil {
 		return err
@@ -182,7 +205,7 @@ func install(ctx context.Context, s *session, c api.Service) error {
 	fmt.Println("Authorize the reviewed host-scoped helper installation. Routing will remain stopped.")
 	authCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	if err := plan.Execute(authCtx); err != nil {
+	if err := s.authorize(authCtx, "install", plan, auth, liveOps()); err != nil {
 		return fmt.Errorf("installation did not complete: %w; inspect the session and use uninstall if managed paths remain", err)
 	}
 	s.Installed = true
@@ -252,7 +275,7 @@ func stopWithOps(ctx context.Context, s *session, c api.Service, ops rootcheckOp
 	return nil
 }
 
-func uninstall(ctx context.Context, s *session, c api.Service) error {
+func uninstall(ctx context.Context, s *session, c api.Service, auth authorization) error {
 	if !s.AuthorizationAttempted {
 		return errors.New("this session has never attempted installation; there is nothing it is authorized to remove")
 	}
@@ -274,7 +297,7 @@ func uninstall(ctx context.Context, s *session, c api.Service) error {
 	authCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	fmt.Println("Authorize removal of the reviewed helper, its service, socket, and test data.")
-	if err := helper.PlanUninstall().Execute(authCtx); err != nil {
+	if err := s.authorize(authCtx, "uninstall", helper.PlanUninstall(), auth, liveOps()); err != nil {
 		return fmt.Errorf("uninstall: %w; retain the session and use the reviewed emergency command", err)
 	}
 	if err := s.expectOriginal(ctx, "after-uninstall"); err != nil {

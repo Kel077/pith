@@ -47,8 +47,11 @@ type session struct {
 	Installation           *installationID `json:"installation,omitempty"`
 	Cleanup                *cleanupProof   `json:"cleanup,omitempty"`
 	InstallScriptSHA256    string          `json:"installScriptSHA256"`
+	UninstallScriptSHA256  string          `json:"uninstallScriptSHA256,omitempty"`
+	CrashScriptSHA256      string          `json:"crashScriptSHA256,omitempty"`
 	AuthorizationAttempted bool            `json:"authorizationAttempted"`
 	CancelPassed           bool            `json:"cancelPassed"`
+	CancelSkipped          bool            `json:"cancelSkipped,omitempty"`
 	Installed              bool            `json:"installed"`
 	SmokePassed            bool            `json:"smokePassed"`
 	Ownership              captureHistory  `json:"captureOwnership"`
@@ -122,6 +125,8 @@ func prepare(ctx context.Context, args []string) error {
 		return err
 	}
 	s.InstallScriptSHA256 = hashBytes([]byte(plan.Script))
+	s.UninstallScriptSHA256 = hashBytes([]byte(helper.PlanUninstall().Script))
+	s.CrashScriptSHA256 = hashBytes([]byte(crashPlan().Script))
 	// Ordinary, interface-bound sockets are a preflight only. The check command
 	// uses unbound app sockets, which must actually pass through the new utun.
 	for _, iface := range []string{"", names[0], names[1]} {
@@ -172,6 +177,9 @@ func prepare(ctx context.Context, args []string) error {
 	}
 	undo := helper.PlanUninstall()
 	if err := writePrivate(filepath.Join(s.Dir, "uninstall.sh"), []byte(undo.Script)); err != nil {
+		return err
+	}
+	if err := writePrivate(filepath.Join(s.Dir, "crash.sh"), []byte(crashPlan().Script)); err != nil {
 		return err
 	}
 	if err := writePrivate(filepath.Join(s.Dir, "emergency-command.txt"), []byte(emergencyCommand(undo)+"\n")); err != nil {

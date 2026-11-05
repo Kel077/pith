@@ -38,7 +38,7 @@ func requestCommand(ctx context.Context, args []string) error {
 }
 
 func serveRequest(parent context.Context, s *session, input io.ReadCloser, output io.Writer, exchange func(context.Context) (tlsEvidence, error)) error {
-	if !s.Installed || !s.CancelPassed || !s.SmokePassed {
+	if !s.Installed || !s.cancellationRecorded() || !s.SmokePassed {
 		return errors.New("internal request requires an installed session with a passed smoke check")
 	}
 	if _, err := s.scopes(); err != nil {
