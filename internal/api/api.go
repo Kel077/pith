@@ -282,6 +282,13 @@ type CaptureIdentity struct {
 	Interface   string   `json:"interface"`
 	Index       int      `json:"index"`
 	Prefixes    []string `json:"prefixes"`
+	// TunnelSubnets contains the selected IPv4 /30 and optional IPv6 /126.
+	// These identify addresses that must be absent before accepting interface reuse.
+	TunnelSubnets []string `json:"tunnelSubnets,omitempty"`
+	// EndedAt is set only after the device closed successfully and a subsequent
+	// snapshot found no owned capture routes. Zero means unconfirmed (including
+	// older helpers). It proves neither baseline restoration nor deletion authority.
+	EndedAt time.Time `json:"endedAt,omitzero"`
 }
 
 // HelperStatus reports the privileged helper.
