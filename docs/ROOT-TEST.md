@@ -43,8 +43,9 @@ such as TLS SNI, HTTP Host or QUIC SNI. This behavior allowed full capture to
 start without replacing the gateway route; it does not prove DNS interception.
 
 Still pending: full capture while Tailscale is connected (including restart),
-full IPv6, general UDP/QUIC, app bundles/delegation and throughput. IPv6 host acceptance
-is recorded below and in [the acceptance plan](NEXT-ACCEPTANCE.md#recorded-ipv6-host-hardware-acceptance).
+full IPv6, general UDP/QUIC, background delegation and sustained throughput.
+The later scoped IPv6, UDP/QUIC, bundle, Safari and short throughput results are
+recorded separately here and in [the acceptance plan](NEXT-ACCEPTANCE.md).
 Raw reports were reviewed privately and deleted; only this sanitized outcome is
 retained. A skipped manual cancellation under delegated authorization is not a
 cancellation-dialog pass.
@@ -721,8 +722,8 @@ is sufficient separately from the automatic socket result.
 
 ## Bounded throughput comparison
 
-This extension is implemented with fake service/route/usage tests and loopback TLS
-transfers; hardware acceptance is pending. Keep the actual endpoint and separate
+This extension has passed the bounded hardware comparison below, in addition to
+fake service/route/usage tests and loopback TLS transfers. Keep the actual endpoint and separate
 adapter byte caps in the private session. The coordinator runs all privileged
 steps. Preparation does not transfer performance payloads.
 
@@ -801,6 +802,30 @@ serialized connection JSON size is **not** on-disk log volume. Current samples d
 not prove sustained capacity or the 500 Mbps target; short transfers, endpoint
 limits and link conditions can dominate. Uninstall and independently verify the
 usual service, path, route, tunnel and process cleanup after reviewing both results.
+
+### Recorded throughput result
+
+The coordinator verified `8a9094f` in a managed `host-ipv4` session. Cancellation
+was explicitly skipped, while install, TCP smoke, the hotspot's three phases,
+the subsequently gated wired phases and uninstall all passed. Independent checks
+found no helper or rootcheck process and no change to the default route. Only
+installation and uninstall required managed authorization. A separately bounded
+64 KiB GET and POST had first confirmed HTTP/1.1 success at the permitted service.
+
+With 32 MiB download / 4 MiB upload samples, a cellular hotspot measured
+138 / 23 Mbps direct, 139 / 22 Mbps captured with one rule, and 132 / 23 Mbps
+with 1001 rules. Wired Ethernet measured 672 / 154, 680 / 145 and 740 / 160 Mbps,
+respectively. The captured phases used about 0.35--0.42 of one CPU core on the
+hotspot and 0.90--1.00 wired, with helper RSS of 27 MiB and 30--31 MiB.
+Two-second idle CPU was 0.5% / 1.0%. TLS usage was 108.4 / 108.5 MiB, below
+the roughly 123.8 MiB reservations; each captured phase recorded three connections
+in about 1.9 KB of serialized JSON. Budgets, addresses and interface identifiers
+remain in the private session.
+
+No visible capture overhead appeared around 700 Mbps, but this is **not a
+sustained 500 Mbps proof**: the wired download samples lasted only about
+0.4 seconds. Phase CPU includes setup, download and upload and is not an isolated
+steady transfer cost. See the [comparison and limitations](NEXT-ACCEPTANCE.md#recorded-throughput-hardware-comparison).
 
 ## Ordered execution
 

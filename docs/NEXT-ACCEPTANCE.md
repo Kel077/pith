@@ -16,8 +16,42 @@ The disposable app-bundle subset and separate delegated Safari observation have
 also passed hardware acceptance. Safari used one explicit LaunchServices open
 to a stable IPv4-only endpoint, with Private Relay disabled by the user. This
 proves fresh kernel delegation and the selected exit, not automatic page-body
-verification or Private Relay support. The bounded throughput harness is now
-implemented; its hardware comparison is still pending.
+verification or Private Relay support. The bounded throughput comparison has also
+passed its scoped hardware subset; sustained capacity remains unverified.
+
+## Recorded throughput hardware comparison
+
+The coordinator reported that `8a9094f` passed a managed `host-ipv4` session:
+manual cancellation was explicitly skipped; installation, TCP smoke, all three
+throughput phases on a cellular hotspot, all three on wired Ethernet, and
+uninstall passed. The wired invocation was gated on the hotspot result. Two
+managed authorizations covered installation and uninstall. Independent checks
+found no helper or rootcheck processes and unchanged default routing.
+
+Application throughput in Mbps (download / upload), using 32 MiB downloads and
+4 MiB uploads with one 64 KiB warmup per phase:
+
+| Link | Direct bound baseline | Captured, one rule | Captured, 1001 rules |
+| :-- | --: | --: | --: |
+| Cellular hotspot | 138 / 23 | 139 / 22 | 132 / 23 |
+| Wired Ethernet | 672 / 154 | 680 / 145 | 740 / 160 |
+
+The hotspot's two captured phases used 42% / 35% of one CPU core and about
+27 MiB helper RSS; the wired phases used 90% / 100% and 30--31 MiB RSS.
+Two-second idle samples were 0.5% and 1.0%, respectively. TLS socket traffic was
+108.4 / 108.5 MiB against reservations of about 123.8 MiB per link. Serialized
+connection records were about 1.9 KB per captured phase (three connections),
+not a measurement of disk log volume. Actual endpoints and adapter identifiers
+remain private.
+
+There was no visible capture overhead at approximately 700 Mbps in this short
+comparison, **not a sustained 500 Mbps proof**. The wired 32 MiB downloads lasted
+only about 0.4 seconds; whole invocations took approximately five seconds wired
+and fifteen seconds on the hotspot. Different samples and endpoint/link variation
+can make a captured result exceed its baseline. CPU percentages cover whole
+phases, including setup and both directions, and cannot by themselves establish
+steady per-Mbps cost. Longer independently approved measurements and isolated
+CPU profiles are needed before claiming a relay ceiling or sustained capacity.
 
 ## Recorded Safari hardware acceptance
 
@@ -208,7 +242,7 @@ to obtain a pass. Preserve failures and independent cleanup evidence separately.
 | QUIC | Passed the reviewed IPv4 hardware subset: one frozen `/32`, one HTTP/3 smoke request through A, then three sequential cases; ten seconds per exchange, bounded socket payload and packet counts. | Require verified TLS/ALPN and a real HTTP/3 response, exact UDP process/tuple/rule/interface/name records and counters. Test domain routing with observable SNI, IP routing through B, then IP routing through A with a fragmented ClientHello that lacks recoverable first-datagram SNI. | The fragmented control is not ECH or multi-packet name recovery. No redirects, application retries, TCP fallback, unreviewed destination or plaintext/packet logging. Stop and verify routes/tunnel. See the [QUIC procedure](ROOT-TEST.md#bounded-quichttp3-stage). |
 | App bundle and helpers | Passed the reviewed hardware subset: one main-executable smoke request, then six nested/helper/control cases to the existing host, each with an eight-second deadline. | Correlate spawned PID, executable, exact application tuple, outer bundle path/identifier, rule/outcome/interface and bytes. Exercise path and identifier matching independently, then block priority and the outside control. | Children were reaped, private fixtures removed and uninstall restored the baseline. See the [bundle procedure](ROOT-TEST.md#disposable-application-bundle-stage). This does not establish XPC activation or delegated sockets. |
 | Safari/WebKit delegation | Scoped hardware subset passed; repeat with a stable IPv4-only endpoint: `prepare --webkit-app` freezes Safari metadata/executable, the existing endpoint URL and all A records in one bounded resolver answer (at most 16 scoped hosts). After TCP smoke, `check --webkit 45s` waits for one manual navigation; explicit `--webkit-open` opens that URL once after READY via LaunchServices. At most 60 seconds. | Independently correlate a fresh exact PCB tuple, owner and delegated PID, effective Safari executable/bundle, helper process/app/rule/interface, outbound tuple and bidirectional bytes. No new capture prefixes or DNS overrides. | Missing/new-address/reused/short-lived socket evidence is incomplete, with no retry or capture widening. Automatic pass proves delegation and exit only, not page content. No AppleScript or window/tab control. Automatic open refuses an existing Safari and owns bounded cleanup of the newly launched browser and independently attributed WebKit services; manual mode leaves cleanup to the coordinator. See the [Safari procedure](ROOT-TEST.md#bounded-safariwebkit-observation); background URLSession is skipped. |
-| Throughput | Implemented, hardware pending: one frozen IPv4 HTTPS endpoint and explicit per-adapter caps; `check --throughput a` before `b`. Direct bound baseline first, then captured minimal and 1001-rule scenes on the same adapter. Each phase has one finite warmup (five-second deadline), download and upload (15 seconds each). | Verified HTTP/1.1 response, client payload/TLS byte meters and elapsed time independently of Pith counters; correlate process/tuple/rule/exit and counters. Record helper CPU/RSS, two-second idle CPU, exact connections and serialized JSON size (not disk log volume). | Reserve all nine requests before the first; failures never retry or refund. Enforce socket caps with at least half the total cap unused as network headroom. Single-stream short samples do not certify sustained capacity or the 500 Mbps target. Topology/capture/helper identity changes abort. See the [throughput procedure](ROOT-TEST.md#bounded-throughput-comparison). |
+| Throughput | Passed the reviewed short hardware comparison; sustained capacity pending: one frozen IPv4 HTTPS endpoint and explicit per-adapter caps; `check --throughput a` before `b`. Direct bound baseline first, then captured minimal and 1001-rule scenes on the same adapter. Each phase has one finite warmup (five-second deadline), download and upload (15 seconds each). | Verified HTTP/1.1 response, client payload/TLS byte meters and elapsed time independently of Pith counters; correlate process/tuple/rule/exit and counters. Record helper CPU/RSS, two-second idle CPU, exact connections and serialized JSON size (not disk log volume). | Reserve all nine requests before the first; failures never retry or refund. Enforce socket caps with at least half the total cap unused as network headroom. Single-stream short samples do not certify sustained capacity or the 500 Mbps target. Topology/capture/helper identity changes abort. See the [throughput procedure](ROOT-TEST.md#bounded-throughput-comparison). |
 | Full IPv4 extensions after scoped stages | The core TCP and cleanup cases above have passed. DNS, mixed-protocol and VPN extensions still need separate approval and a helper-enforced lease of at most 120 seconds; one ordinary TCP request first, then a small bounded batch. Use the eight IPv4 split prefixes above; do not enable IPv6 capture in this stage. | Review all intended LAN-DNS host routes as well as every split prefix. Retain the TCP regression checks, and separately verify real observed DNS answers, mixed protocols and the selected VPN/tailnet/MagicDNS controls without scanning peers. | Prove each asserted flow crossed Pith and reached the expected external path. Stop on lost ordinary connectivity, routing loops, unexpected destination scope, conflicting ownership, or changed VPN state. After Stop and optional separately approved helper crash, verify no Pith split prefix, DNS host route or utun remains, and unrelated paths still work. |
 
 A proxy helper with a direct delegated kernel socket and an arbitrary loopback
