@@ -88,52 +88,43 @@ VPN can supply a different route layout.
 
 ### Rebuilding a VPN while capture is running
 
-**Runtime VPN reconstruction is not yet handled reliably.** Startup coexistence
-and ownership-safe teardown are separate from keeping an original egress valid
-after another VPN replaces its tunnel. The current implementation has these
-limits:
+The runtime guard uses conservative stop-and-restart, not live migration. Its
+implementation is covered by synthetic drivers and transition tests; full-capture
+acceptance on hardware remains outstanding:
 
-* `capture.Plan.Before` is a fixed pre-capture route snapshot. `egress.Router`
-  and native-socket passthrough each keep a copy; ICMP uses that router's system
-  lookup. `SystemInterface` returns the saved interface **name**, not a validated
-  live name/index generation. Interface notifications refresh availability and
-  metadata for rule targets, but do not refresh these saved routes. A changed
-  interface list is not an atomic routing-table observation.
-* If a saved VPN egress disappears, new system/fallback dials still try its old
-  name and can fail. If that name is reused, lookup can bind to an unrelated
-  interface. Existing bound TCP/UDP sockets are not migrated. A native passthrough
-  send error stops capture, but ordinary outbound failures alone do not establish
-  a global failure or guarantee an automatic Stop. A closed interface watcher is
-  not currently a routing fault either.
-* Without an exit node, the saved public default can remain physical while
-  Tailscale recreates its more-specific routes. Once those routes return, the
-  kernel can bypass Pith again. During withdrawal, full `/1` capture can receive
-  tailnet traffic that used to bypass it; the saved lookup may still name the old
-  tunnel. This gap is not covered by successful public-host `/32` checks.
-* `Build` and `Activate` reject exact unscoped capture-prefix conflicts during
-  startup. They are not a continuous conflict detector. Another privileged
-  service can later remove, replace, or shadow a capture route. The engine does
-  not yet revalidate capture ownership or rerun SafeStart on such changes.
-* The journal is an immutable ownership ledger for Pith's own prefixes and utun,
-  not a saved system configuration to replay. Stop/recovery compare intended
-  prefixes with the recorded name, index and boot identity, then close Pith's
-  device. They do not restore an old VPN interface or delete a rebuilt VPN's
-  routes merely because the baseline changed. This protects normal teardown
-  across a VPN rebuild, but does not repair stale forwarding decisions. A journal
-  token identifies the application record; it is not a kernel route-generation
-  tag and must not justify guessing ownership of a reused interface.
+* Subscribe to kernel route/interface events before recording the external
+  baseline. Retain the name/index pairs and an observation generation. A
+  configured external route mutation, address change or interface event invalidates that
+  generation even if the same name, index and routes immediately reappear.
+  Re-read configured routes and indices after activation, on interface updates,
+  and every second. Missing, replaced, duplicate or shadowing capture routes,
+  changed external routes, unavailable observation, and changed interface indices
+  fail closed. Cache routes and neighbor discovery entries are not policy events.
+  Service-label edits are harmless; address, DNS and availability changes require
+  a new baseline. This includes IPv6 temporary-address rotation: the first
+  implementation deliberately prefers stopping over accepting ambiguous churn.
+* A revocable forwarding gate is shared by new dials, packet ingress, native
+  passthrough and ICMP. Revocation cancels pending work and prevents fallback from
+  treating a topology failure as an ordinary interface connection failure.
+  Before binding, validate the saved index; after connecting, check the generation
+  again. A verified stable snapshot renews only observation, never substitutes a
+  new upstream interface into an existing session. New topology requires an
+  explicit Start with a fresh baseline and SafeStart.
+* Independently of notification timing, packets for a pre-existing, more-specific
+  unscoped VPN route must not enter this capture. If one does, drop it before
+  TCP/UDP rules, native passthrough or ICMP, revoke the generation and stop. This
+  covers the withdrawal gap without ever sending tailnet or VPN DNS destinations
+  through a physical fallback. Deliberate narrower scoped capture remains valid.
+* A guard fault removes Pith's capture and closes its relays, reporting
+  `ErrNetworkLost`. No automatic restart or route repair is attempted. The journal
+  remains an ownership ledger, never a baseline replay: only Pith's own matching
+  routes are deleted, and another VPN's rebuilt routes are left intact.
 
-Before claiming unattended full-capture compatibility with VPN reconstruction,
-add generation-aware route observation. The conservative first implementation
-should stop capture with a reported network-change failure when the effective
-external egress disappears/reindexes, capture ownership changes, or observation
-fails. Recompute the external baseline only during an explicit fresh Start.
-A future implementation that updates new-flow egress in place must exclude only
-verified Pith-owned routes, never learn Pith's own `/1` or DNS host routes as its
-upstream, validate live name/index identity, and publish the route view atomically.
-Existing connections must not silently migrate. Both designs need synthetic
-route-transition tests before an attended, separately approved full-capture test.
-These mechanisms are design work, not implemented behavior in this revision.
+These guarantees cover Pith's forwarding while capture exists. After a safe stop,
+ordinary macOS routing and the VPN's own withdrawal/kill-switch policy apply.
+Routing sockets are asynchronous; userspace cannot make an external privileged
+route mutation atomic with a socket send. The immutable VPN-prefix ingress gate
+specifically closes the tailnet withdrawal hole while notifications catch up.
 
 The acceptance tool distinguishes an external-only change from exact baseline
 restoration using complete helper capture identities and independent snapshots.

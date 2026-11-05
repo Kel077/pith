@@ -29,6 +29,7 @@ type Options struct {
 	ProbeServerName string
 	// Test seams below never relax the production helper's root requirement.
 	Driver          capture.Driver
+	WatchRoutes     func(context.Context) (<-chan capture.Change, error)
 	Interfaces      func(context.Context) ([]api.Interface, error)
 	WatchInterfaces func(context.Context) (<-chan []api.Interface, error)
 	Dial            egress.DialFunc
@@ -62,6 +63,9 @@ func New(opts Options) (*Engine, error) {
 	}
 	if opts.WatchInterfaces == nil {
 		opts.WatchInterfaces = netif.Watch
+	}
+	if opts.WatchRoutes == nil {
+		opts.WatchRoutes = capture.Watch
 	}
 	store, err := telemetry.Open(telemetry.Options{Dir: opts.DataDir, LogDays: 7})
 	if err != nil {

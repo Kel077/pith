@@ -22,6 +22,8 @@ type session struct {
 	echo                   *echo.Relay
 	existing               *passthrough.Table
 	router                 *egress.Router
+	guard                  *capture.Guard
+	routeDone              chan struct{}
 	scene                  api.Scene
 	settings               api.Settings
 	ifaces                 []api.Interface
@@ -36,8 +38,29 @@ type session struct {
 func (e *Engine) startLocked(ctx context.Context, scene api.Scene, settings api.Settings) (result error) {
 	e.state(api.Status{State: api.Starting, SceneID: scene.ID})
 	s := &session{scene: scene, settings: settings, done: make(chan struct{})}
+	runCtx, cancel := context.WithCancel(context.Background())
+	s.cancel = cancel
+	changes, err := e.opts.WatchRoutes(runCtx)
+	if err == nil && changes == nil {
+		err = errors.New("route observer is unavailable")
+	}
+	if err != nil {
+		cancel()
+		e.state(api.Status{State: api.Failed, Error: errorValue(err)})
+		return err
+	}
 	defer func() {
 		if result != nil {
+			s.cancel()
+			if s.guard != nil {
+				s.guard.Revoke(result)
+			}
+			if s.routeDone != nil {
+				<-s.routeDone
+			} else {
+				for range changes {
+				}
+			}
 			if s.capture != nil {
 				result = errors.Join(result, s.capture.Close())
 			}
@@ -85,21 +108,41 @@ func (e *Engine) startLocked(ctx context.Context, scene api.Scene, settings api.
 	e.status.LastCapture = s.capture.Identity()
 	e.mu.Unlock()
 	s.router = egress.New(s.capture.Plan.Before, ifaces, e.opts.Dial)
+	s.guard, err = capture.NewGuard(s.capture, ifaces)
+	if err != nil {
+		return err
+	}
+	s.router.Guard = s.guard
+	s.routeDone = make(chan struct{})
+	go func() {
+		defer close(s.routeDone)
+		for event := range changes {
+			if runCtx.Err() == nil {
+				s.guard.Observe(event)
+			}
+		}
+		if runCtx.Err() == nil {
+			s.guard.Revoke(errors.New("route observer closed"))
+		}
+	}()
+	if err := s.guard.Validate(false); err != nil {
+		return err
+	}
 	if err := s.router.Reload(scene, settings); err != nil {
 		return err
 	}
-	s.existing, err = passthrough.New(passthrough.Options{Routes: s.capture.Plan.Before, Snapshot: e.opts.ExistingSockets, Sender: e.opts.RawSender})
+	s.existing, err = passthrough.New(passthrough.Options{Routes: s.capture.Plan.Before, Snapshot: e.opts.ExistingSockets, Sender: e.opts.RawSender, Guard: s.guard})
 	if err != nil {
 		return err
 	}
 	var bridge atomic.Pointer[forward.Forwarder]
-	s.echo = echo.New(echo.Options{System: s.router.System, Exchange: e.opts.EchoExchange, Write: func(packet []byte) error {
+	s.echo = echo.New(echo.Options{System: s.router.System, Exchange: e.opts.EchoExchange, Guard: s.guard, Write: func(packet []byte) error {
 		if f := bridge.Load(); f != nil {
 			return f.WritePacket(packet)
 		}
 		return errors.New("tunnel is not ready")
 	}})
-	s.forward, err = forward.New(forward.Options{Device: s.capture.Device, Router: s.router, Store: e.store, Lookup: e.opts.Lookup, IPv6: settings.IPv6, Echo: s.echo.Handle, Packet: s.existing.Packet, Unknown: s.existing.Unknown, InterceptTCP: s.existing.Intercepted})
+	s.forward, err = forward.New(forward.Options{Device: s.capture.Device, Router: s.router, Store: e.store, Lookup: e.opts.Lookup, IPv6: settings.IPv6, Echo: s.echo.Handle, Packet: func(p []byte) bool { return s.guard.Packet(p) || s.existing.Packet(p) }, Unknown: s.existing.Unknown, InterceptTCP: s.existing.Intercepted})
 	if err != nil {
 		return err
 	}
@@ -110,18 +153,23 @@ func (e *Engine) startLocked(ctx context.Context, scene api.Scene, settings api.
 	if err := s.capture.Activate(ctx); err != nil {
 		return err
 	}
+	if err := s.guard.Validate(true); err != nil {
+		return err
+	}
 	started := time.Now()
 	if e.scopedLease > 0 {
 		s.leaseUntil = started.Add(e.scopedLease)
 	}
 	if settings.SafeStart {
 		verifyCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		stopVerify := context.AfterFunc(s.guard.Context(), cancel)
 		if e.opts.Verify != nil {
 			err = e.opts.Verify(verifyCtx, s.capture, s.forward)
 		} else {
 			err = probe.verify(verifyCtx, s.capture.Plan, s.forward)
 		}
 		cancel()
+		stopVerify()
 		if err != nil {
 			return &api.Error{Code: api.ErrNetworkLost, Detail: err.Error()}
 		}
@@ -129,8 +177,9 @@ func (e *Engine) startLocked(ctx context.Context, scene api.Scene, settings api.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	runCtx, cancel := context.WithCancel(context.Background())
-	s.cancel = cancel
+	if err := s.guard.Validate(true); err != nil {
+		return err
+	}
 	e.mu.Lock()
 	e.run = s
 	e.status = api.Status{State: api.Running, SceneID: scene.ID, Since: started, Warnings: warnings(s), LastCapture: e.status.LastCapture}
@@ -155,6 +204,8 @@ func (e *Engine) stopLocked() error {
 	e.publishLocked(api.Event{Status: statusPointer(e.status)})
 	e.mu.Unlock()
 	s.cancel()
+	s.guard.Revoke(errors.New("routing stopped"))
+	<-s.routeDone
 	// Restore kernel routing before waiting for application relays or disk I/O.
 	err := s.capture.Close()
 	s.echo.Close()
@@ -213,7 +264,10 @@ func (e *Engine) flush(force bool) error {
 
 func (e *Engine) monitor(ctx context.Context, s *session) {
 	defer close(s.done)
-	updates, _ := e.opts.WatchInterfaces(ctx)
+	updates, watchErr := e.opts.WatchInterfaces(ctx)
+	if watchErr == nil && updates == nil {
+		watchErr = errors.New("interface observer is unavailable")
+	}
 	defer func() {
 		s.cancel()
 		if updates != nil {
@@ -231,12 +285,20 @@ func (e *Engine) monitor(ctx context.Context, s *session) {
 	}
 	fail := func(err error) {
 		if err != nil && ctx.Err() == nil {
+			s.guard.Revoke(err)
 			go e.failSession(s, err)
 		}
+	}
+	if watchErr != nil {
+		fail(watchErr)
+		return
 	}
 	for {
 		select {
 		case <-ctx.Done():
+			return
+		case <-s.guard.Context().Done():
+			fail(s.guard.Err())
 			return
 		case <-leaseExpired:
 			fail(errors.New("scoped capture test lease expired; routing was stopped"))
@@ -261,7 +323,12 @@ func (e *Engine) monitor(ctx context.Context, s *session) {
 		case ifaces, ok := <-updates:
 			if !ok {
 				updates = nil
-				continue
+				fail(errors.New("interface observer closed"))
+				return
+			}
+			if err := s.guard.Interfaces(ifaces); err != nil {
+				fail(err)
+				return
 			}
 			s.router.Interfaces(ifaces)
 			e.mu.Lock()
@@ -272,6 +339,10 @@ func (e *Engine) monitor(ctx context.Context, s *session) {
 			}
 			e.mu.Unlock()
 		case now := <-ticker.C:
+			if err := s.guard.Validate(true); err != nil {
+				fail(err)
+				return
+			}
 			if err := s.existing.Refresh(); err != nil {
 				fail(err)
 				return

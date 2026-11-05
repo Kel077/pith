@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
+	"github.com/Kel077/pith/internal/netif"
 	"net"
 	"net/netip"
 	"os"
@@ -28,6 +29,9 @@ func exchange(ctx context.Context, iface string, destination netip.Addr, message
 	}
 	link, err := net.InterfaceByName(iface)
 	if err != nil {
+		return nil, err
+	}
+	if err := netif.ValidateBinding(ctx, link.Index); err != nil {
 		return nil, err
 	}
 	family, protocol, level, option := unix.AF_INET, unix.IPPROTO_ICMP, unix.IPPROTO_IP, unix.IP_BOUND_IF
@@ -71,6 +75,9 @@ func exchange(ctx context.Context, iface string, destination netip.Addr, message
 	wire[2], wire[3] = 0, 0
 	if destination.Is4() {
 		binary.BigEndian.PutUint16(wire[2:4], checksum(wire))
+	}
+	if err := netif.ValidateBinding(ctx, link.Index); err != nil {
+		return nil, err
 	}
 	if _, err := conn.WriteTo(wire, &net.UDPAddr{IP: destination.AsSlice(), Zone: destination.Zone()}); err != nil {
 		return nil, err

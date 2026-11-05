@@ -13,22 +13,27 @@ import (
 	"time"
 
 	"github.com/Kel077/pith/internal/api"
+	"github.com/Kel077/pith/internal/engine/attribution"
 	"github.com/Kel077/pith/internal/engine/capture"
 	"github.com/Kel077/pith/internal/engine/forward"
 	"golang.zx2c4.com/wireguard/tun"
 )
 
 type testDriver struct {
-	mu      sync.Mutex
-	routes  []capture.Route
-	devices []*testDevice
+	mu          sync.Mutex
+	routes      []capture.Route
+	devices     []*testDevice
+	changes     chan capture.Change
+	snapshotErr error
+	indices     map[string]int
 }
 type testDevice struct {
-	driver *testDriver
-	done   chan struct{}
-	events chan tun.Event
-	fault  chan error
-	once   sync.Once
+	driver  *testDriver
+	done    chan struct{}
+	events  chan tun.Event
+	fault   chan error
+	packets chan []byte
+	once    sync.Once
 }
 
 func (d *testDevice) File() *os.File           { return nil }
@@ -36,12 +41,15 @@ func (d *testDevice) Name() (string, error)    { return "utun42", nil }
 func (d *testDevice) MTU() (int, error)        { return 1500, nil }
 func (d *testDevice) BatchSize() int           { return 1 }
 func (d *testDevice) Events() <-chan tun.Event { return d.events }
-func (d *testDevice) Read([][]byte, []int, int) (int, error) {
+func (d *testDevice) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
 	select {
 	case <-d.done:
 		return 0, net.ErrClosed
 	case err := <-d.fault:
 		return 0, err
+	case packet := <-d.packets:
+		sizes[0] = copy(bufs[0][offset:], packet)
+		return 1, nil
 	}
 }
 func (d *testDevice) Write(bufs [][]byte, _ int) (int, error) { return len(bufs), nil }
@@ -58,15 +66,30 @@ func (d *testDevice) Close() error {
 func (d *testDriver) Snapshot() ([]capture.Route, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return slices.Clone(d.routes), nil
+	return slices.Clone(d.routes), d.snapshotErr
 }
 func (d *testDriver) BootSession() (string, error)               { return "test-boot-one", nil }
 func (d *testDriver) InterfacePrefixes() ([]netip.Prefix, error) { return nil, nil }
-func (d *testDriver) Index(string) (int, error)                  { return 42, nil }
+func (d *testDriver) Index(name string) (int, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if index, ok := d.indices[name]; ok {
+		return index, nil
+	}
+	if name == "utun42" {
+		return 42, nil
+	}
+	for _, route := range d.routes {
+		if route.Interface == name {
+			return route.Index, nil
+		}
+	}
+	return 0, errors.New("test interface absent")
+}
 func (d *testDriver) Create(int) (tun.Device, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	device := &testDevice{driver: d, done: make(chan struct{}), events: make(chan tun.Event), fault: make(chan error, 1)}
+	device := &testDevice{driver: d, done: make(chan struct{}), events: make(chan tun.Event), fault: make(chan error, 1), packets: make(chan []byte, 1)}
 	d.devices = append(d.devices, device)
 	return device, nil
 }
@@ -101,6 +124,13 @@ func newTestEngine(t *testing.T, verify func(context.Context, *capture.Capture, 
 		}
 	}
 	e, err := New(Options{DataDir: dir, Scopes: []netip.Prefix{netip.MustParsePrefix("192.0.2.10/32")}, Driver: driver, Verify: verify,
+		ExistingSockets: func(api.Protocol) ([]attribution.Socket, error) { return nil, nil },
+		WatchRoutes: func(ctx context.Context) (<-chan capture.Change, error) {
+			driver.changes = make(chan capture.Change, 64)
+			ch := driver.changes
+			go func() { <-ctx.Done(); close(ch) }()
+			return ch, nil
+		},
 		Interfaces: func(context.Context) ([]api.Interface, error) {
 			return []api.Interface{{Name: "en0", Label: "Example Ethernet", Up: true}}, nil
 		},

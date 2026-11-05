@@ -92,7 +92,7 @@ func routeAddress(a route.Addr) netip.Addr {
 // netinet6/in6.h. Binding changes this socket only; it does not install routes.
 func bindControl(index int) func(context.Context, string, string, syscall.RawConn) error {
 	return func(ctx context.Context, network, address string, raw syscall.RawConn) error {
-		if err := ctx.Err(); err != nil {
+		if err := ValidateBinding(ctx, index); err != nil {
 			return err
 		}
 		var bindErr error
@@ -106,7 +106,10 @@ func bindControl(index int) func(context.Context, string, string, syscall.RawCon
 		if err != nil {
 			return err
 		}
-		return bindErr
+		if bindErr != nil {
+			return bindErr
+		}
+		return ValidateBinding(ctx, index)
 	}
 }
 

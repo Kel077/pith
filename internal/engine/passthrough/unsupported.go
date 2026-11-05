@@ -2,11 +2,14 @@
 
 package passthrough
 
-import "errors"
+import (
+	"errors"
+	"github.com/Kel077/pith/internal/engine/capture"
+)
 
 type nativeSender struct{}
 
-func newSender() Sender { return nativeSender{} }
+func newSender(...*capture.Guard) Sender { return nativeSender{} }
 func (nativeSender) Send(string, Packet) error {
 	return errors.New("native socket preservation requires macOS")
 }

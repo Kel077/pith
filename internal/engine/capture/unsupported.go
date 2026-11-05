@@ -10,7 +10,8 @@ import (
 	"golang.zx2c4.com/wireguard/tun"
 )
 
-func Snapshot() ([]Route, error) { return nil, fmt.Errorf("capture requires macOS") }
+func Snapshot() ([]Route, error)                   { return nil, fmt.Errorf("capture requires macOS") }
+func Watch(context.Context) (<-chan Change, error) { return nil, fmt.Errorf("capture requires macOS") }
 
 type nativeDriver struct{}
 

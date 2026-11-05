@@ -63,21 +63,36 @@ nonces/addresses, caller identity, and matching Pith connection records together
 The root helper's identity receipt establishes which tunnel Pith created; it
 does not itself prove that a test request traversed it.
 
-## VPN rebuild gate for full capture
+## Required full-capture VPN restart acceptance
 
-Before testing runtime VPN reconstruction, implement the route-generation or
-conservative-stop design described in [architecture](ARCHITECTURE.md). Unit tests
-must cover a vanished saved egress, a changed utun index/name, same-name reuse,
-temporarily withdrawn more-specific routes, changed defaults, an exact `/1`
-replacement/conflict, watcher failure and cleanup that preserves external routes.
-The current engine does not refresh its saved system route on interface changes.
+The conservative-stop implementation in [architecture](ARCHITECTURE.md) has
+synthetic coverage for withdrawal, name/index reuse, replacement/shadowing of
+capture routes, observer failure, pending and established sockets, and VPN
+packets arriving before notifications. This is not hardware acceptance.
 
-Until that gate is complete, any observed external VPN change during `/1`
-acceptance aborts the stage and requires Stop; a successful rebaseline afterward
-cannot turn it into a runtime compatibility pass. Do not trigger a VPN self-update
-or restart as part of an ordinary throughput or full-capture check. A future
-deliberate reconstruction fault requires its own approved action, timing, bounded
-observation, expected stop/forwarding behavior and restoration steps.
+**The next round must include a Tailscale self-restart during full IPv4 `/1`
+capture, without an exit node.** Review and authorize this as a separate fault
+stage with a helper lease of at most 120 seconds. Freeze one permitted tailnet
+endpoint, its MagicDNS name, the public control endpoint, the restart action and
+undo. The user performs the approved VPN restart; no agent silently updates it.
+
+1. Record the external tunnel name/index, scoped defaults, more-specific routes,
+   addresses and DNS. Verify one public, tailnet and MagicDNS request first.
+2. Start full capture, repeat the controls, then perform exactly one approved
+   restart. Issue only a bounded set of requests during withdrawal and rebuilding;
+   retain independent path evidence and the helper's fault/cleanup timestamps.
+3. Require automatic `ErrNetworkLost`, removal of Pith's `/1` and DNS host routes,
+   closure of its relays, and an idle helper. No new physical/fallback forwarding
+   of previously bypassed VPN destinations is permitted while capture remains.
+   A reused external utun name/index must not keep the old routing generation
+   usable. External rebuilt routes must survive Pith cleanup unchanged.
+4. After Stop, macOS and the VPN own ordinary routing again; Pith cannot guarantee
+   the VPN's kill-switch policy. Verify restored tailnet/MagicDNS reachability,
+   inspect external changes explicitly, and only then establish a new baseline
+   and Start/SafeStart once more. Rebaseline alone is not a runtime pass.
+
+If self-restart cannot be reproduced safely, record this required item as pending,
+not passed. An unplanned VPN change in a throughput stage still aborts that stage.
 
 Full IPv6 capture (`::/1` and `8000::/1`) is a later, separately approved extension
 after `/128`, UDP/QUIC and full IPv4 stages. Verify both native IPv6 and dual-stack

@@ -4,6 +4,8 @@ package echo
 import (
 	"context"
 	"encoding/binary"
+	"github.com/Kel077/pith/internal/engine/capture"
+	"github.com/Kel077/pith/internal/netif"
 	"net/netip"
 	"sync"
 	"time"
@@ -12,6 +14,7 @@ import (
 type ExchangeFunc func(context.Context, string, netip.Addr, []byte) ([]byte, error)
 
 type Options struct {
+	Guard    *capture.Guard
 	System   func(netip.Addr) string
 	Write    func([]byte) error
 	Exchange ExchangeFunc // nil: an interface-bound native ICMP socket
@@ -76,6 +79,18 @@ func (r *Relay) Handle(source, destination netip.Addr, message []byte) {
 		defer func() { r.mu.Lock(); r.active--; r.mu.Unlock(); r.wg.Done() }()
 		ctx, cancel := context.WithTimeout(r.ctx, r.opts.Timeout)
 		defer cancel()
+		if r.opts.Guard != nil {
+			if r.opts.Guard.Admit(destination) != nil {
+				return
+			}
+			index, err := r.opts.Guard.Index(iface)
+			if err != nil {
+				return
+			}
+			stop := context.AfterFunc(r.opts.Guard.Context(), cancel)
+			defer stop()
+			ctx = netif.WithBinding(ctx, index, func() error { return r.opts.Guard.Check(iface) })
+		}
 		reply, err := r.opts.Exchange(ctx, iface, destination, message)
 		if err != nil || ctx.Err() != nil || len(reply) != len(message) || reply[1] != 0 {
 			return

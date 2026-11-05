@@ -28,6 +28,7 @@ type key struct {
 }
 type SnapshotFunc func(api.Protocol) ([]attribution.Socket, error)
 type Options struct {
+	Guard    *capture.Guard
 	Routes   []capture.Route
 	Snapshot SnapshotFunc
 	Sender   Sender
@@ -45,7 +46,7 @@ func New(opts Options) (*Table, error) {
 		opts.Snapshot = attribution.Snapshot
 	}
 	if opts.Sender == nil {
-		opts.Sender = newSender()
+		opts.Sender = newSender(opts.Guard)
 	}
 	t := &Table{opts: opts, existing: make(map[key]uint64), proxied: make(map[key]struct{}), faults: make(chan error, 1)}
 	for _, proto := range []api.Protocol{api.TCP, api.UDP} {
@@ -174,6 +175,16 @@ func (t *Table) process(p Packet, adopt bool) bool {
 		return false
 	}
 	iface := capture.SystemInterface(t.opts.Routes, p.Remote.Addr())
+	if t.opts.Guard != nil {
+		if err := t.opts.Guard.Admit(p.Remote.Addr()); err != nil {
+			t.fault(err)
+			return true
+		}
+		if err := t.opts.Guard.Check(iface); err != nil {
+			t.fault(err)
+			return true
+		}
+	}
 	if iface == "" {
 		t.fault(errors.New("original native socket route is unavailable"))
 		return true

@@ -43,6 +43,7 @@ type DialFunc func(context.Context, string, string, string) (net.Conn, error)
 type ResolveFunc func(context.Context, api.Interface, string) ([]netip.Addr, error)
 
 type Router struct {
+	Guard   *capture.Guard // Set before forwarding begins; nil only for standalone tests.
 	routes  []capture.Route
 	ifaces  atomic.Pointer[[]api.Interface]
 	policy  atomic.Pointer[Policy]
@@ -101,7 +102,13 @@ type Result struct {
 	Problem   string // includes a successful system bypass of an unknown fake IP
 }
 
-func (r *Router) System(remote netip.Addr) string { return capture.SystemInterface(r.routes, remote) }
+func (r *Router) System(remote netip.Addr) string {
+	name := capture.SystemInterface(r.routes, remote)
+	if name != "" && r.Guard != nil && r.Guard.Check(name) != nil {
+		return ""
+	}
+	return name
+}
 
 func (r *Router) Dial(ctx context.Context, d rules.Decision, proto api.Protocol, remote netip.AddrPort) (Result, error) {
 	return r.DialDomain(ctx, d, proto, remote, "")
@@ -126,6 +133,16 @@ func (r *Router) DialDomain(ctx context.Context, d rules.Decision, proto api.Pro
 }
 
 func (r *Router) dialDomain(ctx context.Context, d rules.Decision, proto api.Protocol, remote netip.AddrPort, domain string, check func(netip.AddrPort) rules.Decision) (Result, error) {
+	if r.Guard != nil {
+		if err := r.Guard.Admit(remote.Addr()); err != nil {
+			return Result{Outcome: api.Unreachable, RuleID: d.RuleID}, err
+		}
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		stop := context.AfterFunc(r.Guard.Context(), cancel)
+		defer cancel()
+		defer stop()
+	}
 	if d.Action == api.Block {
 		return Result{Outcome: api.Blocked, RuleID: d.RuleID}, ErrBlocked
 	}
@@ -154,6 +171,13 @@ func (r *Router) dialDomain(ctx context.Context, d rules.Decision, proto api.Pro
 		}
 		attemptCtx, cancel := context.WithTimeout(ctx, r.Timeout)
 		defer cancel()
+		if r.Guard != nil {
+			index, err := r.Guard.Index(name)
+			if err != nil {
+				return Result{Outcome: api.Unreachable, RuleID: d.RuleID}, true, err
+			}
+			attemptCtx = netif.WithBinding(attemptCtx, index, func() error { return r.Guard.Check(name) })
+		}
 		targets := []netip.AddrPort{remote}
 		var blocked rules.Decision
 		if fake && iface != nil && !vpnInterface(*iface) {
@@ -163,6 +187,9 @@ func (r *Router) dialDomain(ctx context.Context, d rules.Decision, proto api.Pro
 			}
 			addresses, err := resolve(attemptCtx, *iface, domain)
 			if err != nil {
+				if r.Guard != nil && r.Guard.Err() != nil {
+					return Result{Outcome: api.Unreachable, RuleID: d.RuleID}, true, r.Guard.Err()
+				}
 				failures = append(failures, fmt.Errorf("%s DNS: %w", name, err))
 				return Result{}, false, nil
 			}
@@ -205,6 +232,17 @@ func (r *Router) dialDomain(ctx context.Context, d rules.Decision, proto api.Pro
 			dialCtx, dialCancel := context.WithTimeout(attemptCtx, time.Until(deadline)/time.Duration(len(targets)-i))
 			conn, err := r.dial(dialCtx, name, network, target.String())
 			dialCancel()
+			if r.Guard != nil {
+				if guardErr := r.Guard.Check(name); guardErr != nil {
+					if conn != nil {
+						conn.Close()
+					}
+					return Result{Outcome: api.Unreachable, RuleID: d.RuleID}, true, guardErr
+				}
+				if err == nil {
+					conn = r.Guard.Conn(conn)
+				}
+			}
 			if err != nil {
 				failures = append(failures, fmt.Errorf("%s: %w", name, err))
 				continue
