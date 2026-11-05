@@ -6,6 +6,7 @@ import (
 	"github.com/Kel077/pith/internal/api"
 	"github.com/Kel077/pith/internal/client"
 	"github.com/Kel077/pith/internal/mock"
+	"github.com/Kel077/pith/locales"
 )
 
 type service = api.Service
@@ -20,5 +21,14 @@ func newService(useMock bool) (service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return client.New(client.Options{ResourcesDir: res, Version: version})
+	return client.New(client.Options{
+		ResourcesDir: res,
+		Version:      version,
+		// What macOS's password dialog says, in the app's language.
+		Prompts: client.Prompts{
+			Install:   locales.HelperPromptInstall(),
+			Update:    locales.HelperPromptUpdate(),
+			Uninstall: locales.HelperPromptUninstall(),
+		},
+	})
 }

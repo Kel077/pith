@@ -610,5 +610,11 @@
   "recognizingDomainsIsOff": "Recognizing domains is off",
   "@recognizingDomainsIsOff": {
     "description": "A notice, short; recognizingDomainsIsOffSoDomain says it whole, on hover."
+  },
+  "helperPromptInstall": "Pith needs your password to install its routing helper.",
+  "helperPromptUpdate": "Pith needs your password to update its routing helper.",
+  "helperPromptUninstall": "Pith needs your password to remove its routing helper.",
+  "@helperPromptInstall": {
+    "description": "What macOS's administrator password dialog says when Pith installs its helper."
   }
 }

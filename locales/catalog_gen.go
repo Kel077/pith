@@ -2793,3 +2793,39 @@ func RecognizingDomainsIsOff() string { return In(i18n.Locale()).RecognizingDoma
 func (msgs Messages) RecognizingDomainsIsOff() string {
 	return Catalog.Format(msgs.locale, "recognizingDomainsIsOff", nil)
 }
+
+// HelperPromptInstall says "Pith needs your password to install its routing helper."
+// in the language the app shows.
+//
+// What macOS's administrator password dialog says when Pith installs its
+// helper.
+func HelperPromptInstall() string { return In(i18n.Locale()).HelperPromptInstall() }
+
+// HelperPromptInstall says "Pith needs your password to install its routing helper."
+// in the language of msgs.
+//
+// What macOS's administrator password dialog says when Pith installs its
+// helper.
+func (msgs Messages) HelperPromptInstall() string {
+	return Catalog.Format(msgs.locale, "helperPromptInstall", nil)
+}
+
+// HelperPromptUpdate says "Pith needs your password to update its routing helper."
+// in the language the app shows.
+func HelperPromptUpdate() string { return In(i18n.Locale()).HelperPromptUpdate() }
+
+// HelperPromptUpdate says "Pith needs your password to update its routing helper."
+// in the language of msgs.
+func (msgs Messages) HelperPromptUpdate() string {
+	return Catalog.Format(msgs.locale, "helperPromptUpdate", nil)
+}
+
+// HelperPromptUninstall says "Pith needs your password to remove its routing helper."
+// in the language the app shows.
+func HelperPromptUninstall() string { return In(i18n.Locale()).HelperPromptUninstall() }
+
+// HelperPromptUninstall says "Pith needs your password to remove its routing helper."
+// in the language of msgs.
+func (msgs Messages) HelperPromptUninstall() string {
+	return Catalog.Format(msgs.locale, "helperPromptUninstall", nil)
+}

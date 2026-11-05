@@ -265,5 +265,8 @@
   "targetPlaceholderShort": "域名、IP 或网段",
   "warnVpnShort": "另一个 VPN（{iface}）正在接管所有流量",
   "warnInterfaceDownShort": "{names} 未连接",
-  "recognizingDomainsIsOff": "识别域名已关闭"
+  "recognizingDomainsIsOff": "识别域名已关闭",
+  "helperPromptInstall": "橘核需要你的密码来安装分流助手。",
+  "helperPromptUpdate": "橘核需要你的密码来更新分流助手。",
+  "helperPromptUninstall": "橘核需要你的密码来卸载分流助手。"
 }
