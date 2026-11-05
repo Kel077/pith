@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,8 +17,8 @@ type editor struct {
 	sceneID    string
 	ruleID     string // empty for a new rule
 	rule       api.Rule
-	targets    []string // as typed, domains without "*."
-	subdomains bool     // domains match their subdomains too
+	targets    []string // in ParseTarget's canonical form ("*.example.com"), or as typed when invalid
+	subdomains bool     // domains added from now on include their subdomains
 	draft      string   // the target being typed
 	draftErr   bool
 	protocol   int // 0 any, 1 TCP, 2 UDP
@@ -44,21 +45,13 @@ func (a *App) openEditor(sceneID string, i int) {
 			}
 		}
 	}
-	hasDomain, allSub := false, true
+	// Each target keeps whether it includes subdomains: the check box only
+	// says it for the domains added next.
 	for _, s := range e.rule.Targets {
-		t, err := api.ParseTarget(s)
-		if err == nil && t.IsDomain() {
-			hasDomain = true
-			allSub = allSub && t.Subdomains
-			e.targets = append(e.targets, t.Domain)
-		} else if err == nil {
-			e.targets = append(e.targets, t.String())
-		} else {
-			e.targets = append(e.targets, s)
+		if t, err := api.ParseTarget(s); err == nil {
+			s = t.String()
 		}
-	}
-	if hasDomain {
-		e.subdomains = allSub
+		e.targets = append(e.targets, s)
 	}
 	e.protocol = max(0, slices.Index(protocols, e.rule.Protocol))
 	if e.rule.Action == api.Block {
@@ -75,16 +68,7 @@ func (e *editor) prepared() api.Rule {
 	if e.action == 1 {
 		r.Action = api.Block
 	}
-	r.Targets = r.Targets[:0]
-	for _, s := range e.targets {
-		t, err := api.ParseTarget(s)
-		if err != nil {
-			r.Targets = append(r.Targets, s)
-			continue
-		}
-		t.Subdomains = t.IsDomain() && e.subdomains
-		r.Targets = append(r.Targets, t.String())
-	}
+	r.Targets = slices.Clone(e.targets)
 	if len(r.Targets) == 0 {
 		r.Targets = nil
 	}
@@ -104,14 +88,11 @@ func (e *editor) addDraft() {
 			bad = append(bad, s)
 			continue
 		}
-		v := t.String()
-		if t.IsDomain() {
-			v = t.Domain
-			if t.Subdomains {
-				e.subdomains = true
-			}
+		if t.IsDomain() && !t.Subdomains {
+			// "*.x" and ".x" say it themselves; a bare domain follows the box.
+			t.Subdomains = e.subdomains
 		}
-		if !slices.Contains(e.targets, v) {
+		if v := t.String(); !slices.ContainsFunc(e.targets, func(o string) bool { return sameTarget(o, v) }) {
 			e.targets = append(e.targets, v)
 		}
 	}
@@ -170,11 +151,19 @@ func (a *App) editorView(c *ui.Context) {
 			editorRow(c, tr("Destinations", "目标"), func() {
 				ui.Row(c).Gap(6).Wrap().Children(func() {
 					for k, s := range e.targets {
-						_, err := api.ParseTarget(s)
+						tg, err := api.ParseTarget(s)
 						a.removableChip(c, func() {
-							text := ui.Text(c, s).FontSize(13).SingleLine()
-							if err != nil {
-								text.TextColor(t.Danger)
+							switch {
+							case err != nil:
+								ui.Text(c, s).FontSize(13).SingleLine().TextColor(t.Danger)
+							case tg.IsDomain():
+								ui.Text(c, tg.Domain).FontSize(13).SingleLine()
+								if subdomainToggle(c, k, tg.Subdomains) {
+									tg.Subdomains = !tg.Subdomains
+									e.targets[k] = tg.String()
+								}
+							default:
+								ui.Text(c, tg.String()).FontSize(13).SingleLine()
 							}
 						}, func() { e.targets = slices.Delete(e.targets, k, k+1) })
 					}
@@ -193,7 +182,7 @@ func (a *App) editorView(c *ui.Context) {
 					e.addDraft()
 				}
 				ui.Row(c).Gap(14).Children(func() {
-					ui.Checkbox(c, &e.subdomains, tr("Domains include their subdomains", "域名包含子域名"))
+					ui.Checkbox(c, &e.subdomains, tr("New domains include their subdomains", "新加的域名包含子域名"))
 					ui.Spacer(c)
 					switch {
 					case e.draftErr:
@@ -249,7 +238,8 @@ func (a *App) editorView(c *ui.Context) {
 				if ui.Button(c, tr("Cancel", "取消")).Clicked() {
 					e.open = false
 				}
-				if ui.PrimaryButton(c, tr("Save", "保存")).Clicked() {
+				save := ui.PrimaryButton(c, tr("Save", "保存")).Clicked() || c.Shortcut(ui.Cmd, ui.KeyS)
+				if save {
 					if e.draft != "" {
 						e.addDraft()
 						rule = e.prepared()
@@ -264,9 +254,38 @@ func (a *App) editorView(c *ui.Context) {
 			})
 		})
 	})
-	if c.Shortcut(ui.Cmd, ui.KeyS) && e.open {
-		e.tried = true
+}
+
+// subdomainToggle is the chip's switch of whether a domain includes its
+// subdomains: it reports a click.
+func subdomainToggle(c *ui.Context, k int, on bool) bool {
+	t := c.Theme()
+	label := tr("+ subdomains", "含子域名")
+	pill := ui.Row(c.Key(fmt.Sprint("sub-", k))).Padding(1, 6).Radius(5).Cursor(ui.CursorPointer).Label(label)
+	if on {
+		pill.Background(t.Accent.Alpha(0.14)).Tooltip(tr("Includes its subdomains: click for this domain alone", "包含子域名；点击改为只匹配这个域名"))
+	} else {
+		pill.Border(1, t.Border).Tooltip(tr("This domain alone: click to include its subdomains", "只匹配这个域名；点击改为包含子域名"))
 	}
+	pill.Children(func() {
+		text := ui.Text(c, label).FontSize(11).SingleLine()
+		if on {
+			text.TextColor(t.Accent)
+		} else {
+			text.TextColor(t.TextMuted)
+		}
+	})
+	return pill.Clicked()
+}
+
+// sameTarget reports whether two targets are the same, written alike or not.
+func sameTarget(x, y string) bool {
+	tx, ex := api.ParseTarget(x)
+	ty, ey := api.ParseTarget(y)
+	if ex != nil || ey != nil {
+		return x == y
+	}
+	return tx.String() == ty.String()
 }
 
 // saveRule saves a rule the editor made: new rules go first, as they are
@@ -449,7 +468,7 @@ func (a *App) appPickerPopover(c *ui.Context, anchor ui.Element, p *appPicker, c
 					return err
 				}, func() {
 					if path != "" {
-						chosen(programRef(path))
+						chosen(a.programRef(path))
 					}
 				}, nil)
 			}
@@ -457,9 +476,16 @@ func (a *App) appPickerPopover(c *ui.Context, anchor ui.Element, p *appPicker, c
 	})
 }
 
-// programRef refers to a program the user chose by its path.
-func programRef(path string) api.AppRef {
-	ref := api.AppRef{Path: strings.TrimSuffix(path, "/")}
+// programRef refers to a program the user chose by its path: an installed
+// app with its bundle ID and name, as Pith lists it.
+func (a *App) programRef(path string) api.AppRef {
+	path = strings.TrimSuffix(path, "/")
+	for _, app := range a.apps {
+		if app.Path == path {
+			return app
+		}
+	}
+	ref := api.AppRef{Path: path}
 	ref.Name = appName(ref)
 	return ref
 }

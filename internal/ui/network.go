@@ -14,7 +14,9 @@ type networkPage struct {
 	alias    string
 	target   string // "host:port" to test through every interface
 	results  map[string]api.Probe
-	testing  int // tests running
+	tested   []string // the interfaces the test runs through
+	testing  int      // probes of the test still running
+	testGen  int      // the test results belong to
 }
 
 // networkView shows the interfaces, what each is connected to, and tests
@@ -211,6 +213,12 @@ func (a *App) setAlias(key, alias string) {
 			cfg.Aliases[key] = alias
 		}
 	})
+	// Read the interfaces again, for a backend that shows aliases in them.
+	var ifs []api.Interface
+	a.async(func(ctx context.Context) (err error) {
+		ifs, err = a.Service.Interfaces(ctx)
+		return err
+	}, func() { a.setIfaces(ifs) }, nil)
 }
 
 // probe tests the internet through an interface.
@@ -239,16 +247,17 @@ func (a *App) reachability(c *ui.Context) {
 		muted(c, tr("Connect to a host and port through each interface, to compare them.", "分别从每张网卡连接同一个服务器，比较哪张能通、快多少。"))
 		ui.Row(c).Gap(8).Children(func() {
 			submit := ui.TextInput(c.Key("reach"), &n.target).Placeholder(tr("host:port, e.g. github.com:443", "主机:端口，例如 github.com:443")).Grow(1).Submitted()
-			if (ui.PrimaryButton(c, tr("Test", "测试")).Disabled(strings.TrimSpace(n.target) == "" || n.testing > 0).Clicked() || submit) && strings.TrimSpace(n.target) != "" {
+			ready := strings.TrimSpace(n.target) != "" && n.testing == 0
+			if (ui.PrimaryButton(c, tr("Test", "测试")).Disabled(!ready).Clicked() || submit) && ready {
 				a.reach(strings.TrimSpace(n.target))
 			}
 		})
 		if len(n.results) == 0 && n.testing == 0 {
 			return
 		}
-		for k := range a.ifaces {
-			i := &a.ifaces[k]
-			if !i.Up {
+		for _, name := range n.tested {
+			i := a.ifaceByName(name)
+			if i == nil {
 				continue
 			}
 			p, ok := n.results[i.Name]
@@ -272,12 +281,15 @@ func (a *App) reachability(c *ui.Context) {
 
 func (a *App) reach(target string) {
 	n := &a.network
-	n.results = map[string]api.Probe{}
+	n.testGen++
+	gen := n.testGen
+	n.results, n.tested, n.testing = map[string]api.Probe{}, nil, 0
 	for _, i := range a.ifaces {
 		if !i.Up {
 			continue
 		}
 		name := i.Name
+		n.tested = append(n.tested, name)
 		n.testing++
 		var p api.Probe
 		a.async(func(ctx context.Context) (err error) {
@@ -287,6 +299,9 @@ func (a *App) reach(target string) {
 			}
 			return nil
 		}, func() {
+			if gen != n.testGen {
+				return // an older test's
+			}
 			n.testing--
 			n.results[name] = p
 		}, nil)

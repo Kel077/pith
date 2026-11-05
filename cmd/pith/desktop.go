@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/egoist/mygo"
 	"github.com/Kel077/pith/internal/api"
@@ -43,6 +44,11 @@ func (desktop) ChooseProgram() (string, error) {
 }
 
 func (desktop) Save(name string, data []byte) error {
+	// A name is a file name, never a path; the dialog starts in Downloads.
+	name = strings.NewReplacer("/", "-", ":", "-").Replace(name)
+	if home, err := os.UserHomeDir(); err == nil {
+		name = filepath.Join(home, "Downloads", name)
+	}
 	path, err := mygo.Dialog.Save(mygo.SaveDialogOptions{
 		DefaultPath: name,
 		Filters:     []mygo.FileFilter{{Name: "Pith", Extensions: []string{"json"}}},

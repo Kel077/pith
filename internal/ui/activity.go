@@ -17,6 +17,7 @@ type activityPage struct {
 	view        int // 0 connections, 1 apps, 2 traffic
 	span        int // of the traffic: 0 an hour, 1 a day, 2 a week
 	history     api.Traffic
+	historyErr  error
 	historyKey  string // the span and minute history was read for
 	historyBusy bool
 	query       string
@@ -60,8 +61,8 @@ func (a *App) activityView(c *ui.Context) {
 		ui.Row(c).Margin(0, 24, 12).Padding(10, 14).Gap(10).Radius(10).Background(subtle(t, 0.05)).Shrink(0).Children(func() {
 			ui.Icon(c, icInfo).TextColor(t.TextMuted)
 			muted(c, tr("Routing is off. This page shows the connections Pith routes.", "分流没有打开。这里显示经过橘核分流的连接。")).Grow(1)
-			if ui.PrimaryButton(c, tr("Turn On", "打开分流")).Disabled(a.busy != "").Clicked() {
-				a.toggle()
+			if ui.PrimaryButton(c, tr("Turn On", "打开分流")).Disabled(a.busy != "" || a.status.State == api.Starting).Clicked() {
+				a.start(a.cfg.Selected)
 			}
 		})
 	} else {
@@ -91,7 +92,9 @@ func (a *App) ifaceStrip(c *ui.Context) {
 	if len(names) == 0 {
 		return
 	}
-	now := a.Now().Truncate(time.Second)
+	// The second the traffic was read in is not over: count from the one
+	// before it.
+	now := a.trafficAt.Truncate(time.Second)
 	ui.Row(c).Padding(0, 24, 12).Gap(10).Shrink(0).Children(func() {
 		for _, name := range names {
 			a.ifaceSpeedCard(c, name, series[name], now)
@@ -356,9 +359,8 @@ func (a *App) ruleFromConnection(cn *api.Connection, destination bool) {
 				target = ap
 			}
 		}
-		if target != "" {
-			e.targets = []string{target}
-			e.subdomains = false
+		if t, err := api.ParseTarget(target); err == nil {
+			e.targets = []string{t.String()} // the host seen, alone
 		}
 	} else {
 		e.rule.Apps = []api.AppRef{cn.App}

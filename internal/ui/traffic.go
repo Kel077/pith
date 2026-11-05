@@ -1,37 +1,66 @@
 package ui
 
 import (
-	"context"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/Kel077/pith/internal/api"
 )
 
-// trafficSpan is a period the traffic chart shows, in bars of a step.
+// trafficSpan is a period the traffic chart shows: bars of a step, or of
+// local calendar days for the week.
 type trafficSpan struct {
 	en, zh string
-	length time.Duration
-	step   time.Duration
+	bars   int
+	step   time.Duration // of the bars, and of the series asked for; days ask for hours
+	days   bool          // bars are local days, which DST makes 23 or 25 hours
 }
 
 var trafficSpans = []trafficSpan{
-	{"Last hour", "1 小时", time.Hour, time.Minute},
-	{"Last day", "24 小时", 24 * time.Hour, 30 * time.Minute},
-	{"Last week", "7 天", 7 * 24 * time.Hour, 24 * time.Hour},
+	{"Last hour", "1 小时", 60, time.Minute, false},
+	{"Last day", "24 小时", 48, 30 * time.Minute, false},
+	{"Last week", "7 天", 7, time.Hour, true},
 }
 
-// since is where a span starts: a whole step back, so that the bars line
-// up with the clock, and whole days for the week.
+// since is where a span starts: the start of the first bar, so that bars
+// line up with the clock, and with local midnight for days.
 func (s trafficSpan) since(now time.Time) time.Time {
-	if s.step == 24*time.Hour {
+	if s.days {
 		y, m, d := now.Date()
-		return time.Date(y, m, d, 0, 0, 0, 0, now.Location()).AddDate(0, 0, -int(s.length/s.step)+1)
+		return time.Date(y, m, d-s.bars+1, 0, 0, 0, 0, now.Location())
 	}
-	return now.Add(-s.length).Truncate(s.step).Add(s.step)
+	return now.Truncate(s.step).Add(-time.Duration(s.bars-1) * s.step)
+}
+
+// bar is the bar a sample falls in, or -1 outside the span.
+func (s trafficSpan) bar(since, at time.Time) int {
+	if at.Before(since) {
+		return -1
+	}
+	var i int
+	if s.days {
+		at = at.In(since.Location())
+		y, m, d := at.Date()
+		day := time.Date(y, m, d, 0, 0, 0, 0, since.Location())
+		// Whole days between two local midnights, in spite of DST.
+		i = int((day.Sub(since) + 12*time.Hour) / (24 * time.Hour))
+	} else {
+		i = int(at.Sub(since) / s.step)
+	}
+	if i >= s.bars {
+		return -1
+	}
+	return i
+}
+
+// barStart is when bar k starts.
+func (s trafficSpan) barStart(since time.Time, k int) time.Time {
+	if s.days {
+		return since.AddDate(0, 0, k)
+	}
+	return since.Add(time.Duration(k) * s.step)
 }
 
 // trafficView shows how much went through each interface over a period.
@@ -44,6 +73,7 @@ func (a *App) trafficView(c *ui.Context) {
 	if p.historyKey != key && !p.historyBusy {
 		a.loadHistory(span, now, key)
 	}
+	since := span.since(now)
 	h := p.history
 	ui.Scroll(c).Grow(1).Padding(0, 24, 24).Gap(16).Children(func() {
 		ui.Row(c).Gap(8).Children(func() {
@@ -57,7 +87,11 @@ func (a *App) trafficView(c *ui.Context) {
 				ui.Spinner(c)
 			}
 		})
-		totals := seriesTotals(h)
+		if p.historyErr != nil {
+			muted(c, errorText(p.historyErr))
+			return
+		}
+		totals := seriesTotals(h, span, since)
 		ui.Row(c).Gap(10).Wrap().Children(func() {
 			for _, it := range totals {
 				a.trafficTotal(c, it)
@@ -66,9 +100,9 @@ func (a *App) trafficView(c *ui.Context) {
 				muted(c, tr("No traffic in this period.", "这段时间没有流量。"))
 			}
 		})
-		if len(h.Series) > 0 {
+		if len(totals) > 0 {
 			box := card(c).Padding(16, 16, 12)
-			box.Children(func() { a.trafficChart(c, h, span, now) })
+			box.Children(func() { a.trafficChart(c, h, span, since) })
 		}
 		ui.Row(c).Gap(6).Children(func() {
 			ui.Icon(c, icInfo).FontSize(12).TextColor(t.TextMuted)
@@ -77,15 +111,15 @@ func (a *App) trafficView(c *ui.Context) {
 	})
 }
 
-// seriesTotals sums the series by interface, most bytes first, so that the
-// totals are those of the bars; without a series, the backend's totals.
-func seriesTotals(h api.Traffic) []api.InterfaceTraffic {
-	if len(h.Series) == 0 {
-		return h.Interfaces
-	}
+// seriesTotals sums the series in the span by interface, most bytes first,
+// so that the totals are those of the bars.
+func seriesTotals(h api.Traffic, span trafficSpan, since time.Time) []api.InterfaceTraffic {
 	by := map[string]*api.InterfaceTraffic{}
 	var out []*api.InterfaceTraffic
 	for _, s := range h.Series {
+		if span.bar(since, s.At) < 0 {
+			continue
+		}
 		it := by[s.Interface]
 		if it == nil {
 			it = &api.InterfaceTraffic{Interface: s.Interface}
@@ -105,18 +139,21 @@ func seriesTotals(h api.Traffic) []api.InterfaceTraffic {
 	return totals
 }
 
+// loadHistory reads the series of a span. Without the helper there is no
+// history: the page says so, rather than a toast every half minute.
 func (a *App) loadHistory(span trafficSpan, now time.Time, key string) {
 	p := &a.activity
 	p.historyBusy = true
-	var h api.Traffic
-	a.async(func(ctx context.Context) (err error) {
-		h, err = a.Service.Traffic(ctx, api.TrafficQuery{Since: span.since(now), Step: span.step})
-		return err
-	}, func() {
-		p.historyBusy, p.history, p.historyKey = false, h, key
-	}, func(error) {
-		p.historyBusy, p.historyKey = false, key
-	})
+	q := api.TrafficQuery{Since: span.since(now), Step: span.step}
+	if a.syncIcons {
+		h, err := a.Service.Traffic(a.ctx, q)
+		p.historyBusy, p.history, p.historyErr, p.historyKey = false, h, err, key
+		return
+	}
+	go func() {
+		h, err := a.Service.Traffic(a.ctx, q)
+		a.Post(func() { p.historyBusy, p.history, p.historyErr, p.historyKey = false, h, err, key })
+	}()
 }
 
 // trafficTotal is the total of one interface over the period.
@@ -135,22 +172,19 @@ func (a *App) trafficTotal(c *ui.Context, it api.InterfaceTraffic) {
 }
 
 // trafficChart draws a bar a step, its interfaces stacked in their colors.
-func (a *App) trafficChart(c *ui.Context, h api.Traffic, span trafficSpan, now time.Time) {
+func (a *App) trafficChart(c *ui.Context, h api.Traffic, span trafficSpan, since time.Time) {
 	t := c.Theme()
-	since := span.since(now)
-	n := int(span.length / span.step)
-	type bar struct{ by map[string]uint64 }
-	bars := make([]bar, n)
+	bars := make([]map[string]uint64, span.bars)
 	var names []string
 	for _, s := range h.Series {
-		i := int(s.At.Sub(since) / span.step)
-		if i < 0 || i >= n {
+		i := span.bar(since, s.At)
+		if i < 0 {
 			continue
 		}
-		if bars[i].by == nil {
-			bars[i].by = map[string]uint64{}
+		if bars[i] == nil {
+			bars[i] = map[string]uint64{}
 		}
-		bars[i].by[s.Interface] += s.Sent + s.Received
+		bars[i][s.Interface] += s.Sent + s.Received
 		if !slices.Contains(names, s.Interface) {
 			names = append(names, s.Interface)
 		}
@@ -159,7 +193,7 @@ func (a *App) trafficChart(c *ui.Context, h api.Traffic, span trafficSpan, now t
 	var peak uint64 = 1
 	for _, b := range bars {
 		var sum uint64
-		for _, v := range b.by {
+		for _, v := range b {
 			sum += v
 		}
 		peak = max(peak, sum)
@@ -168,9 +202,13 @@ func (a *App) trafficChart(c *ui.Context, h api.Traffic, span trafficSpan, now t
 	for _, name := range names {
 		colors[name] = a.colorOf(name)
 	}
-	grid, muted := subtle(t, 0.07), t.TextMuted
+	grid := subtle(t, 0.07)
 	ui.Row(c).Gap(8).Children(func() {
-		ui.Text(c, tr("Per ", "每")+stepText(span.step)).FontSize(12).TextColor(t.TextMuted)
+		per := tr("Per day", "每天")
+		if !span.days {
+			per = tr("Per ", "每") + stepText(span.step)
+		}
+		ui.Text(c, per).FontSize(12).TextColor(t.TextMuted)
 		ui.Spacer(c)
 		ui.Text(c, tr("Peak ", "峰值 ")+byteSize(peak)).FontSize(12).TextColor(t.TextMuted)
 	})
@@ -179,12 +217,12 @@ func (a *App) trafficChart(c *ui.Context, h api.Traffic, span trafficSpan, now t
 			y := r.Y + r.H*float32(k)/2
 			p.Line(r.X, y, r.X+r.W, y, 1, grid)
 		}
-		w := r.W / float32(n)
+		w := r.W / float32(span.bars)
 		gap := min(w*0.25, 3)
 		for i, b := range bars {
 			y := r.Y + r.H
 			for _, name := range names {
-				v := b.by[name]
+				v := b[name]
 				if v == 0 {
 					continue
 				}
@@ -195,8 +233,8 @@ func (a *App) trafficChart(c *ui.Context, h api.Traffic, span trafficSpan, now t
 		}
 	})
 	ui.Row(c).Children(func() {
-		for k, at := range []time.Time{since, since.Add(span.length / 2), since.Add(span.length - span.step)} {
-			e := ui.Text(c, timeLabel(at, span)).FontSize(11).TextColor(muted).Grow(1)
+		for k, bar := range []int{0, span.bars / 2, span.bars - 1} {
+			e := ui.Text(c, timeLabel(span.barStart(since, bar), span)).FontSize(11).TextColor(t.TextMuted).Grow(1)
 			switch k {
 			case 1:
 				e.TextAlign(ui.Center)
@@ -217,20 +255,16 @@ func (a *App) trafficChart(c *ui.Context, h api.Traffic, span trafficSpan, now t
 
 func stepText(d time.Duration) string {
 	switch {
-	case d >= 24*time.Hour:
-		return tr("day", "天")
 	case d >= time.Hour:
 		return trf("%d hours", "%d 小时", int(d.Hours()))
-	case d >= time.Minute && d < time.Hour && d%time.Minute == 0 && d > time.Minute:
+	case d > time.Minute:
 		return trf("%d minutes", "%d 分钟", int(d.Minutes()))
-	case d == time.Minute:
-		return tr("minute", "分钟")
 	}
-	return strings.TrimSpace(d.String())
+	return tr("minute", "分钟")
 }
 
 func timeLabel(at time.Time, span trafficSpan) string {
-	if span.step >= 24*time.Hour {
+	if span.days {
 		return at.Format("01-02")
 	}
 	return at.Format("15:04")

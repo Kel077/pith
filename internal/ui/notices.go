@@ -118,9 +118,11 @@ func covers(o, r api.Rule) bool {
 		if len(r.Apps) == 0 {
 			return false
 		}
+		// An app matches by its path, or anywhere by its bundle ID: o's
+		// app covers r's when it matches all of that too.
 		for _, app := range r.Apps {
 			if !slices.ContainsFunc(o.Apps, func(x api.AppRef) bool {
-				return x.Path == app.Path || x.BundleID != "" && x.BundleID == app.BundleID
+				return x.BundleID != "" && x.BundleID == app.BundleID || x.Path == app.Path && app.BundleID == ""
 			}) {
 				return false
 			}

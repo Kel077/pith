@@ -8,6 +8,7 @@ import (
 	"cmp"
 	"context"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -77,6 +78,7 @@ type App struct {
 	conns     []*api.Connection // newest first
 	byID      map[uint64]*api.Connection
 	traffic   api.Traffic
+	trafficAt time.Time // when traffic was read
 	probes    map[string]api.Probe
 	probing   map[string]bool
 	apps      []api.AppRef
@@ -87,10 +89,12 @@ type App struct {
 	panelH    int                 // the height the panel's content took
 
 	routing   atomic.Bool // routing runs: read off the main thread
-	wasOn     bool        // routing ran when Pith last quit, or the Mac shut down
-	resumed   bool        // the first status after launch was seen
-	busy      string      // the action running: "start", "stop", "install", "uninstall"
-	toasts    []string    // messages for the next frame
+	gen       uint64      // changes made to cfg; the saver writes the newest
+	saves     saver
+	wasOn     bool     // the user left routing on: Pith resumes it on launch if asked
+	resumed   bool     // the first status after launch was seen
+	busy      string   // the action running: "start", "stop", "install", "uninstall"
+	toasts    []string // messages for the next frame
 	trayState string
 
 	page     string // "rules", "activity", "network", "settings"
@@ -107,6 +111,15 @@ type App struct {
 	undo     *undoAction
 
 	syncIcons bool // tests: load icons at once
+}
+
+// saver writes the configuration off the main thread, one save at a time,
+// always the newest snapshot: older ones that wait are dropped.
+type saver struct {
+	mu      sync.Mutex
+	next    *api.Config
+	nextGen uint64
+	running bool
 }
 
 // appIcon is an app's icon, loading or loaded.
@@ -146,8 +159,10 @@ func (a *App) Run(ctx context.Context) {
 			}
 			a.setConfig(cfg)
 		})
-		conns, _ := a.Service.Connections(ctx, api.ConnectionQuery{Limit: 500})
-		a.Post(func() { a.setConnections(conns) })
+		// Interfaces need no helper: rules can be made before it is installed.
+		if ifs, err := a.Service.Interfaces(ctx); err == nil {
+			a.Post(func() { a.setIfaces(ifs) })
+		}
 		a.follow(ctx)
 	}()
 	go a.pollTraffic(ctx)
@@ -161,17 +176,16 @@ func (a *App) Sync(ctx context.Context) {
 		a.setConfig(cfg)
 	}
 	if st, err := a.Service.Status(ctx); err == nil {
-		a.status = st
-		a.routing.Store(st.State == api.Running)
+		a.setStatus(st)
 	}
 	if ifs, err := a.Service.Interfaces(ctx); err == nil {
-		a.ifaces = ifs
+		a.setIfaces(ifs)
 	}
 	if conns, err := a.Service.Connections(ctx, api.ConnectionQuery{Limit: 500}); err == nil {
 		a.setConnections(conns)
 	}
 	if t, err := a.Service.Traffic(ctx, api.TrafficQuery{Since: a.Now().Add(-2 * time.Minute), Step: time.Second}); err == nil {
-		a.traffic = t
+		a.traffic, a.trafficAt = t, a.Now()
 	}
 	if apps, err := a.Desktop.InstalledApps(); err == nil {
 		a.apps = apps
@@ -179,19 +193,29 @@ func (a *App) Sync(ctx context.Context) {
 }
 
 // follow applies the backend's events, a batch per frame, and subscribes
-// again when the stream ends, as when the helper restarts.
+// again when the stream ends, as when the helper restarts. Without a
+// helper, it reads the status and the interfaces every few seconds.
 func (a *App) follow(ctx context.Context) {
 	for ctx.Err() == nil {
 		ch, err := a.Service.Subscribe(ctx)
 		if err != nil {
 			st, serr := a.Service.Status(ctx)
+			ifs, ierr := a.Service.Interfaces(ctx)
 			a.Post(func() {
 				if serr == nil {
-					a.status = st
+					a.setStatus(st)
+				}
+				if ierr == nil {
+					a.setIfaces(ifs)
 				}
 			})
 			wait(ctx, 5*time.Second)
 			continue
+		}
+		// The log as the helper has it now, before the events that follow:
+		// those of a helper that restarted, or started after Pith.
+		if conns, err := a.Service.Connections(ctx, api.ConnectionQuery{Limit: 500}); err == nil {
+			a.Post(func() { a.setConnections(conns) })
 		}
 		for ev := range ch {
 			batch := []api.Event{ev}
@@ -233,9 +257,10 @@ func (a *App) pollTraffic(ctx context.Context) {
 		if !a.routing.Load() {
 			continue
 		}
-		tr, err := a.Service.Traffic(ctx, api.TrafficQuery{Since: a.Now().Add(-2 * time.Minute), Step: time.Second})
+		at := a.Now()
+		tr, err := a.Service.Traffic(ctx, api.TrafficQuery{Since: at.Add(-2 * time.Minute), Step: time.Second})
 		if err == nil {
-			a.Post(func() { a.traffic = tr })
+			a.Post(func() { a.traffic, a.trafficAt = tr, at })
 		}
 	}
 }
@@ -255,17 +280,9 @@ func wait(ctx context.Context, d time.Duration) {
 func (a *App) apply(ev api.Event) {
 	switch {
 	case ev.Status != nil:
-		a.status = *ev.Status
-		a.routing.Store(a.status.State == api.Running)
-		a.updateTray()
-		if a.status.State == api.Running && !a.wasOn {
-			a.wasOn = true
-			a.Desktop.WriteState("routing", "on")
-		}
-		a.resume()
+		a.setStatus(*ev.Status)
 	case ev.Interfaces != nil:
-		a.ifaces = ev.Interfaces
-		a.colors = nil
+		a.setIfaces(ev.Interfaces)
 	case ev.Connection != nil:
 		c := *ev.Connection
 		if old, ok := a.byID[c.ID]; ok {
@@ -282,6 +299,20 @@ func (a *App) apply(ev api.Event) {
 			a.conns = a.conns[:maxConns]
 		}
 	}
+}
+
+// setStatus takes the backend's status: the menu bar icon and the traffic
+// poll follow it, and the first one after launch may resume routing.
+func (a *App) setStatus(st api.Status) {
+	a.status = st
+	a.routing.Store(st.State == api.Running)
+	a.updateTray()
+	a.resume()
+}
+
+func (a *App) setIfaces(ifs []api.Interface) {
+	a.ifaces = ifs
+	a.colors = nil
 }
 
 func (a *App) setConnections(conns []api.Connection) {
@@ -334,13 +365,55 @@ func (a *App) change(fn func(cfg *api.Config)) {
 		return // never save over a configuration that could not be read
 	}
 	fn(&a.cfg)
-	cfg := cloneConfig(a.cfg)
-	a.async(func(ctx context.Context) error { return a.Service.SaveConfig(ctx, cfg) }, nil, func(error) {
-		// The backend refused it: show what it has.
-		if saved, err := a.Service.LoadConfig(a.ctx); err == nil {
-			a.Post(func() { a.setConfig(saved) })
+	a.gen++
+	a.save(a.gen, cloneConfig(a.cfg))
+}
+
+// save writes a snapshot of the configuration: in order, one at a time,
+// skipping snapshots a newer one replaced before their turn.
+func (a *App) save(gen uint64, cfg api.Config) {
+	if a.syncIcons { // tests save at once
+		if err := a.Service.SaveConfig(a.ctx, cfg); err != nil {
+			saved, lerr := a.Service.LoadConfig(a.ctx)
+			a.saveFailed(gen, err, saved, lerr)
 		}
-	})
+		return
+	}
+	s := &a.saves
+	s.mu.Lock()
+	s.next, s.nextGen = &cfg, gen
+	if s.running {
+		s.mu.Unlock()
+		return
+	}
+	s.running = true
+	s.mu.Unlock()
+	go func() {
+		for {
+			s.mu.Lock()
+			next, gen := s.next, s.nextGen
+			s.next = nil
+			if next == nil {
+				s.running = false
+				s.mu.Unlock()
+				return
+			}
+			s.mu.Unlock()
+			if err := a.Service.SaveConfig(a.ctx, *next); err != nil {
+				saved, lerr := a.Service.LoadConfig(a.ctx)
+				a.Post(func() { a.saveFailed(gen, err, saved, lerr) })
+			}
+		}
+	}()
+}
+
+// saveFailed shows why a save failed and, unless newer changes are on their
+// way, what the backend has instead.
+func (a *App) saveFailed(gen uint64, err error, saved api.Config, loadErr error) {
+	a.toast(errorText(err))
+	if gen == a.gen && loadErr == nil {
+		a.setConfig(saved)
+	}
 }
 
 // async runs fn off the main thread; then done, or failed and a toast of
@@ -405,7 +478,7 @@ func (a *App) start(sceneID string) {
 		return
 	}
 	if !a.status.Helper.Installed || a.status.Helper.Outdated {
-		a.install = installPrompt{open: true, then: sceneID, update: a.status.Helper.Outdated}
+		a.promptInstall(sceneID, a.status.Helper.Outdated)
 		return
 	}
 	if a.cfg.Selected != sceneID {
@@ -413,14 +486,34 @@ func (a *App) start(sceneID string) {
 	}
 	a.busy = "start"
 	a.async(func(ctx context.Context) error { return a.Service.Start(ctx, sceneID) },
-		func() { a.busy = "" },
+		func() {
+			a.busy = ""
+			a.setWasOn(true)
+		},
 		func(err error) {
 			a.busy = ""
 			switch api.Code(err) {
 			case api.ErrHelperMissing, api.ErrHelperOutdated:
-				a.install = installPrompt{open: true, then: sceneID, update: api.Code(err) == api.ErrHelperOutdated}
+				a.promptInstall(sceneID, api.Code(err) == api.ErrHelperOutdated)
 			}
 		})
+}
+
+// promptInstall asks to install or update the helper, in the main window.
+func (a *App) promptInstall(then string, update bool) {
+	a.install = installPrompt{open: true, then: then, update: update}
+	if a.OpenWindow != nil {
+		a.OpenWindow()
+	}
+}
+
+// setWasOn records whether the user left routing on, for resuming it.
+func (a *App) setWasOn(on bool) {
+	if a.wasOn == on {
+		return
+	}
+	a.wasOn = on
+	a.Desktop.WriteState("routing", map[bool]string{true: "on", false: "off"}[on])
 }
 
 // resume starts routing again as Pith opens, when the user asked for it
@@ -431,7 +524,7 @@ func (a *App) resume() {
 	}
 	a.resumed = true
 	s := a.status
-	if a.cfg.Settings.ResumeOnLaunch && a.wasOn && s.State == api.Stopped && s.Helper.Installed && !s.Helper.Outdated {
+	if a.cfg.Settings.ResumeOnLaunch && a.wasOn && s.State == api.Stopped && s.Helper.Running && !s.Helper.Outdated {
 		a.start(a.cfg.Selected)
 	}
 }
@@ -440,8 +533,7 @@ func (a *App) stop() {
 	if a.busy != "" {
 		return
 	}
-	a.wasOn = false
-	a.Desktop.WriteState("routing", "off")
+	a.setWasOn(false)
 	a.busy = "stop"
 	a.async(func(ctx context.Context) error { return a.Service.Stop(ctx) }, func() { a.busy = "" }, func(error) { a.busy = "" })
 }
@@ -465,8 +557,7 @@ func (a *App) uninstallHelper() {
 	a.async(func(ctx context.Context) error { return a.Service.UninstallHelper(ctx) },
 		func() {
 			a.busy = ""
-			a.status.Helper = api.HelperStatus{}
-			a.status.State = api.Stopped
+			a.setStatus(api.Status{State: api.Stopped})
 		},
 		func(error) { a.busy = "" })
 }

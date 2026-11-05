@@ -57,10 +57,7 @@ func (a *App) PanelView(c *ui.Context) {
 			})
 			sw := on
 			if ui.Switch(c, &sw).Label(tr("Routing", "分流")).Disabled(a.busy != "" || !a.loaded).Changed() {
-				a.toggle()
-				if !a.status.Helper.Installed && a.OpenWindow != nil {
-					a.OpenWindow() // the install prompt shows in the window
-				}
+				a.toggle() // an install prompt opens the window
 			}
 		})
 		for _, n := range a.notices() {
@@ -68,65 +65,87 @@ func (a *App) PanelView(c *ui.Context) {
 		}
 		panelDivider(c)
 		panelTitle(c, tr("Scene", "场景"))
-		for k := range a.cfg.Scenes {
-			s := &a.cfg.Scenes[k]
-			id := s.ID
-			active := a.isRunning() && a.status.SceneID == id || !a.isRunning() && a.cfg.Selected == id
-			row := panelRow(c, "scene-"+id)
-			row.Children(func() {
-				mark := ui.Icon(c, icCheck).FontSize(14).TextColor(t.Accent)
-				if !active {
-					mark.Opacity(0)
-				}
-				ui.Text(c, sceneName(s)).SingleLine().Grow(1)
-				ui.Text(c, trf("%d rules", "%d 条规则", len(s.Rules))).FontSize(12).TextColor(t.TextMuted).SingleLine()
-			})
-			if row.Clicked() && !active {
-				if a.isRunning() {
-					a.start(id)
-				} else {
-					a.showScene(id)
-				}
-			}
+		scenes := ui.Column(c).Gap(0)
+		if len(a.cfg.Scenes) > 6 {
+			scenes = ui.Scroll(c).MaxHeight(6 * 34)
 		}
+		scenes.Children(func() { a.panelScenes(c) })
 		panelDivider(c)
 		panelTitle(c, tr("Interfaces", "网卡"))
-		rates := a.ifaceRates()
-		for _, i := range a.panelIfaces() {
-			ref := refOf(i)
-			ui.Row(c.Key("if-"+i.Name)).Gap(10).Padding(6, 10).Children(func() {
-				dot(c, a.colorOf(i.Name), 8, !i.Up)
-				name := ui.Text(c, a.ifaceLabel(ref)).SingleLine().Grow(1)
-				if !i.Up {
-					name.TextColor(t.TextMuted)
-				}
-				switch r, ok := rates[i.Name]; {
-				case !i.Up:
-					ui.Text(c, tr("Not connected", "未连接")).FontSize(12).TextColor(t.TextMuted)
-				case ok && a.isRunning():
-					ui.Text(c, "↓ "+rate(r[0])).FontSize(12).Font("monospace").SingleLine()
-					ui.Text(c, "↑ "+rate(r[1])).FontSize(12).Font("monospace").TextColor(t.TextMuted).SingleLine()
-				default:
-					ui.Text(c, firstOf(i.IPv4)).FontSize(12).Font("monospace").TextColor(t.TextMuted).SingleLine()
-				}
-			})
-		}
+		a.panelIfaceRows(c)
 		panelDivider(c)
-		ui.Row(c).Gap(6).Padding(4, 10).Children(func() {
-			text := tr("Not routing", "没有在分流")
+		a.panelFooter(c)
+	})
+}
+
+// panelScenes lists the scenes; a click switches to one.
+func (a *App) panelScenes(c *ui.Context) {
+	t := c.Theme()
+	for k := range a.cfg.Scenes {
+		s := &a.cfg.Scenes[k]
+		id := s.ID
+		active := a.isRunning() && a.status.SceneID == id || !a.isRunning() && a.cfg.Selected == id
+		row := panelRow(c, "scene-"+id)
+		row.Children(func() {
+			mark := ui.Icon(c, icCheck).FontSize(14).TextColor(t.Accent)
+			if !active {
+				mark.Opacity(0)
+			}
+			ui.Text(c, sceneName(s)).SingleLine().Grow(1)
+			ui.Text(c, trf("%d rules", "%d 条规则", len(s.Rules))).FontSize(12).TextColor(t.TextMuted).SingleLine()
+		})
+		if row.Clicked() && !active {
 			if a.isRunning() {
-				text = trf("%d open · ↓ %s · ↑ %s", "%d 个连接 · ↓ %s · ↑ %s", a.status.Open, byteSize(a.status.Received), byteSize(a.status.Sent))
+				a.start(id)
+			} else {
+				a.showScene(id)
 			}
-			ui.Text(c, text).FontSize(12).TextColor(t.TextMuted).SingleLine()
+		}
+	}
+}
+
+// panelIfaceRows lists the interfaces with their speed now.
+func (a *App) panelIfaceRows(c *ui.Context) {
+	t := c.Theme()
+	rates := a.ifaceRates()
+	for _, i := range a.panelIfaces() {
+		ref := refOf(i)
+		ui.Row(c.Key("if-"+i.Name)).Gap(10).Padding(6, 10).Children(func() {
+			dot(c, a.colorOf(i.Name), 8, !i.Up)
+			name := ui.Text(c, a.ifaceLabel(ref)).SingleLine().Grow(1)
+			if !i.Up {
+				name.TextColor(t.TextMuted)
+			}
+			switch r, ok := rates[i.Name]; {
+			case !i.Up:
+				ui.Text(c, tr("Not connected", "未连接")).FontSize(12).TextColor(t.TextMuted)
+			case ok && a.isRunning():
+				ui.Text(c, "↓ "+rate(r[0])).FontSize(12).Font("monospace").SingleLine()
+				ui.Text(c, "↑ "+rate(r[1])).FontSize(12).Font("monospace").TextColor(t.TextMuted).SingleLine()
+			default:
+				ui.Text(c, firstOf(i.IPv4)).FontSize(12).Font("monospace").TextColor(t.TextMuted).SingleLine()
+			}
 		})
-		ui.Row(c).Gap(8).Padding(4, 4, 0).Children(func() {
-			if ui.Button(c, tr("Open Pith", "打开橘核")).Grow(1).Clicked() && a.OpenWindow != nil {
-				a.OpenWindow()
-			}
-			if ui.Button(c, tr("Quit", "退出")).Clicked() {
-				a.quit()
-			}
-		})
+	}
+}
+
+// panelFooter shows the totals, and opens the window or quits.
+func (a *App) panelFooter(c *ui.Context) {
+	t := c.Theme()
+	ui.Row(c).Gap(6).Padding(4, 10).Children(func() {
+		text := tr("Not routing", "没有在分流")
+		if a.isRunning() {
+			text = trf("%d open · ↓ %s · ↑ %s", "%d 个连接 · ↓ %s · ↑ %s", a.status.Open, byteSize(a.status.Received), byteSize(a.status.Sent))
+		}
+		ui.Text(c, text).FontSize(12).TextColor(t.TextMuted).SingleLine()
+	})
+	ui.Row(c).Gap(8).Padding(4, 4, 0).Children(func() {
+		if ui.Button(c, tr("Open Pith", "打开橘核")).Grow(1).Clicked() && a.OpenWindow != nil {
+			a.OpenWindow()
+		}
+		if ui.Button(c, tr("Quit", "退出")).Clicked() {
+			a.quit()
+		}
 	})
 }
 
@@ -161,7 +180,8 @@ func (a *App) panelIfaces() []*api.Interface {
 // ifaceRates is the speed of each interface over the last full second:
 // received, then sent.
 func (a *App) ifaceRates() map[string][2]uint64 {
-	last := a.Now().Truncate(time.Second).Add(-time.Second)
+	// The second before the one the traffic was read in: it was complete.
+	last := a.trafficAt.Truncate(time.Second).Add(-time.Second)
 	out := map[string][2]uint64{}
 	for _, s := range a.traffic.Series {
 		if s.At.Equal(last) {
@@ -182,7 +202,8 @@ func (a *App) quit() { a.Desktop.Quit() }
 // BeforeQuit stops routing as Pith quits, unless it should keep routing.
 // It waits for the backend a few seconds at most.
 func (a *App) BeforeQuit() {
-	if !a.isRunning() || a.cfg.Settings.KeepRouting {
+	active := a.isRunning() || a.status.State == api.Starting || a.busy == "start"
+	if !active || a.cfg.Settings.KeepRouting {
 		return
 	}
 	ctx, cancel := contextWithTimeout(3 * time.Second)

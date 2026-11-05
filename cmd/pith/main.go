@@ -9,6 +9,7 @@ import (
 	"context"
 	"flag"
 	"log"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -36,9 +37,17 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		s.ready(svc, *page, *language)
+		s.ready(svc, *page, *language, !*showPanel)
 		if *showPanel {
-			s.togglePanel()
+			// As a click on the icon would, once the icon is in the menu bar:
+			// activate Pith, then open the panel.
+			go func() {
+				time.Sleep(time.Second)
+				s.window.Update(func() {
+					mygo.App.Focus()
+					s.togglePanel()
+				})
+			}()
 		}
 	})
 	mygo.App.OnSecondInstance(func([]string, string) { s.showWindow() })
@@ -58,13 +67,13 @@ func main() {
 // main thread.
 type shell struct {
 	app      *pithui.App
-	panel    *mygo.Window
-	window   *mygo.Window
+	window   *mygo.Window // the main window, made hidden at launch
+	panel    *mygo.Window // the flyout under the menu bar icon, while open
 	tray     *mygo.Tray
 	quitting bool
 }
 
-func (s *shell) ready(svc service, page, language string) {
+func (s *shell) ready(svc service, page, language string, openWindow bool) {
 	s.app = pithui.New(pithui.Options{
 		Page:     page,
 		Language: language,
@@ -72,10 +81,10 @@ func (s *shell) ready(svc service, page, language string) {
 		Desktop:  desktop{},
 		Version:  version,
 		Post: func(fn func()) {
-			s.panel.Update(func() {
+			s.window.Update(func() {
 				fn()
-				if s.window != nil {
-					s.window.Invalidate()
+				if s.panel != nil {
+					s.panel.Invalidate()
 				}
 			})
 		},
@@ -85,34 +94,34 @@ func (s *shell) ready(svc service, page, language string) {
 				s.tray.SetTitle(title)
 			}
 		},
-		OpenWindow:  s.showWindow,
-		ClosePanel:  func() { s.panel.Hide() },
-		ResizePanel: func(h int) { go s.panel.SetSize(pithui.PanelWidth, h) },
+		OpenWindow: s.showWindow,
+		ClosePanel: s.closePanel,
+		ResizePanel: func(h int) {
+			if p := s.panel; p != nil {
+				go p.SetSize(pithui.PanelWidth, h)
+			}
+		},
 	})
-	s.panel = mygo.NewWindow(mygo.WindowOptions{
-		Title:             "Pith",
-		Width:             pithui.PanelWidth,
-		Height:            s.app.PanelHeight(),
-		Hidden:            true,
-		Panel:             true,
-		Frameless:         true,
-		Transparent:       true,
-		Vibrancy:          mygo.VibrancyPopover,
-		CornerRadius:      12,
-		DisableResize:     true,
-		DisableMinimize:   true,
-		DisableMaximize:   true,
-		DisableFullScreen: true,
-		AlwaysOnTop:       true,
-		SkipTaskbar:       true,
-		Content:           ui.View(s.app.PanelView),
+	// The window exists from the start, hidden: backend updates reach the
+	// interface through it whether it shows or not.
+	s.window = mygo.NewWindow(mygo.WindowOptions{
+		Title:         "橘核 Pith",
+		Width:         1040,
+		Height:        680,
+		MinWidth:      880,
+		MinHeight:     560,
+		Hidden:        true,
+		TitleBarStyle: mygo.TitleBarHidden,
+		StateKey:      "main",
+		Content:       ui.View(s.app.WindowView),
 	})
-	s.panel.OnBlur(s.panel.Hide)
-	s.panel.OnClose(func(e *mygo.CloseEvent) {
-		if !s.quitting {
-			e.PreventDefault()
-			s.panel.Hide()
+	s.window.OnClose(func(e *mygo.CloseEvent) {
+		if s.quitting {
+			return
 		}
+		e.PreventDefault()
+		s.window.Hide()
+		mygo.App.SetActivationPolicy(mygo.ActivationPolicyAccessory)
 	})
 	tray, err := mygo.NewTray(mygo.TrayOptions{
 		ID:             "pith",
@@ -126,7 +135,7 @@ func (s *shell) ready(svc service, page, language string) {
 	s.tray = tray
 	tray.OnClick(s.togglePanel)
 	tray.OnRightClick(func() {
-		s.panel.Hide()
+		s.closePanel()
 		menu := mygo.NewMenu([]*mygo.MenuItem{
 			{Label: pithui.Tr("Open Pith…", "打开橘核…"), Click: func(*mygo.MenuItem, *mygo.Window) { s.showWindow() }},
 			mygo.Separator(),
@@ -138,59 +147,51 @@ func (s *shell) ready(svc service, page, language string) {
 	})
 	mygo.App.OnWillQuit(func(*mygo.QuitEvent) { tray.Destroy() })
 	s.app.Run(context.Background())
-	if !mygo.App.WasOpenedAtLogin() {
+	if openWindow && !mygo.App.WasOpenedAtLogin() {
 		s.showWindow()
 	}
 }
 
-// togglePanel shows the panel under the menu bar icon, or hides it.
+// togglePanel opens the panel under the menu bar icon, or closes it. A
+// flyout closes by itself as the user clicks elsewhere, and a click on the
+// icon that closes it does not open it again.
 func (s *shell) togglePanel() {
-	if s.panel.IsVisible() {
-		s.panel.Hide()
+	if s.panel != nil {
+		s.panel.Close()
 		return
 	}
-	anchor := s.tray.Bounds()
-	b := s.panel.Bounds()
-	if anchor.Width > 0 {
-		area := mygo.Screen.DisplayNearestPoint(mygo.Point{X: anchor.X + anchor.Width/2, Y: anchor.Y + anchor.Height/2}).WorkArea
-		x := anchor.X + anchor.Width/2 - b.Width/2
-		y := anchor.Y + anchor.Height + 6
-		x = max(area.X+8, min(x, area.X+area.Width-b.Width-8))
-		s.panel.SetPosition(x, y)
-	} else {
-		s.panel.Center()
-	}
-	s.panel.Show()
-	s.panel.Focus()
+	p := mygo.NewFlyout(mygo.FlyoutOptions{
+		Tray:      s.tray,
+		Placement: mygo.PlacementBottom,
+		Gap:       4,
+		Width:     pithui.PanelWidth,
+		Height:    s.app.PanelHeight(),
+		Focusable: true,
+		Shadow:    true,
+		Popover:   true,
+		Content:   ui.View(s.app.PanelView),
+	})
+	s.panel = p
+	p.OnClosed(func() {
+		if s.panel == p {
+			s.panel = nil
+		}
+	})
 }
 
-// showWindow shows the main window, making it when it does not exist yet.
-// While it shows, Pith is in the Dock and the app switcher.
+func (s *shell) closePanel() {
+	if s.panel != nil {
+		s.panel.Close()
+	}
+}
+
+// showWindow shows the main window. While it shows, Pith is in the Dock
+// and the app switcher.
 func (s *shell) showWindow() {
-	if s.app == nil {
+	if s.window == nil {
 		return
 	}
-	if s.window == nil {
-		s.window = mygo.NewWindow(mygo.WindowOptions{
-			Title:         "橘核 Pith",
-			Width:         1040,
-			Height:        680,
-			MinWidth:      880,
-			MinHeight:     560,
-			TitleBarStyle: mygo.TitleBarHidden,
-			StateKey:      "main",
-			Content:       ui.View(s.app.WindowView),
-		})
-		s.window.OnClose(func(e *mygo.CloseEvent) {
-			if s.quitting {
-				return
-			}
-			e.PreventDefault()
-			s.window.Hide()
-			mygo.App.SetActivationPolicy(mygo.ActivationPolicyAccessory)
-		})
-	}
-	s.panel.Hide()
+	s.closePanel()
 	mygo.App.SetActivationPolicy(mygo.ActivationPolicyRegular)
 	s.window.Show()
 	s.window.Focus()

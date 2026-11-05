@@ -235,9 +235,11 @@ func (a *App) importBackup() {
 				if a.isRunning() {
 					a.stop()
 				}
-				a.change(func(c *api.Config) { *c = cfg })
+				// setConfig first: it also ends a configuration that could
+				// not be read, which change would refuse to save over.
 				a.setConfig(cfg)
 				a.sceneID = cfg.Selected
+				a.change(func(*api.Config) {})
 			},
 		}
 	}, nil)

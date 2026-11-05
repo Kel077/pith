@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -228,6 +229,9 @@ func (a *App) duplicateScene(id string) {
 }
 
 func (a *App) deleteScene(id string) {
+	if len(a.cfg.Scenes) < 2 || a.scene(id) == nil {
+		return // a configuration keeps one scene at least
+	}
 	if a.isRunning() && a.status.SceneID == id {
 		a.stop()
 	}
@@ -369,7 +373,10 @@ func (a *App) ruleTitle(r *api.Rule) string {
 			names = append(names, appName(app))
 		}
 		if len(r.Apps) > 2 {
-			return trf("%s and %d more", "%s 等 %d 个应用", strings.Join(names, tr(", ", "、")), len(r.Apps))
+			if zh() {
+				return fmt.Sprintf("%s 等 %d 个应用", strings.Join(names, "、"), len(r.Apps))
+			}
+			return fmt.Sprintf("%s and %d more", strings.Join(names, ", "), len(r.Apps)-2)
 		}
 		return list(names)
 	case r.Note != "":
@@ -413,7 +420,11 @@ func targetsSummary(targets []string) string {
 	}
 	text := strings.Join(shown, tr(", ", "、"))
 	if len(targets) > 2 {
-		text += trf(" and %d more", " 等 %d 个", len(targets))
+		if zh() {
+			text += fmt.Sprintf(" 等 %d 个", len(targets))
+		} else {
+			text += fmt.Sprintf(" and %d more", len(targets)-2)
+		}
 	}
 	return text
 }
@@ -436,6 +447,10 @@ func ruleIndex(s *api.Scene, id string) int {
 }
 
 func (a *App) deleteRule(sceneID, ruleID string) {
+	s := a.scene(sceneID)
+	if s == nil || ruleIndex(s, ruleID) < 0 {
+		return
+	}
 	var removed api.Rule
 	var at int
 	a.change(func(cfg *api.Config) {

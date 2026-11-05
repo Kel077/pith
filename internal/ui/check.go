@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 
 	"github.com/egoist/mygo/ui"
@@ -59,8 +60,12 @@ func (a *App) checkerView(c *ui.Context) {
 			editorRow(c, tr("Scene", "场景"), func() {
 				names := make([]string, len(a.cfg.Scenes))
 				chosen := ""
+				seen := map[string]int{}
 				for i := range a.cfg.Scenes {
 					names[i] = sceneName(&a.cfg.Scenes[i])
+					if seen[names[i]]++; seen[names[i]] > 1 {
+						names[i] += fmt.Sprintf(" (%d)", seen[names[i]]) // two scenes of one name
+					}
 					if a.cfg.Scenes[i].ID == k.sceneID {
 						chosen = names[i]
 					}

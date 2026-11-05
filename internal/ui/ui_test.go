@@ -192,7 +192,7 @@ func TestRuleEditing(t *testing.T) {
 	a.openEditor("home", -1)
 	a.editor.draft = "example.com, 10.0.0.0/8 nope!"
 	a.editor.addDraft()
-	if got := a.editor.targets; len(got) != 2 || got[0] != "example.com" || got[1] != "10.0.0.0/8" {
+	if got := a.editor.targets; len(got) != 2 || got[0] != "*.example.com" || got[1] != "10.0.0.0/8" {
 		t.Fatalf("targets %q", got)
 	}
 	if a.editor.draft != "nope!" || !a.editor.draftErr {
@@ -208,6 +208,15 @@ func TestRuleEditing(t *testing.T) {
 	got := cfg.Scenes[0].Rules
 	if len(got) != n+1 || got[0].Targets[0] != "*.example.com" || got[0].Via[0].Name != "en0" {
 		t.Errorf("saved rules %+v", got[0])
+	}
+	// Editing a rule keeps each target's subdomains as they were.
+	a.openEditor("home", 0)
+	a.editor.targets = []string{"example.com", "*.cdn.example.net"}
+	a.editor.subdomains = true
+	a.editor.draft = "example.org"
+	a.editor.addDraft()
+	if got := a.editor.prepared().Targets; len(got) != 3 || got[0] != "example.com" || got[1] != "*.cdn.example.net" || got[2] != "*.example.org" {
+		t.Errorf("targets after editing %q", got)
 	}
 	moved := move([]int{0, 1, 2, 3}, []int{3}, 0)
 	if moved[0] != 3 || moved[3] != 2 {
@@ -262,4 +271,41 @@ func ids(rules []api.Rule) []string {
 		out = append(out, r.ID)
 	}
 	return out
+}
+
+func TestTrafficBars(t *testing.T) {
+	ny, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skip(err)
+	}
+	// The week after DST ended (2026-11-01): local days are 24 or 25 hours.
+	now := time.Date(2026, 11, 4, 23, 30, 0, 0, ny)
+	week := trafficSpans[2]
+	since := week.since(now)
+	if want := time.Date(2026, 10, 29, 0, 0, 0, 0, ny); !since.Equal(want) {
+		t.Fatalf("since = %v, want %v", since, want)
+	}
+	for _, tt := range []struct {
+		at   time.Time
+		want int
+	}{
+		{time.Date(2026, 10, 28, 23, 0, 0, 0, ny), -1},
+		{since, 0},
+		{time.Date(2026, 11, 1, 23, 30, 0, 0, ny), 3}, // the 25-hour day
+		{time.Date(2026, 11, 2, 0, 30, 0, 0, ny), 4},
+		{time.Date(2026, 11, 4, 23, 0, 0, 0, ny), 6},
+		{time.Date(2026, 11, 5, 0, 0, 0, 0, ny), -1},
+	} {
+		if got := week.bar(since, tt.at); got != tt.want {
+			t.Errorf("bar(%v) = %d, want %d", tt.at, got, tt.want)
+		}
+	}
+	if got := week.barStart(since, 6).Format("01-02"); got != "11-04" {
+		t.Errorf("last bar starts %s, want 11-04", got)
+	}
+	hour := trafficSpans[0]
+	hs := hour.since(now)
+	if hour.bar(hs, hs.Add(-time.Second)) != -1 || hour.bar(hs, hs.Add(59*time.Minute+59*time.Second)) != 59 {
+		t.Error("hour bars")
+	}
 }
