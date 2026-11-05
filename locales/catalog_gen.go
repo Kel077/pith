@@ -2829,3 +2829,109 @@ func HelperPromptUninstall() string { return In(i18n.Locale()).HelperPromptUnins
 func (msgs Messages) HelperPromptUninstall() string {
 	return Catalog.Format(msgs.locale, "helperPromptUninstall", nil)
 }
+
+// ChangeHotspotIp says "Change hotspot IP"
+// in the language the app shows.
+//
+// Button on a mobile hotspot's card: the hotspot reconnects to its carrier,
+// which gives it new public addresses.
+func ChangeHotspotIp() string { return In(i18n.Locale()).ChangeHotspotIp() }
+
+// ChangeHotspotIp says "Change hotspot IP"
+// in the language of msgs.
+//
+// Button on a mobile hotspot's card: the hotspot reconnects to its carrier,
+// which gives it new public addresses.
+func (msgs Messages) ChangeHotspotIp() string {
+	return Catalog.Format(msgs.locale, "changeHotspotIp", nil)
+}
+
+// ChangingHotspotIp says "Changing…"
+// in the language the app shows.
+func ChangingHotspotIp() string { return In(i18n.Locale()).ChangingHotspotIp() }
+
+// ChangingHotspotIp says "Changing…"
+// in the language of msgs.
+func (msgs Messages) ChangingHotspotIp() string {
+	return Catalog.Format(msgs.locale, "changingHotspotIp", nil)
+}
+
+// HotspotPassword says "Hotspot admin password"
+// in the language the app shows.
+//
+// Title of the sheet that asks for a hotspot's admin password, and tooltip
+// of the lock on its card.
+func HotspotPassword() string { return In(i18n.Locale()).HotspotPassword() }
+
+// HotspotPassword says "Hotspot admin password"
+// in the language of msgs.
+//
+// Title of the sheet that asks for a hotspot's admin password, and tooltip
+// of the lock on its card.
+func (msgs Messages) HotspotPassword() string {
+	return Catalog.Format(msgs.locale, "hotspotPassword", nil)
+}
+
+// WrongPassword says "Wrong password"
+// in the language the app shows.
+func WrongPassword() string { return In(i18n.Locale()).WrongPassword() }
+
+// WrongPassword says "Wrong password"
+// in the language of msgs.
+func (msgs Messages) WrongPassword() string {
+	return Catalog.Format(msgs.locale, "wrongPassword", nil)
+}
+
+// SignalAndSnr says "Signal strength · signal-to-noise ratio"
+// in the language the app shows.
+func SignalAndSnr() string { return In(i18n.Locale()).SignalAndSnr() }
+
+// SignalAndSnr says "Signal strength · signal-to-noise ratio"
+// in the language of msgs.
+func (msgs Messages) SignalAndSnr() string {
+	return Catalog.Format(msgs.locale, "signalAndSnr", nil)
+}
+
+// IpUnchanged says "{ip} · unchanged"
+// in the language the app shows.
+//
+// After changing a hotspot's IP, when its public IP stayed the same.
+func IpUnchanged(ip string) string { return In(i18n.Locale()).IpUnchanged(ip) }
+
+// IpUnchanged says "{ip} · unchanged"
+// in the language of msgs.
+//
+// After changing a hotspot's IP, when its public IP stayed the same.
+func (msgs Messages) IpUnchanged(ip string) string {
+	return Catalog.Format(msgs.locale, "ipUnchanged", map[string]any{"ip": ip})
+}
+
+// Roaming says "Roaming"
+// in the language the app shows.
+func Roaming() string { return In(i18n.Locale()).Roaming() }
+
+// Roaming says "Roaming"
+// in the language of msgs.
+func (msgs Messages) Roaming() string {
+	return Catalog.Format(msgs.locale, "roaming", nil)
+}
+
+// PithCanTControlThisDevice says "Pith can't control this device."
+// in the language the app shows.
+func PithCanTControlThisDevice() string { return In(i18n.Locale()).PithCanTControlThisDevice() }
+
+// PithCanTControlThisDevice says "Pith can't control this device."
+// in the language of msgs.
+func (msgs Messages) PithCanTControlThisDevice() string {
+	return Catalog.Format(msgs.locale, "pithCanTControlThisDevice", nil)
+}
+
+// TheHotspotRefusedItsPassword says "The hotspot refused its admin password."
+// in the language the app shows.
+func TheHotspotRefusedItsPassword() string { return In(i18n.Locale()).TheHotspotRefusedItsPassword() }
+
+// TheHotspotRefusedItsPassword says "The hotspot refused its admin password."
+// in the language of msgs.
+func (msgs Messages) TheHotspotRefusedItsPassword() string {
+	return Catalog.Format(msgs.locale, "theHotspotRefusedItsPassword", nil)
+}

@@ -268,5 +268,14 @@
   "recognizingDomainsIsOff": "识别域名已关闭",
   "helperPromptInstall": "橘核需要你的密码来安装分流助手。",
   "helperPromptUpdate": "橘核需要你的密码来更新分流助手。",
-  "helperPromptUninstall": "橘核需要你的密码来卸载分流助手。"
+  "helperPromptUninstall": "橘核需要你的密码来卸载分流助手。",
+  "changeHotspotIp": "更换热点 IP",
+  "changingHotspotIp": "正在更换…",
+  "hotspotPassword": "热点管理密码",
+  "wrongPassword": "密码不对",
+  "signalAndSnr": "信号强度 · 信噪比",
+  "ipUnchanged": "{ip} · 没变",
+  "roaming": "漫游",
+  "pithCanTControlThisDevice": "橘核控制不了这台设备。",
+  "theHotspotRefusedItsPassword": "热点管理密码不对。"
 }

@@ -33,6 +33,8 @@ var (
 	icEraser      = icon(`<path d="m7 21-4-4L14 6l6 6-9 9H7zM20 21H11"/>`)
 	icUpload      = icon(`<path d="M12 15V4M7 9l5-5 5 5M5 20h14"/>`)
 	icDownload    = icon(`<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>`)
+	icLock        = icon(`<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>`)
+	icSwap        = icon(`<path d="M5 8h13M15 5l3 3-3 3M19 16H6M9 13l-3 3 3 3"/>`)
 	icRefresh     = icon(`<path d="M20 11a8 8 0 0 0-14.6-4.5L4 8M4 4v4h4M4 13a8 8 0 0 0 14.6 4.5L20 16M20 20v-4h-4"/>`)
 	icAlert       = icon(`<path d="M12 4 2.8 19.5h18.4z"/><path d="M12 10v4M12 17h.01"/>`)
 	icInfo        = icon(`<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 8h.01"/>`)

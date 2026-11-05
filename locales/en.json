@@ -616,5 +616,28 @@
   "helperPromptUninstall": "Pith needs your password to remove its routing helper.",
   "@helperPromptInstall": {
     "description": "What macOS's administrator password dialog says when Pith installs its helper."
-  }
+  },
+  "changeHotspotIp": "Change hotspot IP",
+  "@changeHotspotIp": {
+    "description": "Button on a mobile hotspot's card: the hotspot reconnects to its carrier, which gives it new public addresses."
+  },
+  "changingHotspotIp": "Changing…",
+  "hotspotPassword": "Hotspot admin password",
+  "@hotspotPassword": {
+    "description": "Title of the sheet that asks for a hotspot's admin password, and tooltip of the lock on its card."
+  },
+  "wrongPassword": "Wrong password",
+  "signalAndSnr": "Signal strength · signal-to-noise ratio",
+  "ipUnchanged": "{ip} · unchanged",
+  "@ipUnchanged": {
+    "description": "After changing a hotspot's IP, when its public IP stayed the same.",
+    "placeholders": {
+      "ip": {
+        "type": "String"
+      }
+    }
+  },
+  "roaming": "Roaming",
+  "pithCanTControlThisDevice": "Pith can't control this device.",
+  "theHotspotRefusedItsPassword": "The hotspot refused its admin password."
 }
