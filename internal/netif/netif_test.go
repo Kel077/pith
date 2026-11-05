@@ -43,6 +43,19 @@ func TestStoreInterfaces(t *testing.T) {
 	}
 }
 
+func TestStoreEmptyValues(t *testing.T) {
+	for _, empty := range []string{"0 : ", "0 :"} {
+		store, err := parseStore("<dictionary> {\n  State:/Network/Service/A/DNS : <dictionary> {\n    SupplementalMatchDomains : <array> {\n      " + empty + "\n      1 : example.com\n    }\n  }\n}")
+		if err != nil {
+			t.Fatalf("%q: %v", empty, err)
+		}
+		domains := store.dict("State:/Network/Service/A/DNS").array("SupplementalMatchDomains")
+		if len(domains) != 1 || domains[0] != "example.com" {
+			t.Fatalf("%q: %v", empty, domains)
+		}
+	}
+}
+
 func TestKinds(t *testing.T) {
 	for _, tt := range []struct {
 		name, label, typ string

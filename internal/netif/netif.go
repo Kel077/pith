@@ -173,6 +173,11 @@ func parseStore(data string) (scDictionary, error) {
 		}
 		key, value, ok := strings.Cut(line, " : ")
 		if !ok {
+			// An empty string prints as "key : ", which TrimSpace shortens; VPNs
+			// list one in SupplementalMatchDomains to match every domain.
+			key, ok = strings.CutSuffix(line, " :")
+		}
+		if !ok {
 			return nil, errors.New("scutil: expected key/value")
 		}
 		if value == "<dictionary> {" || value == "<array> {" {
