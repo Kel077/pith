@@ -286,6 +286,11 @@ func prepare(ctx context.Context, args []string) error {
 	fmt.Println("Capture mode:", s.captureMode())
 	if s.WebKit != nil {
 		fmt.Printf("Browser review: %d frozen A records; Private Relay status unknown. Establish direct Safari connectivity before running; active Private Relay does not meet this origin-capture prerequisite.\n", len(s.WebKit.Addresses))
+		if s.WebKit.DNSReview != nil {
+			for _, warning := range s.WebKit.DNSReview.Warnings {
+				fmt.Println("WARNING:", warning)
+			}
+		}
 	}
 	for _, skipped := range s.SkippedDNS {
 		fmt.Printf("DNS capture skipped for %s: %s\n", skipped.Address, skipped.Reason)

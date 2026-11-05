@@ -563,17 +563,27 @@ block priority and process cleanup without accessing a helper or network.
 
 ## Bounded Safari/WebKit observation
 
-The first hardware observation passed TCP smoke and performed its single open
-without an authorization prompt, but saw no new socket to the sole captured host.
-It remains `incomplete`; uninstall was clean. Multiple DNS answers and Private
-Relay were possible causes, not proven diagnoses. The expanded preparation below
-has synthetic coverage and still needs hardware acceptance.
+**Hardware result:** the coordinator reported TCP smoke and delegated Safari/
+WebKit socket and exit routing passed using `5a60671`, with one explicit
+LaunchServices open to a stable IPv4-only endpoint and Private Relay disabled by
+the user. The destination was recorded by its frozen ordinal; page-body content
+was not automatically verified. There were no authorization prompts and uninstall
+was clean. Earlier runs remained incomplete: even freezing every A record in an
+answer missed later answers from a larger rotating CDN pool.
+
+The multi-host startup also exposed a RIB `ENOMEM` size/copy race. Extra buffer
+headroom and bounded sysctl retries now tolerate growth; ownership observation
+retries for up to two seconds, while a readable ownership fault still stops
+immediately. Hardware TCP smoke then activated all frozen hosts successfully.
 
 Add `--webkit-app '<absolute Safari .app path>'` to a new `host-ipv4`
 preparation. It resolves the app's canonical path, requires the Safari identifier,
 and freezes its Info.plist/executable hashes and one nonce-bearing HTTPS URL in
-`webkit-plan.json`. One system-resolver IPv4 lookup, limited to five seconds,
-freezes every distinct A record in that answer as a `/32`, sorted numerically.
+`webkit-plan.json`. The first system-resolver IPv4 answer freezes every distinct
+A record as a `/32`, sorted numerically. Two additional A queries compare sets,
+and one AAAA query checks for an IPv6 alternative, all within the same five-second
+lookup deadline. Warnings are printed and retained in the private review plan.
+These advisory queries never expand the frozen first answer.
 All addresses must be public, and the separately reviewed TLS target must be in
 the set. Empty, unsafe or oversized results fail preparation. The whole scoped
 installation, including any other optional stage, may contain at most 16 hosts.
@@ -581,6 +591,13 @@ Review every frozen host before installation. No browser runs during preparation
 Later commands never resolve again or add new records automatically; preparing a
 different answer requires a new reviewed installation. This is the current
 resolver answer, not a promise to enumerate every address a CDN may return later.
+
+Select a small stable A-record set and **no AAAA records**. Safari may prefer an
+available IPv6 destination, bypassing this IPv4-only capture. Rotating subsets of
+a large CDN address pool are unsuitable. Any set-change, comparison failure,
+AAAA result or unknown AAAA status needs review before running; choose a suitable
+endpoint rather than retrying navigation or widening scope. Short or cached DNS
+samples cannot establish future stability even when no warning appears.
 
 Private Relay is a direct-connect prerequisite, not a tested capability of this
 origin-only scope. No documented, reliable read-only per-Safari-navigation status

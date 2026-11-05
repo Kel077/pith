@@ -26,13 +26,22 @@ import (
 )
 
 type webkitPlan struct {
-	App              api.AppRef `json:"app"`
-	Executable       string     `json:"executable"`
-	ExecutableSHA256 string     `json:"executableSHA256"`
-	PlistSHA256      string     `json:"plistSHA256"`
-	Nonce            string     `json:"navigationNonce"`
-	Addresses        []string   `json:"frozenARecords"`
-	ResolvedAt       time.Time  `json:"resolvedAt"`
+	App              api.AppRef       `json:"app"`
+	Executable       string           `json:"executable"`
+	ExecutableSHA256 string           `json:"executableSHA256"`
+	PlistSHA256      string           `json:"plistSHA256"`
+	Nonce            string           `json:"navigationNonce"`
+	Addresses        []string         `json:"frozenARecords"`
+	ResolvedAt       time.Time        `json:"resolvedAt"`
+	DNSReview        *webkitDNSReview `json:"dnsReview,omitempty"`
+}
+
+type webkitDNSReview struct {
+	AQueries  int      `json:"aQueries"`
+	StableA   bool     `json:"stableA"`
+	AAAAKnown bool     `json:"aaaaKnown"`
+	AAAACount int      `json:"aaaaCount"`
+	Warnings  []string `json:"warnings,omitempty"`
 }
 
 type webkitResolver func(context.Context, string, string) ([]netip.Addr, error)
@@ -78,6 +87,7 @@ func (s *session) freezeWebKit(ctx context.Context, path string, resolve webkitR
 	for _, addr := range ordered {
 		plan.Addresses = append(plan.Addresses, addr.String())
 	}
+	plan.DNSReview = reviewWebKitDNS(ctx, s.ServerName, ordered, resolve)
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return err
@@ -85,6 +95,55 @@ func (s *session) freezeWebKit(ctx context.Context, path string, resolve webkitR
 	plan.Nonce, plan.ResolvedAt = hex.EncodeToString(nonce[:]), time.Now()
 	s.WebKit = plan
 	return nil
+}
+
+// Three IPv4 samples including the frozen answer, plus one IPv6 query, share the
+// preparation lookup deadline. Cached answers and a short sample cannot prove
+// future stability. A different answer is a warning, never scope expansion.
+func reviewWebKitDNS(ctx context.Context, name string, frozen []netip.Addr, resolve webkitResolver) *webkitDNSReview {
+	r := &webkitDNSReview{AQueries: 1, StableA: true}
+	for range 2 {
+		r.AQueries++
+		addresses, err := resolve(ctx, "ip4", name)
+		if err != nil {
+			r.StableA = false
+			continue
+		}
+		addresses = slices.Clone(addresses)
+		for i := range addresses {
+			addresses[i] = addresses[i].Unmap()
+		}
+		slices.SortFunc(addresses, netip.Addr.Compare)
+		if !slices.Equal(slices.Compact(addresses), frozen) {
+			r.StableA = false
+		}
+	}
+	if !r.StableA {
+		r.Warnings = append(r.Warnings, "Browser A records changed or could not be compared across three bounded queries; choose a small stable endpoint, not a rotating CDN subset.")
+	}
+	addresses, err := resolve(ctx, "ip6", name)
+	var dnsError *net.DNSError
+	if err == nil {
+		r.AAAAKnown = true
+		unique := map[netip.Addr]bool{}
+		for _, addr := range addresses {
+			if !addr.Is6() || addr.Is4In6() {
+				r.AAAAKnown = false
+				continue
+			}
+			unique[addr] = true
+		}
+		r.AAAACount = len(unique)
+	} else if errors.As(err, &dnsError) && dnsError.IsNotFound {
+		r.AAAAKnown = true // No IPv6 records, as distinct from a resolver timeout.
+	}
+	if !r.AAAAKnown {
+		r.Warnings = append(r.Warnings, "Browser AAAA availability is unknown; verify that the endpoint has no AAAA records before this IPv4-only observation.")
+	}
+	if r.AAAACount > 0 {
+		r.Warnings = append(r.Warnings, "Browser endpoint has AAAA records; Safari may select IPv6 outside this IPv4-only capture. Choose an endpoint without AAAA records.")
+	}
+	return r
 }
 
 func (s *session) validateWebKit() error {
@@ -229,7 +288,8 @@ func (s *session) webkitPlanBytes() ([]byte, error) {
 		Notes      []string    `json:"notes"`
 	}{s.WebKit, s.Target, s.webkitURL(), 60, []string{
 		"After READY, the coordinator navigates once manually, or explicit --webkit-open invokes /usr/bin/open -a with only the frozen app and URL once. No retries, AppleScript, window/tab control or browser termination. The coordinator closes only the test tab afterward.",
-		"Preparation freezes all current A records as distinct /32 routes, with at most 16 total scoped hosts. No later DNS override or scope expansion. New DNS answers, IPv6, pooled sockets or short-lived PCBs can make observation incomplete.",
+		"Preparation freezes the first complete A-record answer as distinct /32 routes, with at most 16 total scoped hosts. Two further A queries and one AAAA query share the five-second lookup bound and supply warnings only; no later DNS override or scope expansion.",
+		"Use a small stable A-record set and no AAAA records. A CDN that rotates subsets of a larger pool is unsuitable; short repeated/cacheable DNS samples cannot prove future stability. IPv6, new DNS answers, pooled sockets or short-lived PCBs can make observation incomplete.",
 		"Private Relay status is unknown: no documented reliable per-navigation read-only detector is used. The coordinator must establish a direct-connection prerequisite before running; active relay traffic will not reach these origin /32 routes.",
 		"Observe a fresh exact TCP/UDP tuple, then independently read its owner/effective PID and executable through the existing unprivileged PCB/process resolver. A process-name match alone is never delegation proof.",
 		"Only socket delegation and routing are checked automatically. The HTTP status/body/navigation nonce inside TLS require separate manual page evidence; background URLSession is skipped.",
@@ -274,6 +334,7 @@ func (s *session) reviewedWebKitPlan() error {
 	}
 	current.Nonce = s.WebKit.Nonce
 	current.Addresses, current.ResolvedAt = s.WebKit.Addresses, s.WebKit.ResolvedAt
+	current.DNSReview = s.WebKit.DNSReview
 	if !reflect.DeepEqual(current, s.WebKit) {
 		return errors.New("reviewed browser app or executable changed")
 	}

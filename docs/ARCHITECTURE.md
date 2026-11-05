@@ -36,7 +36,8 @@ identity. App matching does not depend on visibility of the inner destination:
 for a captured socket that XNU attributes/delegates to Safari, ordinary app-only
 rules still choose its exit. A shared/system-owned relay socket without Safari
 delegation cannot be relabeled heuristically; it follows its actual attribution.
-This behavior is distinct from the pending Safari hardware acceptance.
+The separate Safari hardware observation used direct connectivity with Private
+Relay disabled; it does not verify this relay case.
 
 The scoped browser harness captures only the frozen origin A records, not Apple
 relay endpoints. Active Private Relay therefore does not meet that test's

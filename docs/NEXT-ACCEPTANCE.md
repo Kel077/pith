@@ -12,15 +12,33 @@ is recorded below. The external-change flag cannot widen an installation.
 The scoped UDP/DNS extension has passed hardware acceptance with its separate
 one-query smoke gate and bounded batch, as recorded below. The scoped QUIC/HTTP/3
 harness has also passed its reviewed hardware subset after the UDP lifetime fix.
-The disposable app-bundle subset has also passed hardware acceptance. Delegated
-Safari observation is implemented separately with a manual trigger or an explicit
-single LaunchServices open. The first hardware run was incomplete with clean
-uninstall: no new socket reached the single captured address. Preparation now
-freezes all current A records (at most 16 scoped hosts); the direct-connection
-prerequisite excludes Private Relay. Its status is unknown because no reliable
-read-only per-navigation detector was established. Expanded hardware acceptance
-remains pending. Throughput still
-needs the bounded extension described below.
+The disposable app-bundle subset and separate delegated Safari observation have
+also passed hardware acceptance. Safari used one explicit LaunchServices open
+to a stable IPv4-only endpoint, with Private Relay disabled by the user. This
+proves fresh kernel delegation and the selected exit, not automatic page-body
+verification or Private Relay support. Throughput still needs the bounded
+extension described below.
+
+## Recorded Safari hardware acceptance
+
+The coordinator reported a successful scoped Safari/WebKit observation using
+`5a60671`: TCP smoke and independent delegated socket/exit evidence passed,
+without an authorization dialog; uninstall was clean. The actual frozen target
+was identified by ordinal. The page body was not automatically verified.
+
+Earlier incomplete observations showed why endpoint selection matters: freezing
+all addresses in one DNS answer cannot cover a CDN that returns rotating subsets
+of a larger address pool. Choose a small stable A-record set and **no AAAA
+records**; Safari may select IPv6, which is outside the IPv4 host capture. The
+bounded prepare preflight now compares three A answers and queries AAAA once,
+retaining warnings without widening capture. Short or cached DNS samples cannot
+guarantee later stability; the coordinator still reviews this prerequisite.
+
+The multi-host startup also exposed an `ENOMEM` RIB size/copy race. Padded,
+bounded read retries and a separate ownership-observation window fixed it;
+the subsequent hardware TCP smoke activated all reviewed hosts successfully.
+This result does not establish background URLSession, Private Relay, full-capture
+VPN rebuilding, or throughput performance.
 
 ## Recorded application bundle hardware acceptance
 
@@ -171,7 +189,7 @@ to obtain a pass. Preserve failures and independent cleanup evidence separately.
 | UDP and DNS | Passed the reviewed two-resolver IPv4 hardware subset. One-query smoke, then at most 11/20 queries for one/two resolvers; two-second response deadlines, no retries or TCP fallback. | Match DNS IDs/questions and exact application tuple/PID/path against helper records, including rule/interface/outcome and payload counters. Check A/AAAA, stable pre-NAT source tuples, hot reload, block/fallback, reuse and replacement after the ten-second DNS idle timeout. Record TTLs without dialing answer addresses or widening capture. | Cache expiry, ordinary UDP's two-minute idle timeout, pre-existing connected UDP and unconnected listeners remain separate gaps. The latter has a known source-port limitation. Silent-peer timeout does not prove automatic interface failover; DNS replies cannot prove public NAT ports. |
 | QUIC | Passed the reviewed IPv4 hardware subset: one frozen `/32`, one HTTP/3 smoke request through A, then three sequential cases; ten seconds per exchange, bounded socket payload and packet counts. | Require verified TLS/ALPN and a real HTTP/3 response, exact UDP process/tuple/rule/interface/name records and counters. Test domain routing with observable SNI, IP routing through B, then IP routing through A with a fragmented ClientHello that lacks recoverable first-datagram SNI. | The fragmented control is not ECH or multi-packet name recovery. No redirects, application retries, TCP fallback, unreviewed destination or plaintext/packet logging. Stop and verify routes/tunnel. See the [QUIC procedure](ROOT-TEST.md#bounded-quichttp3-stage). |
 | App bundle and helpers | Passed the reviewed hardware subset: one main-executable smoke request, then six nested/helper/control cases to the existing host, each with an eight-second deadline. | Correlate spawned PID, executable, exact application tuple, outer bundle path/identifier, rule/outcome/interface and bytes. Exercise path and identifier matching independently, then block priority and the outside control. | Children were reaped, private fixtures removed and uninstall restored the baseline. See the [bundle procedure](ROOT-TEST.md#disposable-application-bundle-stage). This does not establish XPC activation or delegated sockets. |
-| Safari/WebKit delegation | Implemented, hardware pending: `prepare --webkit-app` freezes Safari metadata/executable, the existing endpoint URL and all A records in one bounded resolver answer (at most 16 scoped hosts). After TCP smoke, `check --webkit 45s` waits for one manual navigation; explicit `--webkit-open` opens that URL once after READY via LaunchServices. At most 60 seconds. | Independently correlate a fresh exact PCB tuple, owner and delegated PID, effective Safari executable/bundle, helper process/app/rule/interface, outbound tuple and bidirectional bytes. No new capture prefixes or DNS overrides. | Missing/new-address/reused/short-lived socket evidence is incomplete, with no retry or capture widening. Automatic pass proves delegation and exit only, not page content. No AppleScript, window/tab control or browser termination. See the [Safari procedure](ROOT-TEST.md#bounded-safariwebkit-observation); background URLSession is skipped. |
+| Safari/WebKit delegation | Scoped hardware subset passed; repeat with a stable IPv4-only endpoint: `prepare --webkit-app` freezes Safari metadata/executable, the existing endpoint URL and all A records in one bounded resolver answer (at most 16 scoped hosts). After TCP smoke, `check --webkit 45s` waits for one manual navigation; explicit `--webkit-open` opens that URL once after READY via LaunchServices. At most 60 seconds. | Independently correlate a fresh exact PCB tuple, owner and delegated PID, effective Safari executable/bundle, helper process/app/rule/interface, outbound tuple and bidirectional bytes. No new capture prefixes or DNS overrides. | Missing/new-address/reused/short-lived socket evidence is incomplete, with no retry or capture widening. Automatic pass proves delegation and exit only, not page content. No AppleScript, window/tab control or browser termination. See the [Safari procedure](ROOT-TEST.md#bounded-safariwebkit-observation); background URLSession is skipped. |
 | Throughput | A permitted dedicated endpoint and finite transfer budget; direct bound baseline first, then Pith on the same adapter. Use 5-second warmup and at most three 15-second samples per direction; cap total transferred bytes in the reviewed plan. | Measure server/client payload bytes and elapsed time independently of Pith counters; record CPU, memory, log volume, connection count and idle CPU after completion. Compare a rule-heavy scene separately from the minimal scene. | Claim the 500 Mbps target only if the direct link/server baseline can support it and sustained observed payload throughput meets it. Otherwise record a bottleneck or inconclusive target. Do not use an unrelated public speed service without permission or create an unlimited generator. |
 | Full IPv4 extensions after scoped stages | The core TCP and cleanup cases above have passed. DNS, mixed-protocol and VPN extensions still need separate approval and a helper-enforced lease of at most 120 seconds; one ordinary TCP request first, then a small bounded batch. Use the eight IPv4 split prefixes above; do not enable IPv6 capture in this stage. | Review all intended LAN-DNS host routes as well as every split prefix. Retain the TCP regression checks, and separately verify real observed DNS answers, mixed protocols and the selected VPN/tailnet/MagicDNS controls without scanning peers. | Prove each asserted flow crossed Pith and reached the expected external path. Stop on lost ordinary connectivity, routing loops, unexpected destination scope, conflicting ownership, or changed VPN state. After Stop and optional separately approved helper crash, verify no Pith split prefix, DNS host route or utun remains, and unrelated paths still work. |
 

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -32,7 +33,10 @@ func webkitFixture(t *testing.T) (*session, *proofService, api.Config, api.Conne
 	if err := os.WriteFile(filepath.Join(app, "Contents", "Info.plist"), metadata, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.freezeWebKit(context.Background(), app, func(context.Context, string, string) ([]netip.Addr, error) {
+	if err := s.freezeWebKit(context.Background(), app, func(_ context.Context, network, _ string) ([]netip.Addr, error) {
+		if network == "ip6" {
+			return nil, nil
+		}
 		return []netip.Addr{netip.MustParseAddr("192.0.2.20")}, nil
 	}); err != nil {
 		t.Fatal(err)
@@ -306,8 +310,11 @@ func TestWebKitFreezesEveryARecordAndObservesItsOrdinal(t *testing.T) {
 	if err := s.freezeWebKit(context.Background(), s.WebKit.App.Path, func(ctx context.Context, network, host string) ([]netip.Addr, error) {
 		calls++
 		deadline, ok := ctx.Deadline()
-		if network != "ip4" || host != "example.com" || !ok || time.Until(deadline) > 5*time.Second {
+		if (network != "ip4" && network != "ip6") || host != "example.com" || !ok || time.Until(deadline) > 5*time.Second {
 			t.Fatal("unbounded or incorrect lookup")
+		}
+		if network == "ip6" {
+			return nil, nil
 		}
 		return []netip.Addr{netip.MustParseAddr("192.0.2.21"), netip.MustParseAddr("192.0.2.20"), netip.MustParseAddr("192.0.2.21")}, nil
 	}); err != nil {
@@ -336,11 +343,54 @@ func TestWebKitFreezesEveryARecordAndObservesItsOrdinal(t *testing.T) {
 	if err := runWebKitCheck(context.Background(), s, c, cfg, status, &report, time.Second, false, deps); err != nil {
 		t.Fatal(err)
 	}
-	if calls != 1 || report.WebKit.TargetIndex != 2 || report.WebKit.Connection.Remote != "" || report.WebKit.PCB.Socket.Remote.IsValid() || len(c.saved[0].Scenes[0].Rules[0].Targets) != 2 {
+	if calls != 4 || report.WebKit.TargetIndex != 2 || report.WebKit.Connection.Remote != "" || report.WebKit.PCB.Socket.Remote.IsValid() || len(c.saved[0].Scenes[0].Rules[0].Targets) != 2 {
 		t.Fatal("ordinal or frozen policy mismatch", calls, report.WebKit)
 	}
 	if s.webkitTargetIndex("192.0.2.21:8443") != 0 || s.webkitTargetIndex("192.0.2.22:443") != 0 {
 		t.Fatal("unfrozen destination admitted")
+	}
+}
+
+func TestWebKitDNSPreflightWarnsWithoutExpandingFrozenScope(t *testing.T) {
+	for _, mode := range []string{"stable", "rotation", "lookup-error", "ipv6", "ipv6-unknown", "no-aaaa"} {
+		t.Run(mode, func(t *testing.T) {
+			s, _, _, _, _ := webkitFixture(t)
+			calls := 0
+			err := s.freezeWebKit(context.Background(), s.WebKit.App.Path, func(_ context.Context, network, _ string) ([]netip.Addr, error) {
+				calls++
+				if network == "ip6" {
+					switch mode {
+					case "ipv6":
+						return []netip.Addr{netip.MustParseAddr("2001:db8::1")}, nil
+					case "ipv6-unknown":
+						return nil, &net.DNSError{IsTimeout: true}
+					case "no-aaaa":
+						return nil, &net.DNSError{IsNotFound: true}
+					}
+					return nil, nil
+				}
+				if calls > 1 && mode == "lookup-error" {
+					return nil, errors.New("synthetic DNS failure")
+				}
+				if calls > 1 && mode == "rotation" {
+					return []netip.Addr{netip.MustParseAddr("192.0.2.21")}, nil
+				}
+				return []netip.Addr{netip.MustParseAddr("192.0.2.20")}, nil
+			})
+			if err != nil || calls != 4 || len(s.WebKit.Addresses) != 1 || s.WebKit.Addresses[0] != "192.0.2.20" {
+				t.Fatal(err, calls, s.WebKit)
+			}
+			warn := mode != "stable" && mode != "no-aaaa"
+			if (len(s.WebKit.DNSReview.Warnings) > 0) != warn {
+				t.Fatal(mode, s.WebKit.DNSReview)
+			}
+			if err := s.writeWebKitPlan(); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.reviewedWebKitPlan(); err != nil {
+				t.Fatal("DNS evidence broke immutable app review", err)
+			}
+		})
 	}
 }
 
