@@ -23,9 +23,12 @@ copy them into repository files. The endpoint must support certificate-verified
 TLS and HTTP/1.1 `GET /`, respond within eight seconds, and tolerate several
 short requests. A small plain-text public-IP echo is preferable: it supplies
 independent evidence of the observed public exit. A generic HTTPS endpoint is
-also accepted, but then the actual-interface evidence is the helper's log and
-the preflight bound socket. When both interfaces share the same public exit,
-an IP echo cannot distinguish them. Record that limitation.
+also accepted for the ordinary smoke checks, but then the actual-interface
+evidence is the helper's log and the preflight bound socket. The optional
+`--app-bypass` check requires public-IP echoes from both the ordinary system
+preflight and interface A. Missing echoes make that check inconclusive. When
+both interfaces share the same public exit, an IP echo cannot distinguish
+them; the report records this limitation even when routing assertions pass.
 
 Do not use a production host whose existing connections must remain entirely
 untouched. Select a dedicated test destination. Do not select a LAN, loopback,
@@ -103,6 +106,7 @@ commands on the same session are refused by an advisory lock.
 | 2. Installation | `"$PITH_TEST_BIN/rootcheck" install --session "$PITH_SESSION"` | Same install prompt; enter the administrator password. Creates the root-owned helper and launchd plist/data directory; the daemon creates its authenticated socket. It starts idle. | Version and executable checksum match; plist arguments contain only the reviewed host captures; engine is stopped; routes and utun inventory match the original snapshot. Undo is step 9 or emergency cleanup. |
 | 3. One smoke check | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION"` | No dialog. Saves only a temporary config, starts the scoped utun with SafeStart, requests HTTPS through ordinary system routing, then hot-applies an IP rule for interface A. | SafeStart succeeds; both logged flows belong to this test process; outcome, rule, interface, bidirectional byte counts, and live traffic are correct. `Stop` restores routes and utun inventory before the command returns. Only a successful smoke check unlocks later cases. |
 | 4. Rule batch | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --batch` | No dialog. Starts a fresh bounded capture and changes only the test scene. | Verifies interface B, TLS SNI domain matching, the second target of one rule, block priority over an earlier route, missing-interface fallback, explicit system fallback, and strict unreachable. Opens TLS on A, changes the rule to B, completes the same connection on A, then verifies a new connection on B. The capture start timestamp stays unchanged during hot reload. Ends stopped. |
+| 4a. Optional app-specific routing | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --app-bypass` | No dialog. Requires a passed smoke check and public-IP preflight evidence. Uses the current standalone `rootcheck` executable path as the app/tool identity, and creates a checksum-verified copy at a different path inside the private session directory. Each controlled child makes exactly one ordinary TLS request to the same frozen target. No helper installation, capture expansion, or VPN setting change occurs. | The parent matches app+IP and then app+domain rules through physical interface A. Under each rule, the different executable remains unmatched and uses the saved system route. A final app block after the route rule wins. Every case checks PID, executable/app path, destination, rule, outcome, interface, and byte counts; successful requests must match the physical or system public-IP preflight. Children are acknowledged and waited for on every outcome, their copy is removed, and routing ends stopped. Identical public exits do not prove a distinct exit-node bypass. |
 | 5. Native TCP preservation | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --preserve` | No dialog. Establishes an ordinary TLS connection **before** capture, starts capture, then sends HTTP over that same native connection. | The pre-existing kernel connection survives route activation and receives a verified HTTPS response. This flow is not claimed as a new proxied/logged connection. Ends stopped. A server that closes idle TLS before the request makes this case inconclusive; do not count it as a pass. |
 | 6. SafeStart rollback | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --safe-failure` | No dialog. Starts with a block rule for the exact SafeStart destination and SafeStart enabled. | `Start` returns `ErrNetworkLost`; status reports the same failure; routes/utun are restored. Cleanup calls `Stop` so the next command sees an idle helper. |
 | 7. Optional observation | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --observe 90s` | No dialog. Runs the smoke checks, then holds the reviewed host capture for at most 90 seconds. See the manual cases below. | The harness records an observation window, not a pass for an unimplemented manual assertion. It polls helper status and stops on interruption, failure, or expiry. |
@@ -203,34 +207,50 @@ baseline. Do not edit `original.json` or bypass those checks. These are several
 explicitly approved phases of one coordinated window, not permission to leave
 the helper installed for a later unattended session.
 
-The stock smoke and batch checks can be repeated within each mode. They do
-not set an app filter, assert tailnet reachability, or operate Tailscale. The
-additional app-specific checks below require a reviewed temporary authenticated
-caller that uses `api.Service`, the same temporary config location, bounded
-requests, and unconditional `Stop` cleanup. Prepare its exact rules and actions
-before requesting approval for that phase. Until that caller is ready, record
-these checks as **pending**, even if the stock batch passes. Do not use the
-normal application config as a shortcut.
+The smoke and batch checks can be repeated within each mode. After the smoke
+check passes, the app-specific caller is built into the same harness:
+
+```sh
+"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --app-bypass
+```
+
+This command uses `api.Service` and the existing temporary config location.
+It sets an app filter for the current standalone test executable, routes its
+new connections through physical interface A, and runs an unmatched control
+from a different executable path under the session directory. The checksum
+and copied path are recorded in the private report. The internal `_request`
+subcommand only reads the frozen session and makes one TLS request; it does
+not construct a client, call IPC, acquire the parent's session lock, or change
+configuration. Its independent deadline is 25 seconds. The parent gives each
+child at most 30 seconds, verifies its actual spawned PID and reported target,
+keeps it alive while checking attribution, then closes its input and waits for
+exit on success or failure. The copied executable is removed after use.
+
+The whole check retains the three-minute limit and unconditional Stop cleanup.
+No normal application config is used, no target or capture scope is added,
+and no Tailscale setting is changed. It proves command-line tool identity;
+bundle/helper/delegated-process attribution remains a separate manual case.
+Tailnet reachability and MagicDNS before/during/after comparisons still need
+the bounded manual control requests described above.
 
 | Phase | Additional dialogs and changes | Pass, fail, or inconclusive | Undo |
 | --- | --- | --- | --- |
 | No exit node | The user selects no exit node in the existing Tailscale UI, only if this was explicitly approved. No new Pith dialog is required for this selection. Any Tailscale/macOS dialog is version-dependent: record its actual wording and obtain approval before accepting it. A fresh helper phase repeats the exact cancel/install/remove prompts listed above. | The chosen tailnet service and MagicDNS lookup work before capture, during a Pith route/block case for the separate public test host, and after Stop. Unmatched public traffic retains the saved system route for this mode. Existing Tailscale routes and its tunnel are unchanged by Pith; Pith selects an unused tunnel address without conflicting with existing interface addresses or tunnel/subnet routes. A failed preflight makes the connectivity case inconclusive. | Stop and uninstall Pith against this phase's baseline. The user restores the original Tailscale mode, or explicitly selects the next approved mode. Pith does not disconnect Tailscale. |
-| Approved exit node | The user selects the already authorized exit node while Pith is stopped. This changes Tailscale's routing behavior; record a new baseline, including its public exit and tailnet/MagicDNS results. Extra VPN/OS prompts need their actual wording reviewed. A fresh helper phase adds the same cancel/install/remove dialogs as above. | First verify unmatched traffic to the captured public test host still uses the exit node. Then verify one selected test app bypasses it through the chosen physical interface under an app-and-IP rule and, separately, an app-and-domain rule. A second controlled app that does not match the app filter must still use the exit node. A matching block rule must prevent the new test connection even when a route rule also matches. Tailnet and MagicDNS behavior remain consistent with the preflight throughout. | Stop and uninstall Pith, verifying that the exit-node routes/tunnel and tailnet service still work. The user restores the initial exit-node choice and DNS preferences recorded before the window. Never remove Tailscale routes as cleanup. |
+| Approved exit node | The user selects the already authorized exit node while Pith is stopped. This changes Tailscale's routing behavior; record a new baseline, including its public exit and tailnet/MagicDNS results. Extra VPN/OS prompts need their actual wording reviewed. A fresh helper phase adds the same cancel/install/remove dialogs as above; `--app-bypass` itself adds no dialog. | First verify unmatched traffic to the captured public test host still uses the exit node. Run `--app-bypass`: the main test executable must use the chosen physical interface under app+IP and app+domain rules, while its different-path child remains unmatched and uses the exit node. The final matching block must prevent the parent's new connection even when a route rule also matches. Require captured-flow evidence and the expected physical versus system public-IP echoes; if the echoes cannot distinguish exits, record bypass as inconclusive. Tailnet and MagicDNS behavior remain consistent with the preflight throughout. | Stop and uninstall Pith, verifying that the exit-node routes/tunnel and tailnet service still work. The user restores the initial exit-node choice and DNS preferences recorded before the window. Never remove Tailscale routes as cleanup. |
 | Stop and optional deliberate helper crash in either mode | Normal Stop adds no dialog. A crash test is optional and uses exactly the separate crash authorization command and prompt documented above; it must be explicitly included in that mode's approval. | Pith's capture routes and utun disappear, the pre-existing Tailscale tunnel and route ownership remain intact, and the selected tailnet service, MagicDNS lookup, and public-route behavior still match that mode's baseline. A launchd restart of Pith must be idle. An observation failure caused by the intentional crash is expected; record the crash assertions separately rather than calling the normal smoke check a pass. | Use the reviewed Pith-only emergency command if necessary, then uninstall. Do not restart, kill, or reconfigure Tailscale to hide a cleanup failure. |
 
-For the app-bypass case, keep every request pinned to the **already reviewed
-captured IPv4 host** while preserving the TLS name, using a per-request mapping
-supported by the selected test app. Do not edit `/etc/hosts`, disable system
-DNS, or expand capture. Save one temporary app-specific IP rule, make one new
-connection, then hot-apply the corresponding domain rule and make one new
-connection. Record the matched app/process, rule, outcome, and actual interface
-for each. Compare the endpoint's public-IP echo with both the physical-interface
-preflight and the exit-node preflight. If those echoes are identical or rotate,
-the echo alone cannot prove a bypass; record the evidence limitation. Test the
-unmatched control with the same captured destination and a different reviewed
-app/process so an uncaptured destination cannot masquerade as successful
-system fallback. Finish with a matching block rule after the route rule in
-the list and require a blocked log entry and failed new connection.
+Every `--app-bypass` request connects directly to the **already reviewed
+captured IPv4 host**, while preserving the TLS server name. It does not edit
+`/etc/hosts`, change DNS, follow redirects, or add another destination. The
+temporary app-specific IP rule is tested first with the parent and then its
+unmatched child; the corresponding domain rule is hot-applied and tested with
+both identities. The final rule set contains the domain route followed by a
+matching app/domain block, and requires a blocked log entry and failed new
+parent connection. The capture's start timestamp must remain unchanged.
+Reports retain the request PID/path/target alongside the observed connection
+and public-IP echo, so a different process or uncaptured destination cannot
+masquerade as successful system fallback. Rotating exit addresses or changing
+VPN state require review of the failed comparison, not an automatic retry.
 
 For every public-target assertion, first establish that the request actually
 entered Pith: its new connection record must identify the intended process,

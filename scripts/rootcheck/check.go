@@ -25,6 +25,7 @@ type checkOptions struct {
 	batch       bool
 	safeFailure bool
 	preserve    bool
+	appBypass   bool
 	observe     time.Duration
 }
 
@@ -40,11 +41,14 @@ type preflight struct {
 }
 
 type checkCase struct {
-	Name       string         `json:"name"`
-	Connection api.Connection `json:"connection"`
-	TLS        tlsEvidence    `json:"tls"`
-	ExpectedIP string         `json:"expectedPublicIP,omitempty"`
-	Error      string         `json:"error,omitempty"`
+	Name          string         `json:"name"`
+	Connection    api.Connection `json:"connection"`
+	TLS           tlsEvidence    `json:"tls"`
+	ExpectedIP    string         `json:"expectedPublicIP,omitempty"`
+	RequestPID    int            `json:"requestPID,omitempty"`
+	RequestPath   string         `json:"requestExecutable,omitempty"`
+	RequestTarget string         `json:"requestTarget,omitempty"`
+	Error         string         `json:"error,omitempty"`
 }
 
 type checkReport struct {
@@ -60,6 +64,7 @@ type checkReport struct {
 	StopError   string      `json:"stopError,omitempty"`
 	Restored    bool        `json:"restored"`
 	Observation bool        `json:"manualObservationOnly"`
+	Notes       []string    `json:"notes,omitempty"`
 }
 
 func check(parent context.Context, s *session, c api.Service, opts checkOptions) (resultErr error) {
@@ -67,16 +72,21 @@ func check(parent context.Context, s *session, c api.Service, opts checkOptions)
 		return errors.New("check requires this session's successful cancellation and scoped installation")
 	}
 	choices := 0
-	for _, selected := range []bool{opts.batch, opts.safeFailure, opts.preserve, opts.observe != 0} {
+	for _, selected := range []bool{opts.batch, opts.safeFailure, opts.preserve, opts.appBypass, opts.observe != 0} {
 		if selected {
 			choices++
 		}
 	}
 	if choices > 1 || opts.observe < 0 || opts.observe > 90*time.Second {
-		return errors.New("choose at most one of --batch, --safe-failure, --preserve, or --observe with a duration in (0,90s]")
+		return errors.New("choose at most one of --batch, --safe-failure, --preserve, --app-bypass, or --observe with a duration in (0,90s]")
 	}
 	if choices != 0 && !s.SmokePassed {
 		return errors.New("run the default smoke check successfully before additional checks")
+	}
+	if opts.appBypass {
+		if err := appBypassPreflight(s); err != nil {
+			return err
+		}
 	}
 	if err := s.verifyInstalled(); err != nil {
 		return err
@@ -94,6 +104,8 @@ func check(parent context.Context, s *session, c api.Service, opts checkOptions)
 		report.Mode = "safe-failure"
 	} else if opts.preserve {
 		report.Mode = "preserve"
+	} else if opts.appBypass {
+		report.Mode = "app-bypass"
 	} else if opts.observe > 0 {
 		report.Mode, report.Observation = "observe", true
 	}
@@ -268,6 +280,9 @@ func check(parent context.Context, s *session, c api.Service, opts checkOptions)
 		})
 		if err == nil && expectSuccess {
 			entry.ExpectedIP = s.baselineIP(iface)
+			if outcome == api.System {
+				entry.ExpectedIP = s.baselineIP("")
+			}
 			if entry.ExpectedIP != "" && entry.TLS.PublicIP != entry.ExpectedIP {
 				err = errors.New("public-IP echo differs from the preflight for the expected interface")
 			}
@@ -377,6 +392,11 @@ func check(parent context.Context, s *session, c api.Service, opts checkOptions)
 			return err
 		}
 		if err := runCase("new connection uses hot-reloaded route", []api.Rule{b}, api.Routed, s.Interfaces[1].Name, b.ID, nil); err != nil {
+			return err
+		}
+	}
+	if opts.appBypass {
+		if err := runAppBypass(ctx, s, c, cfg, runningSince, system, &report); err != nil {
 			return err
 		}
 	}

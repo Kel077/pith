@@ -26,7 +26,7 @@ const usage = `rootcheck prepares a private, scoped acceptance session.
             [--dns-target IP:53]
   cancel    --session DIRECTORY
   install   --session DIRECTORY
-  check     --session DIRECTORY [--batch | --safe-failure | --preserve | --observe 90s]
+  check     --session DIRECTORY [--batch | --safe-failure | --preserve | --app-bypass | --observe 90s]
   stop      --session DIRECTORY
   uninstall --session DIRECTORY
 
@@ -60,6 +60,9 @@ func run(args []string) error {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	if args[0] == "_request" {
+		return requestCommand(ctx, args[1:])
+	}
 	if args[0] == "prepare" {
 		return prepare(ctx, args[1:])
 	}
@@ -70,6 +73,7 @@ func run(args []string) error {
 		fs.BoolVar(&opts.batch, "batch", false, "run the remaining automatic cases after the smoke check")
 		fs.BoolVar(&opts.safeFailure, "safe-failure", false, "verify that a blocked SafeStart rolls back capture")
 		fs.BoolVar(&opts.preserve, "preserve", false, "verify a native TCP connection opened before capture survives activation")
+		fs.BoolVar(&opts.appBypass, "app-bypass", false, "verify app-specific IP/domain routing and an unmatched process using the same frozen target")
 		fs.DurationVar(&opts.observe, "observe", 0, "manual observation window, at most 90s; always stops afterward")
 	}
 	if err := fs.Parse(args[1:]); err != nil {
