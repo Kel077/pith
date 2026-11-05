@@ -32,6 +32,10 @@ type Desktop interface {
 	SetOpenAtLogin(on bool) error
 	PreferredLanguages() []string
 	Quit()
+	// ReadState and WriteState keep a little state of the interface's
+	// between launches, by name.
+	ReadState(name string) string
+	WriteState(name, value string)
 }
 
 // Options configure an App.
@@ -82,6 +86,8 @@ type App struct {
 	panelH    int                 // the height the panel's content took
 
 	routing   atomic.Bool // routing runs: read off the main thread
+	wasOn     bool        // routing ran when Pith last quit, or the Mac shut down
+	resumed   bool        // the first status after launch was seen
 	busy      string      // the action running: "start", "stop", "install", "uninstall"
 	toasts    []string    // messages for the next frame
 	trayState string
@@ -129,6 +135,7 @@ func New(o Options) *App {
 // Run loads the configuration and follows the backend until ctx ends.
 func (a *App) Run(ctx context.Context) {
 	a.ctx = ctx
+	a.wasOn = a.Desktop.ReadState("routing") == "on"
 	go func() {
 		cfg, err := a.Service.LoadConfig(ctx)
 		a.Post(func() {
@@ -250,6 +257,11 @@ func (a *App) apply(ev api.Event) {
 		a.status = *ev.Status
 		a.routing.Store(a.status.State == api.Running)
 		a.updateTray()
+		if a.status.State == api.Running && !a.wasOn {
+			a.wasOn = true
+			a.Desktop.WriteState("routing", "on")
+		}
+		a.resume()
 	case ev.Interfaces != nil:
 		a.ifaces = ev.Interfaces
 		a.colors = nil
@@ -407,10 +419,25 @@ func (a *App) start(sceneID string) {
 		})
 }
 
+// resume starts routing again as Pith opens, when the user asked for it
+// and routing ran when Pith last quit or the Mac shut down.
+func (a *App) resume() {
+	if a.resumed || !a.loaded {
+		return
+	}
+	a.resumed = true
+	s := a.status
+	if a.cfg.Settings.ResumeOnLaunch && a.wasOn && s.State == api.Stopped && s.Helper.Installed && !s.Helper.Outdated {
+		a.start(a.cfg.Selected)
+	}
+}
+
 func (a *App) stop() {
 	if a.busy != "" {
 		return
 	}
+	a.wasOn = false
+	a.Desktop.WriteState("routing", "off")
 	a.busy = "stop"
 	a.async(func(ctx context.Context) error { return a.Service.Stop(ctx) }, func() { a.busy = "" }, func(error) { a.busy = "" })
 }

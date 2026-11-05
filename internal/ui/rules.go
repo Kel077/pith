@@ -36,6 +36,13 @@ func (a *App) rulesView(c *ui.Context) {
 		return
 	}
 	a.sceneBar(c)
+	if ns := a.notices(); len(ns) > 0 {
+		ui.Column(c).Margin(0, 24, 10).Gap(6).Shrink(0).Children(func() {
+			for _, n := range ns {
+				noticeBar(c, n, false)
+			}
+		})
+	}
 	if a.isRunning() && a.status.SceneID != sc.ID {
 		ui.Row(c).Margin(0, 24, 10).Padding(10, 14).Gap(10).Radius(10).Background(subtle(t, 0.05)).Children(func() {
 			ui.Icon(c, icInfo).TextColor(t.TextMuted)
@@ -235,6 +242,15 @@ func (a *App) ruleRow(c *ui.Context, sceneID string, i int, r *api.Rule) {
 						ui.Text(c, r.Note).FontSize(11).TextColor(t.TextMuted).Padding(1, 6).Radius(4).Background(subtle(t, 0.06)).SingleLine()
 					}
 				})
+				if s := a.scene(sceneID); s != nil {
+					if by := shadowedBy(s.Rules, i); by > 0 {
+						ui.Row(c).Gap(5).Children(func() {
+							ui.Icon(c, icAlert).FontSize(12).TextColor(t.Warning)
+							ui.Text(c, trf("Never applies: rule %d matches all of it first", "不会生效：第 %d 条规则已经覆盖了它", by)).FontSize(12).TextColor(t.Warning).SingleLine()
+						})
+						return
+					}
+				}
 				ui.Text(c, a.ruleDetail(r)).FontSize(12).TextColor(t.TextMuted).SingleLine()
 			})
 			a.ruleRoute(c, r)

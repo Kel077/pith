@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
+	"path/filepath"
 
 	"github.com/egoist/mygo"
 	"github.com/Kel077/pith/internal/api"
@@ -66,3 +68,41 @@ func (desktop) Reveal(path string)           { mygo.Shell.ShowItemInFolder(path)
 func (desktop) SetOpenAtLogin(on bool) error { return mygo.App.SetOpenAtLogin(on) }
 func (desktop) PreferredLanguages() []string { return mygo.App.PreferredLanguages() }
 func (desktop) Quit()                        { mygo.App.Quit() }
+
+// statePath is the file of the interface's state between launches.
+func statePath() string {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "Pith", "ui-state.json")
+}
+
+func (desktop) ReadState(name string) string {
+	var state map[string]string
+	if data, err := os.ReadFile(statePath()); err == nil {
+		json.Unmarshal(data, &state)
+	}
+	return state[name]
+}
+
+func (desktop) WriteState(name, value string) {
+	path := statePath()
+	if path == "" {
+		return
+	}
+	state := map[string]string{}
+	if data, err := os.ReadFile(path); err == nil {
+		json.Unmarshal(data, &state)
+	}
+	if state[name] == value {
+		return
+	}
+	state[name] = value
+	data, _ := json.MarshalIndent(state, "", "  ")
+	os.MkdirAll(filepath.Dir(path), 0o700)
+	tmp := path + ".tmp"
+	if os.WriteFile(tmp, data, 0o600) == nil {
+		os.Rename(tmp, path)
+	}
+}

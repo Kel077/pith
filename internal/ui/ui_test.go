@@ -68,6 +68,8 @@ func (fakeDesktop) Reveal(string)                  {}
 func (fakeDesktop) SetOpenAtLogin(bool) error      { return nil }
 func (fakeDesktop) PreferredLanguages() []string   { return []string{"zh-Hans"} }
 func (d *fakeDesktop) Quit()                       { d.quit = true }
+func (fakeDesktop) ReadState(string) string        { return "" }
+func (fakeDesktop) WriteState(string, string)      {}
 
 // testApp is an App on a mock that has routed for a minute.
 func testApp(t *testing.T, o mock.Options) (*App, *mock.Service) {
@@ -155,9 +157,27 @@ func TestSnapshots(t *testing.T) {
 		tt.Frame()
 		save(t, tt.Image(), "check-"+mode)
 	}
+	// Warnings: an interface of a rule is down, and a catch-all rule on
+	// top shadows the rules under it.
+	a, svc := testApp(t, mock.Options{Sample: true, HelperInstalled: true, Running: true})
+	svc.SetInterfaceUp("en7", false)
+	a.Sync(context.Background())
+	a.cfg.Scenes[0].Rules = append([]api.Rule{{ID: "all", Enabled: true, Protocol: api.AnyProtocol, Action: api.Route,
+		Via: []api.InterfaceRef{{Name: "en0", HardwareAddr: "02:00:5e:10:00:01"}}}}, a.cfg.Scenes[0].Rules...)
+	tt := ui.NewTester(a.WindowView, 1040, 760)
+	tt.SetScale(2)
+	tt.Frame()
+	save(t, tt.Image(), "rules-warnings")
+	tp := ui.NewTester(a.PanelView, PanelWidth, a.PanelHeight())
+	tp.SetScale(2)
+	tp.Frame()
+	tp.SetSize(PanelWidth, a.PanelHeight())
+	tp.Frame()
+	save(t, tp.Image(), "panel-warnings")
+
 	// A first launch: nothing set up, the helper missing.
-	a, _ := testApp(t, mock.Options{})
-	tt := ui.NewTester(a.WindowView, 1040, 680)
+	a, _ = testApp(t, mock.Options{})
+	tt = ui.NewTester(a.WindowView, 1040, 680)
 	tt.SetScale(2)
 	tt.Frame()
 	save(t, tt.Image(), "first-launch")
@@ -206,4 +226,40 @@ func TestToggle(t *testing.T) {
 	if st.State != api.Running {
 		t.Errorf("after installing, state %s", st.State)
 	}
+}
+
+func TestShadowed(t *testing.T) {
+	all := api.Rule{ID: "all", Enabled: true, Protocol: api.AnyProtocol, Action: api.Route}
+	wechat := api.Rule{ID: "w", Enabled: true, Protocol: api.TCP, Action: api.Route, Apps: []api.AppRef{{Path: "/Applications/WeChat.app"}}}
+	nas := api.Rule{ID: "n", Enabled: true, Protocol: api.AnyProtocol, Action: api.Route, Targets: []string{"192.168.50.10"}}
+	lan := api.Rule{ID: "l", Enabled: true, Protocol: api.AnyProtocol, Action: api.Route, Targets: []string{"192.168.0.0/16"}}
+	sub := api.Rule{ID: "s", Enabled: true, Protocol: api.AnyProtocol, Action: api.Route, Targets: []string{"www.example.com"}}
+	dom := api.Rule{ID: "d", Enabled: true, Protocol: api.AnyProtocol, Action: api.Route, Targets: []string{"*.example.com"}}
+	ads := api.Rule{ID: "b", Enabled: true, Protocol: api.AnyProtocol, Action: api.Block, Targets: []string{"*.example.com"}}
+	for _, tt := range []struct {
+		rules []api.Rule
+		i     int
+		want  int
+	}{
+		{[]api.Rule{all, wechat}, 1, 1},
+		{[]api.Rule{wechat, all}, 1, 0},
+		{[]api.Rule{lan, nas}, 1, 1},
+		{[]api.Rule{nas, lan}, 1, 0},
+		{[]api.Rule{dom, sub}, 1, 1},
+		{[]api.Rule{sub, dom}, 1, 0},
+		{[]api.Rule{sub, ads}, 0, 2}, // block rules win from anywhere
+		{[]api.Rule{wechat, nas}, 1, 0},
+	} {
+		if got := shadowedBy(tt.rules, tt.i); got != tt.want {
+			t.Errorf("shadowedBy(%v, %d) = %d, want %d", ids(tt.rules), tt.i, got, tt.want)
+		}
+	}
+}
+
+func ids(rules []api.Rule) []string {
+	var out []string
+	for _, r := range rules {
+		out = append(out, r.ID)
+	}
+	return out
 }

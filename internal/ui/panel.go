@@ -63,6 +63,9 @@ func (a *App) PanelView(c *ui.Context) {
 				}
 			}
 		})
+		for _, n := range a.notices() {
+			noticeBar(c, n, true)
+		}
 		panelDivider(c)
 		panelTitle(c, tr("Scene", "场景"))
 		for k := range a.cfg.Scenes {
