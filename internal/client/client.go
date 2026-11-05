@@ -60,20 +60,5 @@ func New(opts Options) (*Client, error) {
 }
 
 func (c *Client) Interfaces(ctx context.Context) ([]api.Interface, error) {
-	interfaces, err := c.interfaces(ctx)
-	if err != nil {
-		return nil, err
-	}
-	cfg, err := c.LoadConfig(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for i := range interfaces {
-		iface := &interfaces[i]
-		ref := api.InterfaceRef{Name: iface.Name, HardwareAddr: iface.HardwareAddr}
-		if alias := cfg.Aliases[ref.Key()]; alias != "" {
-			iface.Label = alias
-		}
-	}
-	return interfaces, nil
+	return c.interfaces(ctx)
 }

@@ -241,19 +241,6 @@ func (c *Client) Subscribe(ctx context.Context) (<-chan api.Event, error) {
 			if event.Status == nil && event.Connection == nil && event.Interfaces == nil {
 				return
 			}
-			if event.Interfaces != nil {
-				cfg, err := c.LoadConfig(ctx)
-				if err != nil {
-					return
-				}
-				for i := range event.Interfaces {
-					iface := &event.Interfaces[i]
-					ref := api.InterfaceRef{Name: iface.Name, HardwareAddr: iface.HardwareAddr}
-					if alias := cfg.Aliases[ref.Key()]; alias != "" {
-						iface.Label = alias
-					}
-				}
-			}
 			select {
 			case output <- event:
 			case <-ctx.Done():

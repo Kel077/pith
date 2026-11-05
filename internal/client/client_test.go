@@ -63,7 +63,7 @@ func TestConfigPersistenceIsolationAndValidation(t *testing.T) {
 		t.Fatal("load aliased state")
 	}
 	interfaces, err := c.Interfaces(ctx)
-	if err != nil || interfaces[0].Label != "Desk" {
+	if err != nil || interfaces[0].Label != "Example Ethernet" {
 		t.Fatal(interfaces, err)
 	}
 	invalid := cfg

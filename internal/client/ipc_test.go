@@ -171,6 +171,11 @@ func TestIPCSubscriptionOrderAndCancellation(t *testing.T) {
 	c, _, _ := startLocalHelper(t, "test", newFakeEngine())
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+	cfg := api.DefaultConfig()
+	cfg.Aliases = map[string]string{"en0": "Desk"}
+	if err := c.SaveConfig(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
 	events, err := c.Subscribe(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -178,6 +183,9 @@ func TestIPCSubscriptionOrderAndCancellation(t *testing.T) {
 	first, second := <-events, <-events
 	if first.Status == nil || second.Interfaces == nil || second.Status != nil {
 		t.Fatal("incorrect initial event order")
+	}
+	if len(second.Interfaces) != 1 || second.Interfaces[0].Label != "Example" {
+		t.Fatal("subscription replaced the system label with an alias", second.Interfaces)
 	}
 	if err := c.Start(ctx, "default"); err != nil {
 		t.Fatal(err)
