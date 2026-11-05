@@ -127,6 +127,17 @@ the ad hoc signed app, then stores its ZIP for seven days. Actions are pinned
 to full commit IDs. The job has read-only repository permissions, performs no
 root tests, and does not mount a DMG or publish a release.
 
+The job initializes its temporary Go cache paths from `RUNNER_TEMP` in a step
+before `setup-go`; the `runner` context is not available in job-level `env`.
+After editing the workflow, validate its expressions and structure locally:
+
+```sh
+GOCACHE="${TMPDIR%/}/pith-go-build" GOMODCACHE="${TMPDIR%/}/pith-go-mod" GOPATH="${TMPDIR%/}/pith-go-path" GOENV=off go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -shellcheck= -pyflakes= .github/workflows/ci.yml
+```
+
+This pinned MIT-licensed validation tool is not part of the app's dependencies.
+Passing local validation does not replace a successful GitHub Actions run.
+
 See [MyGo's distribution guide](https://github.com/egoist/mygo/blob/v0.7.4/docs/distribution.md)
 for bundle resources, signing and disk images, and
 [GitHub's runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
