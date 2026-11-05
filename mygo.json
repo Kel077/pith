@@ -1,0 +1,17 @@
+{
+  "name": "Pith",
+  "slug": "pith",
+  "identifier": "io.github.kel077.pith",
+  "version": "0.1.0",
+  "copyright": "© 2026 Kel7",
+  "main": "./cmd/pith",
+  "out": "build",
+  "macos": {
+    "minimumSystemVersion": "13.0",
+    "infoPlist": {
+      "LSUIElement": true,
+      "LSApplicationCategoryType": "public.app-category.utilities"
+    }
+  },
+  "linux": { "webview": false }
+}
