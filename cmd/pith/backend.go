@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/egoist/mygo"
+
 	"github.com/Kel077/pith/internal/api"
 	"github.com/Kel077/pith/internal/client"
 	"github.com/Kel077/pith/internal/mock"

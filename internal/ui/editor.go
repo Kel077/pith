@@ -8,7 +8,9 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo/ui"
+
 	"github.com/Kel077/pith/internal/api"
+	"github.com/Kel077/pith/locales"
 )
 
 // editor is the state of the dialog that edits a rule.
@@ -81,7 +83,7 @@ func (e *editor) prepared() api.Rule {
 func (e *editor) addDraft() {
 	var bad []string
 	for _, s := range strings.FieldsFunc(e.draft, func(r rune) bool {
-		return r == ',' || r == '，' || r == ';' || r == '\n' || r == ' ' || r == '\t' || r == '、'
+		return r == ',' || r == '\uff0c' || r == ';' || r == '\n' || r == ' ' || r == '\t' || r == '\u3001'
 	}) {
 		t, err := api.ParseTarget(s)
 		if err != nil {
@@ -103,37 +105,37 @@ func (e *editor) addDraft() {
 func (a *App) editorView(c *ui.Context) {
 	e := a.editor
 	t := c.Theme()
-	ui.Modal(c, &e.open, func() {
-		ui.Column(c).Width(600).Gap(0).Children(func() {
-			title := tr("New Rule", "新规则")
-			if e.ruleID != "" {
-				title = tr("Edit Rule", "编辑规则")
-			}
-			ui.Text(c, title).FontSize(17).Bold().Margin(0, 0, 14)
-			rule := e.prepared()
-			problems := rule.Problems()
-			show := func(field string) []api.Problem {
-				var ps []api.Problem
-				for _, p := range problems {
-					if p.Field == field && (e.tried || p.Code != api.ProblemNoVia) {
-						ps = append(ps, p)
-					}
+	sheet(c, &e.open, 620, func() {
+		title := locales.NewRule()
+		if e.ruleID != "" {
+			title = locales.EditRule()
+		}
+		sheetTitle(c, title).Margin(0, 0, 12)
+		rule := e.prepared()
+		problems := rule.Problems()
+		show := func(field string) []api.Problem {
+			var ps []api.Problem
+			for _, p := range problems {
+				if p.Field == field && (e.tried || p.Code != api.ProblemNoVia) {
+					ps = append(ps, p)
 				}
-				return ps
 			}
+			return ps
+		}
 
-			editorRow(c, tr("Apps", "应用"), func() {
-				ui.Row(c).Gap(6).Wrap().Children(func() {
+		sheetScroll(c, func() {
+			editorRow(c, locales.Apps(), locales.LeaveEmptyForEveryAppAn(), func() {
+				ui.Row(c).Gap(6).Wrap().AlignItems(ui.Center).Children(func() {
 					for k, app := range e.rule.Apps {
 						a.removableChip(c, func() {
-							a.appIconView(c, app, 16)
-							ui.Text(c, appName(app)).FontSize(13).SingleLine()
+							a.appIconView(c, app, 18)
+							ui.Text(c, appName(app)).SingleLine().AlignSelf(ui.Baseline) // the label lines up with it
 						}, func() { e.rule.Apps = slices.Delete(e.rule.Apps, k, k+1) })
 					}
 					if len(e.rule.Apps) == 0 {
-						ui.Text(c, tr("Every app", "所有应用")).TextColor(t.TextMuted).Padding(4, 2)
+						ui.Text(c, locales.EveryApp()).TextColor(t.TextMuted).Padding(0, 4, 0, 2)
 					}
-					add := textIconButton(c, icPlus, tr("Choose…", "选择…"))
+					add := editorAddButton(c, "choose-app", locales.Choose())
 					if add.Clicked() {
 						e.picker.open = !e.picker.open
 						e.picker.query = ""
@@ -144,131 +146,127 @@ func (a *App) editorView(c *ui.Context) {
 						}
 					})
 				})
-				hint(c, tr("Leave empty for every app. An app's helpers and the system services that work for it match too.",
-					"留空表示所有应用。应用的辅助进程、替它联网的系统服务也会一并匹配。"))
 			})
 
-			editorRow(c, tr("Destinations", "目标"), func() {
-				ui.Row(c).Gap(6).Wrap().Children(func() {
-					for k, s := range e.targets {
-						tg, err := api.ParseTarget(s)
-						a.removableChip(c, func() {
-							switch {
-							case err != nil:
-								ui.Text(c, s).FontSize(13).SingleLine().TextColor(t.Danger)
-							case tg.IsDomain():
-								ui.Text(c, tg.Domain).FontSize(13).SingleLine()
-								if subdomainToggle(c, k, tg.Subdomains) {
-									tg.Subdomains = !tg.Subdomains
-									e.targets[k] = tg.String()
+			editorRow(c, locales.Destinations(), locales.TargetPlaceholder(), func() {
+				if len(e.targets) > 0 {
+					ui.Row(c).Gap(6).Wrap().AlignItems(ui.Center).Children(func() {
+						for k, s := range e.targets {
+							tg, err := api.ParseTarget(s)
+							a.removableChip(c, func() {
+								switch {
+								case err != nil:
+									ui.Text(c, s).SingleLine().TextColor(t.Danger)
+								case tg.IsDomain():
+									ui.Text(c, tg.Domain).SingleLine()
+									if subdomainToggle(c, k, tg.Subdomains) {
+										tg.Subdomains = !tg.Subdomains
+										e.targets[k] = tg.String()
+									}
+								default:
+									ui.Text(c, tg.String()).SingleLine()
 								}
-							default:
-								ui.Text(c, tg.String()).FontSize(13).SingleLine()
-							}
-						}, func() { e.targets = slices.Delete(e.targets, k, k+1) })
-					}
-				})
-				in := ui.TextInput(c.Key("target-draft"), &e.draft).Placeholder(tr("example.com, 192.168.50.10 or 10.0.0.0/8, then Return", "输入 example.com、192.168.50.10 或 10.0.0.0/8，按回车添加"))
+							}, func() { e.targets = slices.Delete(e.targets, k, k+1) })
+						}
+					})
+				}
+				placeholder := locales.TargetPlaceholderShort()
+				if len(e.targets) == 0 {
+					placeholder = locales.EveryDestination() + " · " + placeholder
+				}
+				in := sheetInput(c, ui.TextInput(c.Key("target-draft"), &e.draft)).Placeholder(placeholder)
 				if e.draftErr {
 					in.Border(1, t.Danger)
 				}
 				if in.Changed() {
 					e.draftErr = false
-					if strings.ContainsAny(e.draft, ",，\n、") {
+					if strings.ContainsAny(e.draft, ",\uff0c\n\u3001") {
 						e.addDraft()
 					}
 				}
 				if in.Submitted() {
 					e.addDraft()
 				}
-				ui.Row(c).Gap(14).Children(func() {
-					ui.Checkbox(c, &e.subdomains, tr("New domains include their subdomains", "新加的域名包含子域名"))
-					ui.Spacer(c)
-					switch {
-					case e.draftErr:
-						ui.Text(c, tr("Not a domain, IP address or range", "不是有效的域名、IP 或网段")).FontSize(12).TextColor(t.Danger)
-					case len(e.targets) == 0:
-						ui.Text(c, tr("Empty: every destination", "留空表示所有目标")).FontSize(12).TextColor(t.TextMuted)
-					}
+				if e.draftErr {
+					ui.Text(c, locales.NotADomainIpAddressOr()).FontSize(12).TextColor(t.Danger).Margin(-4, 0, 0, 4)
+				}
+				ui.Row(c).Children(func() {
+					ui.Checkbox(c, &e.subdomains, locales.NewDomainsIncludeTheirSubdomains())
 				})
 			})
 
-			editorRow(c, tr("Protocol", "协议"), func() {
+			editorRow(c, locales.Protocol(), "", func() {
 				ui.Row(c).Children(func() {
-					ui.Segmented(c, &e.protocol, tr("TCP and UDP", "TCP 和 UDP"), "TCP", "UDP").Label(tr("Protocol", "协议"))
+					editorSegmented(c, "protocol", locales.Protocol(), &e.protocol, []string{locales.TcpAndUdp(), "TCP", "UDP"}, nil, nil)
 				})
 			})
 
-			editorRow(c, tr("Action", "动作"), func() {
+			editorRow(c, locales.Action(), "", func() {
 				ui.Row(c).Children(func() {
-					ui.Segmented(c, &e.action, tr("Route through", "走指定网卡"), tr("Block", "拦截")).Label(tr("Action", "动作"))
+					editorSegmented(c, "action", locales.Action(), &e.action, []string{locales.RouteThrough(), locales.Block()},
+						[]*ui.SVG{icArrow, icBlock}, []string{"", locales.NewMatchingConnectionsAreRefusedConnections()})
 				})
 			})
 
 			if e.action == 0 {
-				editorRow(c, tr("Interfaces", "网卡"), func() {
+				editorRow(c, locales.Interfaces(), locales.TriedFromTheTopTheNext(), func() {
 					a.viaEditor(c, e, len(show("via")) > 0)
-					ui.Checkbox(c, &e.rule.Fallback, tr("When none of them connects, use the system's network", "以上网卡都连不上时，使用系统默认网络"))
-				})
-			} else {
-				editorRow(c, "", func() {
-					hint(c, tr("New matching connections are refused. Connections already open stay.", "匹配的新连接会被拒绝；已经建立的连接不受影响。"))
+					ui.Checkbox(c, &e.rule.Fallback, locales.WhenNoneOfThemConnectsUse())
 				})
 			}
 
-			editorRow(c, tr("Note", "备注"), func() {
-				ui.TextInput(c.Key("note"), &e.rule.Note).Placeholder(tr("Optional, e.g. NAS", "可选，例如 NAS"))
+			editorRow(c, locales.Note(), "", func() {
+				sheetInput(c, ui.TextInput(c.Key("note"), &e.rule.Note)).Placeholder(locales.OptionalEGNas())
 			})
 
 			if e.tried && len(problems) > 0 {
-				ui.Row(c).Gap(6).Margin(6, 0, 0, 96).Children(func() {
-					ui.Icon(c, icAlert).TextColor(t.Danger)
+				ui.Row(c).Gap(6).Margin(6, 0, 0, editorLabelWidth+16).Children(func() {
+					ui.Icon(c, icAlert).FontSize(14).TextColor(t.Danger)
 					ui.Text(c, problemText(problems[0])).TextColor(t.Danger).FontSize(12)
 				})
 			}
+		})
 
-			ui.Row(c).Gap(8).Margin(18, 0, 0).Children(func() {
-				if e.ruleID != "" {
-					if ui.Button(c, tr("Delete", "删除")).TextColor(t.Danger).Clicked() {
-						e.open = false
-						a.deleteRule(e.sceneID, e.ruleID)
-					}
+		sheetFooter(c, func() {
+			if e.ruleID != "" && sheetQuietDanger(c, "delete", icTrash, locales.Delete()).Clicked() {
+				e.open = false
+				a.deleteRule(e.sceneID, e.ruleID)
+			}
+		}, func() {
+			if sheetButton(c, "cancel", locales.Cancel()).Clicked() {
+				e.open = false
+			}
+			save := sheetPrimary(c, "save", locales.Save(), false).Clicked() || c.Shortcut(ui.Cmd, ui.KeyS)
+			if save {
+				if e.draft != "" {
+					e.addDraft()
+					rule = e.prepared()
+					problems = rule.Problems()
 				}
-				ui.Spacer(c)
-				if ui.Button(c, tr("Cancel", "取消")).Clicked() {
+				e.tried = true
+				if len(problems) == 0 && !e.draftErr {
+					a.saveRule(e.sceneID, e.ruleID, rule)
 					e.open = false
 				}
-				save := ui.PrimaryButton(c, tr("Save", "保存")).Clicked() || c.Shortcut(ui.Cmd, ui.KeyS)
-				if save {
-					if e.draft != "" {
-						e.addDraft()
-						rule = e.prepared()
-						problems = rule.Problems()
-					}
-					e.tried = true
-					if len(problems) == 0 && !e.draftErr {
-						a.saveRule(e.sceneID, e.ruleID, rule)
-						e.open = false
-					}
-				}
-			})
+			}
 		})
 	})
 }
 
 // subdomainToggle is the chip's switch of whether a domain includes its
-// subdomains: it reports a click.
+// subdomains: a small pill, lit in the accent while it does. It reports a
+// click.
 func subdomainToggle(c *ui.Context, k int, on bool) bool {
 	t := c.Theme()
-	label := tr("+ subdomains", "含子域名")
-	pill := ui.Row(c.Key(fmt.Sprint("sub-", k))).Padding(1, 6).Radius(5).Cursor(ui.CursorPointer).Label(label)
+	label := locales.Subdomains()
+	pill := ui.Row(c.Key(fmt.Sprint("sub-", k))).Padding(2, 8).Radius(999).Cursor(ui.CursorPointer).Label(label)
 	if on {
-		pill.Background(t.Accent.Alpha(0.14)).Tooltip(tr("Includes its subdomains: click for this domain alone", "包含子域名；点击改为只匹配这个域名"))
+		pill.Background(t.Accent.Alpha(0.14)).Tooltip(locales.IncludesItsSubdomainsClickForThis())
 	} else {
-		pill.Border(1, t.Border).Tooltip(tr("This domain alone: click to include its subdomains", "只匹配这个域名；点击改为包含子域名"))
+		pill.Border(1, subtle(t, 0.14)).Tooltip(locales.ThisDomainAloneClickToInclude())
 	}
 	pill.Children(func() {
-		text := ui.Text(c, label).FontSize(11).SingleLine()
+		text := ui.Text(c, label).FontSize(11).FontWeight(500).SingleLine()
 		if on {
 			text.TextColor(t.Accent)
 		} else {
@@ -306,43 +304,41 @@ func (a *App) saveRule(sceneID, ruleID string, r api.Rule) {
 	})
 }
 
-// viaEditor edits the interfaces of a route rule, in order of preference.
+// viaEditor edits the interfaces of a route rule, in order of preference:
+// a pane of glass whose rows are the interfaces, and at its foot the
+// button that adds one.
 func (a *App) viaEditor(c *ui.Context, e *editor, missing bool) {
 	t := c.Theme()
-	box := ui.Column(c).Gap(0).Radius(10).Border(1, t.Border)
+	box := paneRows(c)
 	if missing {
-		box.Border(1, t.Danger)
+		box.Border(1, t.Danger.Alpha(0.7))
 	}
 	box.Children(func() {
 		for k, v := range e.rule.Via {
 			i := a.iface(v)
-			ui.Row(c.Key("via-"+strconv.Itoa(k)+"-"+v.Name)).Gap(10).Padding(7, 8, 7, 12).Children(func() {
-				ui.Text(c, strconv.Itoa(k+1)).FontSize(12).TextColor(t.TextMuted).Width(12)
+			ui.Row(c.Key("via-"+strconv.Itoa(k)+"-"+v.Name)).Gap(10).Padding(7, 8, 7, 14).Children(func() {
+				ui.Text(c, strconv.Itoa(k+1)).FontSize(12).FontWeight(600).TextColor(t.TextMuted).Width(12)
 				a.ifaceChip(c, v)
-				state := tr("Not connected", "未连接")
+				state := locales.NotConnected()
 				if i != nil && i.Up {
-					state = i.Name + " · " + tr("Connected", "已连接")
+					state = i.Name + " · " + locales.Connected()
 				} else if i != nil {
 					state = i.Name + " · " + state
 				}
 				ui.Text(c, state).FontSize(12).TextColor(t.TextMuted).Grow(1).SingleLine()
-				if quietButton(c, "up", icChevronUp, tr("Move Up", "上移"), k == 0) {
+				if quietButton(c, "up", icChevronUp, locales.MoveUp(), k == 0) {
 					e.rule.Via = move(e.rule.Via, []int{k}, k-1)
 				}
-				if quietButton(c, "down", icChevronDown, tr("Move Down", "下移"), k == len(e.rule.Via)-1) {
+				if quietButton(c, "down", icChevronDown, locales.MoveDown(), k == len(e.rule.Via)-1) {
 					e.rule.Via = move(e.rule.Via, []int{k}, k+2)
 				}
-				if quietButton(c, "remove", icX, tr("Remove", "移除"), false) {
+				if quietButton(c, "remove", icX, locales.Remove(), false) {
 					e.rule.Via = slices.Delete(e.rule.Via, k, k+1)
 				}
 			})
-			ui.Divider(c)
 		}
-		ui.Row(c).Padding(6, 8).Gap(8).Children(func() {
-			ui.Button(c, "").Label(tr("Add Interface", "添加网卡")).Children(func() {
-				ui.Icon(c, icPlus)
-				ui.Text(c, tr("Add Interface", "添加网卡")).SingleLine()
-			}).Menu(func(m *ui.Menu) {
+		ui.Row(c).Padding(7, 8).Gap(10).Children(func() {
+			editorAddButton(c, "add-interface", locales.AddInterface()).Menu(func(m *ui.Menu) {
 				for _, i := range a.visibleIfaces() {
 					ref := refOf(i)
 					if slices.ContainsFunc(e.rule.Via, func(v api.InterfaceRef) bool { return v.Resolve([]api.Interface{*i}) != nil }) {
@@ -350,41 +346,129 @@ func (a *App) viaEditor(c *ui.Context, e *editor, missing bool) {
 					}
 					label := a.ifaceLabel(ref) + "  ·  " + i.Name
 					if !i.Up {
-						label += "  ·  " + tr("not connected", "未连接")
+						label += "  ·  " + locales.NotConnectedLower()
 					}
 					if m.Item(label).Chosen() {
 						e.rule.Via = append(e.rule.Via, ref)
 					}
 				}
 			})
-			if len(e.rule.Via) > 1 {
-				ui.Text(c, tr("Tried from the top: the next one when one can't connect.", "从上往下尝试：前一个连不上时用下一个。")).FontSize(12).TextColor(t.TextMuted)
-			} else if missing {
-				ui.Text(c, tr("Pick at least one interface.", "至少选择一张网卡。")).FontSize(12).TextColor(t.Danger)
+			if missing {
+				ui.Text(c, locales.PickAtLeastOneInterface()).FontSize(12).TextColor(t.Danger)
 			}
 		})
 	})
 }
 
-// editorRow is a row of the rule editor: its label on the left.
-func editorRow(c *ui.Context, label string, body func()) {
-	ui.Row(c).Gap(16).AlignItems(ui.Start).PaddingY(8).Children(func() {
-		ui.Text(c, label).Width(80).TextColor(c.Theme().TextMuted).Padding(6, 0, 0).Shrink(0)
-		ui.Column(c).Grow(1).Gap(8).MinWidth(0).Children(body)
+// editorLabelWidth is the width of the labels of a sheet's form.
+const editorLabelWidth = 76
+
+// editorRow is a row of a sheet's form: its label on the left, level with
+// the first line of its control, which tip, if any, explains on hover.
+func editorRow(c *ui.Context, label, tip string, body func()) {
+	t := c.Theme()
+	ui.Row(c).Gap(16).AlignItems(ui.Baseline).PaddingY(7).Children(func() {
+		l := ui.Text(c, label).Width(editorLabelWidth).TextColor(t.TextMuted).Shrink(0)
+		if tip != "" {
+			l.Tooltip(tip)
+		}
+		ui.Column(c).Grow(1).Gap(10).MinWidth(0).Children(body)
 	})
 }
 
-// hint is a line of help under a control.
-func hint(c *ui.Context, s string) ui.Element {
-	return ui.Text(c, s).FontSize(12).TextColor(c.Theme().TextMuted)
+// editorAddButton is a small capsule of glass that adds something, as
+// glassCapsuleButton is, level with the chips beside it: a plus and its
+// label, by whose line the label of its row lines up. It takes the
+// keyboard focus.
+func editorAddButton(c *ui.Context, key, label string) ui.Element {
+	t := c.Theme()
+	b := capsule(c.Key(key)).Gap(5).Padding(5, 13, 5, 10).Cursor(ui.CursorPointer).Label(label).Focusable()
+	if b.Hovered() {
+		b.Background(subtle(t, 0.04))
+	}
+	b.Children(func() {
+		ui.Icon(c, icPlus).FontSize(14).TextColor(t.Text)
+		ui.Text(c, label).FontWeight(500).SingleLine().AlignSelf(ui.Baseline)
+	})
+	return b
 }
 
-// removableChip is a chip with a remove button.
+// editorSegmented chooses one of a few options as segmentedCapsule does, a
+// capsule whose chosen segment is a brighter pill, built on the toolkit's
+// segmented control so that it keeps the keyboard (Tab, the arrows) and
+// reads as a radio group named label. On a sheet, its capsule is a faint
+// shade rather than glass, which on the sheet's white would leave the
+// chosen pill without contrast. icons and tips may be nil, or have an
+// icon and an explanation for each segment. It reports a new choice.
+func editorSegmented(c *ui.Context, key, label string, chosen *int, labels []string, icons []*ui.SVG, tips []string) bool {
+	t := c.Theme()
+	seg := ui.SegmentedBase(c.Key(key), chosen, len(labels))
+	track := seg.Track.Padding(3).Gap(2).Radius(999).Background(subtle(t, 0.05)).Border(1, subtle(t, 0.06)).Label(label)
+	track.Children(func() {
+		for i, l := range labels {
+			s := seg.Segment(i).Gap(6).Padding(5, 14).Radius(999).Cursor(ui.CursorPointer).Label(l)
+			on := i == *chosen
+			switch {
+			case on && t.Dark:
+				s.Background(ui.RGBA(255, 255, 255, 0.16)).Shadow(0, 1, 3, 0, ui.RGBA(0, 0, 0, 0.3))
+			case on:
+				s.Background(ui.RGBA(255, 255, 255, 0.95)).Shadow(0, 1, 4, 0, ui.RGBA(60, 40, 20, 0.14))
+			case s.Hovered():
+				s.Background(subtle(t, 0.05))
+			}
+			if i < len(tips) && tips[i] != "" {
+				s.Tooltip(tips[i])
+			}
+			s.Children(func() {
+				if i < len(icons) && icons[i] != nil {
+					ic := ui.Icon(c, icons[i]).FontSize(14)
+					if on {
+						ic.TextColor(t.Accent)
+					} else {
+						ic.TextColor(t.TextMuted)
+					}
+				}
+				text := ui.Text(c, l).SingleLine().AlignSelf(ui.Baseline) // the label lines up with it, not the icon
+				if on {
+					text.FontWeight(600)
+				} else {
+					text.TextColor(t.TextMuted)
+				}
+			})
+		}
+	})
+	return track.Changed()
+}
+
+// sheetQuietDanger is a quiet action of a sheet that destroys something:
+// a capsule of glass, its icon and label red.
+func sheetQuietDanger(c *ui.Context, key string, ic *ui.SVG, label string) ui.Element {
+	t := c.Theme()
+	b := capsule(c.Key(key)).Gap(6).Padding(8, 16, 8, 13).Cursor(ui.CursorPointer).Label(label).Focusable()
+	if b.Hovered() {
+		b.Background(t.Danger.Alpha(0.1))
+	}
+	b.Children(func() {
+		ui.Icon(c, ic).FontSize(14).TextColor(t.Danger)
+		ui.Text(c, label).FontWeight(500).TextColor(t.Danger).SingleLine()
+	})
+	return b
+}
+
+// removableChip is a soft pill with a button that removes it.
 func (a *App) removableChip(c *ui.Context, content func(), remove func()) {
 	t := c.Theme()
-	ui.Row(c).Gap(6).Padding(3, 4, 3, 8).Radius(8).Background(subtle(t, 0.06)).Children(func() {
-		content()
-		x := ui.Box(c).Size(18, 18).Radius(9).Center().Cursor(ui.CursorPointer).Label(tr("Remove", "移除"))
+	fill, line := ui.RGBA(255, 255, 255, 0.82), ui.RGBA(60, 40, 20, 0.09)
+	if t.Dark {
+		fill, line = ui.RGBA(255, 255, 255, 0.08), ui.RGBA(255, 255, 255, 0.08)
+	}
+	chip := ui.Row(c).Gap(6).Padding(3, 4, 3, 7).Radius(999).Background(fill).Border(1, line)
+	if !t.Dark {
+		chip.Shadow(0, 1, 2, 0, ui.RGBA(60, 40, 20, 0.06))
+	}
+	chip.Children(func() {
+		ui.Row(c).Gap(6).Padding(0, 0, 0, 3).Children(content)
+		x := ui.Box(c).Size(20, 20).Radius(10).Center().Cursor(ui.CursorPointer).Label(locales.Remove())
 		if x.Hovered() {
 			x.Background(subtle(t, 0.1))
 		}
@@ -399,13 +483,13 @@ func (a *App) removableChip(c *ui.Context, content func(), remove func()) {
 func problemText(p api.Problem) string {
 	switch p.Code {
 	case api.ProblemBadTarget:
-		return tr("A destination is not a domain, an IP address or a range.", "有目标不是有效的域名、IP 或网段。")
+		return locales.ADestinationIsNotADomain()
 	case api.ProblemDuplicate:
-		return tr("Something is listed twice.", "有重复的项目。")
+		return locales.SomethingIsListedTwice()
 	case api.ProblemNoVia:
-		return tr("Pick at least one interface.", "至少选择一张网卡。")
+		return locales.PickAtLeastOneInterface()
 	case api.ProblemBadApp:
-		return tr("An app has no location.", "有应用缺少位置信息。")
+		return locales.AnAppHasNoLocation()
 	}
 	return string(p.Code)
 }
@@ -420,12 +504,19 @@ type appPicker struct {
 }
 
 // appPickerPopover lists the installed apps under anchor, with a search,
-// and a way to choose any program.
+// and a way to choose any program: a popover of the sheets' glass, its
+// apps in rounded rows.
 func (a *App) appPickerPopover(c *ui.Context, anchor ui.Element, p *appPicker, chosen func(api.AppRef)) {
 	t := c.Theme()
-	ui.Popover(c, anchor, &p.open, func() {
-		ui.Column(c).Width(300).Height(360).Gap(8).Padding(4).Children(func() {
-			ui.SearchField(c.Key("app-search"), &p.query).Label(tr("Search apps", "搜索应用")).AutoFocus()
+	ui.PopoverBase(c, anchor, &p.open, func(panel ui.Element) {
+		shadow := ui.RGBA(70, 40, 12, 0.22)
+		if t.Dark {
+			shadow = ui.RGBA(0, 0, 0, 0.5)
+		}
+		panel.Margin(6, 0, 0, 0).Padding(8).Radius(16).Material(sheetGlass(t)).Border(1, rim(t)).Shadow(0, 16, 44, -10, shadow)
+		ui.Column(c).Width(300).Height(360).Gap(6).Children(func() {
+			search := ui.SearchField(c.Key("app-search"), &p.query).Label(locales.SearchApps()).Placeholder(locales.SearchApps()).AutoFocus()
+			sheetInput(c, search).Padding(7, 10).Margin(0, 0, 2)
 			apps := a.installedApps()
 			var shown []api.AppRef
 			q := strings.ToLower(p.query)
@@ -436,12 +527,12 @@ func (a *App) appPickerPopover(c *ui.Context, anchor ui.Element, p *appPicker, c
 			}
 			ui.List(c, &p.list, len(shown), func(i int) {
 				app := shown[i]
-				row := ui.Row(c.Key(app.Path)).Gap(8).Padding(5, 8).Radius(6).Cursor(ui.CursorPointer)
+				row := ui.Row(c.Key(app.Path)).Gap(10).Padding(5, 8).Radius(9).Cursor(ui.CursorPointer)
 				if row.Hovered() {
 					row.Background(subtle(t, 0.07))
 				}
 				row.Children(func() {
-					a.appIconView(c, app, 20)
+					a.appIconView(c, app, 22)
 					ui.Text(c, appName(app)).SingleLine().Grow(1)
 				})
 				if row.Clicked() {
@@ -453,14 +544,23 @@ func (a *App) appPickerPopover(c *ui.Context, anchor ui.Element, p *appPicker, c
 				case apps == nil:
 					ui.Row(c).Padding(12).Gap(8).Children(func() {
 						ui.Spinner(c)
-						muted(c, tr("Finding apps…", "正在查找应用…"))
+						muted(c, locales.FindingApps())
 					})
 				case len(shown) == 0:
-					muted(c, tr("No app matches.", "没有匹配的应用。")).Padding(12)
+					muted(c, locales.NoAppMatches()).Padding(12)
 				}
 			})
-			ui.Divider(c)
-			if textIconButton(c, icTerminal, tr("Other Program…", "其他程序…")).Clicked() {
+			ui.Box(c).Height(1).Margin(0, 4).Background(hairline(t)).Shrink(0)
+			other := ui.Row(c.Key("other-program")).Gap(10).Padding(6, 8).Radius(9).Cursor(ui.CursorPointer).
+				Label(locales.OtherProgram()).Focusable()
+			if other.Hovered() {
+				other.Background(subtle(t, 0.07))
+			}
+			other.Children(func() {
+				ui.Box(c).Size(22, 22).Center().Children(func() { ui.Icon(c, icTerminal).FontSize(17).TextColor(t.TextMuted) })
+				ui.Text(c, locales.OtherProgram()).SingleLine()
+			})
+			if other.Clicked() {
 				p.open = false
 				var path string
 				a.async(func(context.Context) (err error) {

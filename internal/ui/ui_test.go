@@ -13,12 +13,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/egoist/mygo/i18n"
 	"github.com/egoist/mygo/ui"
+
 	"github.com/Kel077/pith/internal/api"
 	"github.com/Kel077/pith/internal/mock"
 )
 
-var snapshots = flag.String("snapshots", "", "write PNG snapshots of the views to this directory")
+var (
+	snapshots    = flag.String("snapshots", "", "write PNG snapshots of the views to this directory")
+	snapshotLang = flag.String("lang", "en", "the language of the snapshots: en or zh-Hans")
+)
 
 // fakeDesktop stands in for the operating system: apps from the mock, and
 // icons that are colored squares.
@@ -27,11 +32,11 @@ type fakeDesktop struct{ quit bool }
 func (fakeDesktop) InstalledApps() ([]api.AppRef, error) {
 	return []api.AppRef{
 		{Path: "/Applications/Google Chrome.app", BundleID: "com.google.Chrome", Name: "Google Chrome"},
-		{Path: "/System/Applications/Mail.app", BundleID: "com.apple.mail", Name: "邮件"},
-		{Path: "/System/Applications/Music.app", BundleID: "com.apple.Music", Name: "音乐"},
+		{Path: "/System/Applications/Mail.app", BundleID: "com.apple.mail", Name: "Mail"},
+		{Path: "/System/Applications/Music.app", BundleID: "com.apple.Music", Name: "Music"},
 		{Path: "/Applications/Safari.app", BundleID: "com.apple.Safari", Name: "Safari"},
 		{Path: "/Applications/Slack.app", BundleID: "com.tinyspeck.slackmacgap", Name: "Slack"},
-		{Path: "/Applications/WeChat.app", BundleID: "com.tencent.xinWeChat", Name: "微信"},
+		{Path: "/Applications/WeChat.app", BundleID: "com.tencent.xinWeChat", Name: "WeChat"},
 	}, nil
 }
 
@@ -66,7 +71,7 @@ func (fakeDesktop) Open() ([]byte, error)          { return nil, nil }
 func (fakeDesktop) OpenURL(string)                 {}
 func (fakeDesktop) Reveal(string)                  {}
 func (fakeDesktop) SetOpenAtLogin(bool) error      { return nil }
-func (fakeDesktop) PreferredLanguages() []string   { return []string{"zh-Hans"} }
+func (fakeDesktop) SetLanguage(tag string)         { i18n.SetLocaleFunc(func() string { return tag }) }
 func (d *fakeDesktop) Quit()                       { d.quit = true }
 func (fakeDesktop) ReadState(string) string        { return "" }
 func (fakeDesktop) WriteState(string, string)      {}
@@ -81,7 +86,7 @@ func testApp(t *testing.T, o mock.Options) (*App, *mock.Service) {
 		svc.Simulate(70 * time.Second)
 		now = now.Add(70 * time.Second)
 	}
-	a := New(Options{Service: svc, Desktop: &fakeDesktop{}, Post: func(fn func()) { fn() }, Version: "0.1.0", Now: func() time.Time { return now }})
+	a := New(Options{Service: svc, Desktop: &fakeDesktop{}, Post: func(fn func()) { fn() }, Version: "0.1.0", Now: func() time.Time { return now }, Language: *snapshotLang})
 	a.Sync(context.Background())
 	return a, svc
 }

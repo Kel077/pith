@@ -770,7 +770,7 @@ func (s *Service) SetInterfaceUp(name string, up bool) {
 func sampleInterfaces() []api.Interface {
 	return []api.Interface{
 		{Name: "en0", Label: "Ethernet", Kind: api.KindEthernet, HardwareAddr: "02:00:5e:10:00:01", Up: true, Primary: true,
-			IPv4: []string{"192.168.1.20"}, IPv6: []string{"2001:db8:24::20"}, Router: "192.168.1.1", DNS: []string{"192.168.1.1", "1.1.1.1"}},
+			IPv4: []string{"10.0.1.20"}, IPv6: []string{"2001:db8:24::20"}, Router: "10.0.1.1", DNS: []string{"10.0.1.1", "1.1.1.1"}},
 		{Name: "en7", Label: "iPhone USB", Kind: api.KindCellular, HardwareAddr: "02:00:5e:10:00:07", Up: true,
 			IPv4: []string{"172.20.10.2"}, IPv6: []string{"2001:db8:77::2"}, Router: "172.20.10.1", DNS: []string{"172.20.10.1"}},
 		{Name: "en1", Label: "Wi-Fi", Kind: api.KindWiFi, HardwareAddr: "02:00:5e:10:00:02"},
@@ -784,14 +784,14 @@ func SampleConfig() api.Config {
 	phone := api.InterfaceRef{Name: "en7", Label: "iPhone USB", HardwareAddr: "02:00:5e:10:00:07"}
 	wifi := api.InterfaceRef{Name: "en1", Label: "Wi-Fi", HardwareAddr: "02:00:5e:10:00:02"}
 	c.Scenes = []api.Scene{
-		{ID: "home", Name: "日常", Rules: []api.Rule{
+		{ID: "home", Name: "Home", Rules: []api.Rule{
 			{ID: "r-wechat", Enabled: true, Apps: []api.AppRef{appWeChat}, Protocol: api.AnyProtocol, Action: api.Route, Via: []api.InterfaceRef{phone, eth}, Fallback: true},
 			{ID: "r-nas", Enabled: true, Note: "NAS", Targets: []string{"192.168.50.10"}, Protocol: api.AnyProtocol, Action: api.Route, Via: []api.InterfaceRef{eth}},
 			{ID: "r-video", Enabled: true, Apps: []api.AppRef{appChrome, appSafari}, Targets: []string{"*.youtube.com", "*.googlevideo.com"}, Protocol: api.AnyProtocol, Action: api.Route, Via: []api.InterfaceRef{eth, wifi}, Fallback: true},
 			{ID: "r-ads", Enabled: true, Targets: []string{"*.doubleclick.net", "*.ads.example.com"}, Protocol: api.AnyProtocol, Action: api.Block},
 			{ID: "r-music", Enabled: false, Apps: []api.AppRef{appMusic}, Protocol: api.TCP, Action: api.Route, Via: []api.InterfaceRef{wifi}},
 		}},
-		{ID: "office", Name: "公司", Rules: []api.Rule{
+		{ID: "office", Name: "Office", Rules: []api.Rule{
 			{ID: "r-intranet", Enabled: true, Targets: []string{"10.0.0.0/8", "*.corp.example.com"}, Protocol: api.AnyProtocol, Action: api.Route, Via: []api.InterfaceRef{eth}},
 			{ID: "r-slack", Enabled: true, Apps: []api.AppRef{appSlack}, Protocol: api.AnyProtocol, Action: api.Route, Via: []api.InterfaceRef{phone}, Fallback: true},
 		}},
@@ -802,12 +802,12 @@ func SampleConfig() api.Config {
 
 var (
 	appSafari = api.AppRef{Path: "/Applications/Safari.app", BundleID: "com.apple.Safari", Name: "Safari"}
-	appWeChat = api.AppRef{Path: "/Applications/WeChat.app", BundleID: "com.tencent.xinWeChat", Name: "微信"}
+	appWeChat = api.AppRef{Path: "/Applications/WeChat.app", BundleID: "com.tencent.xinWeChat", Name: "WeChat"}
 	appChrome = api.AppRef{Path: "/Applications/Google Chrome.app", BundleID: "com.google.Chrome", Name: "Google Chrome"}
-	appMusic  = api.AppRef{Path: "/System/Applications/Music.app", BundleID: "com.apple.Music", Name: "音乐"}
+	appMusic  = api.AppRef{Path: "/System/Applications/Music.app", BundleID: "com.apple.Music", Name: "Music"}
 	appSlack  = api.AppRef{Path: "/Applications/Slack.app", BundleID: "com.tinyspeck.slackmacgap", Name: "Slack"}
-	appMail   = api.AppRef{Path: "/System/Applications/Mail.app", BundleID: "com.apple.mail", Name: "邮件"}
-	appFinder = api.AppRef{Path: "/System/Library/CoreServices/Finder.app", BundleID: "com.apple.finder", Name: "访达"}
+	appMail   = api.AppRef{Path: "/System/Applications/Mail.app", BundleID: "com.apple.mail", Name: "Mail"}
+	appFinder = api.AppRef{Path: "/System/Library/CoreServices/Finder.app", BundleID: "com.apple.finder", Name: "Finder"}
 	appCurl   = api.AppRef{Path: "/usr/bin/curl", Name: "curl"}
 )
 

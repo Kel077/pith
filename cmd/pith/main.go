@@ -1,4 +1,4 @@
-// Command pith is 橘核 Pith, the menu bar app: an icon in the menu bar
+// Command pith is Pith, the menu bar app: an icon in the menu bar
 // whose panel turns routing on and off, and a window for the rules.
 //
 //	go run ./cmd/pith          the real backend
@@ -13,7 +13,9 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+
 	pithui "github.com/Kel077/pith/internal/ui"
+	"github.com/Kel077/pith/locales"
 )
 
 // version is the app's version, set by the build.
@@ -105,15 +107,18 @@ func (s *shell) ready(svc service, page, language string, openWindow bool) {
 	// The window exists from the start, hidden: backend updates reach the
 	// interface through it whether it shows or not.
 	s.window = mygo.NewWindow(mygo.WindowOptions{
-		Title:         "橘核 Pith",
+		Title:         locales.WindowTitle(),
 		Width:         1040,
 		Height:        680,
 		MinWidth:      880,
 		MinHeight:     560,
 		Hidden:        true,
 		TitleBarStyle: mygo.TitleBarHidden,
-		StateKey:      "main",
-		Content:       ui.View(s.app.WindowView),
+		// The traffic lights sit in the middle of the 64-DIP top bar, level
+		// with the capsule of the pages.
+		TrafficLightPosition: &mygo.Point{X: 22, Y: 25},
+		StateKey:             "main",
+		Content:              ui.View(s.app.WindowView),
 	})
 	s.window.OnClose(func(e *mygo.CloseEvent) {
 		if s.quitting {
@@ -127,7 +132,7 @@ func (s *shell) ready(svc service, page, language string, openWindow bool) {
 		ID:             "pith",
 		Icon:           pithui.TrayIcon(false),
 		IconIsTemplate: true,
-		ToolTip:        "橘核 Pith",
+		ToolTip:        locales.WindowTitle(),
 	})
 	if err != nil {
 		log.Fatal("tray: ", err)
@@ -137,7 +142,7 @@ func (s *shell) ready(svc service, page, language string, openWindow bool) {
 	tray.OnRightClick(func() {
 		s.closePanel()
 		menu := mygo.NewMenu([]*mygo.MenuItem{
-			{Label: pithui.Tr("Open Pith…", "打开橘核…"), Click: func(*mygo.MenuItem, *mygo.Window) { s.showWindow() }},
+			{Label: locales.OpenPithMenu(), Click: func(*mygo.MenuItem, *mygo.Window) { s.showWindow() }},
 			mygo.Separator(),
 			{Role: mygo.RoleQuit},
 		})
@@ -146,6 +151,10 @@ func (s *shell) ready(svc service, page, language string, openWindow bool) {
 		tray.PopUpMenu()
 	})
 	mygo.App.OnWillQuit(func(*mygo.QuitEvent) { tray.Destroy() })
+	mygo.App.OnLocaleChanged(func(string) {
+		s.window.SetTitle(locales.WindowTitle())
+		tray.SetToolTip(locales.WindowTitle())
+	})
 	s.app.Run(context.Background())
 	if openWindow && !mygo.App.WasOpenedAtLogin() {
 		s.showWindow()

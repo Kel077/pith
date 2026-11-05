@@ -2,14 +2,16 @@ package ui
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/egoist/mygo/plugins/glass"
 	"github.com/egoist/mygo/ui"
+
 	"github.com/Kel077/pith/internal/api"
+	"github.com/Kel077/pith/locales"
 )
 
 // activityPage is the state of the activity page.
@@ -30,41 +32,43 @@ type activityPage struct {
 // activityView shows what Pith routes: the speed through each interface,
 // and every connection with the interface it really went out through.
 func (a *App) activityView(c *ui.Context) {
-	t := c.Theme()
 	p := &a.activity
-	pageHeader(c, tr("Activity", "活动"), func() {
-		ui.Segmented(c, &p.view, tr("Connections", "连接"), tr("Apps", "应用"), tr("Traffic", "流量")).Label(tr("Show", "显示"))
-		if p.view == 2 {
-			return
-		}
-		ui.SearchField(c.Key("activity-search"), &p.query).Label(tr("Filter", "筛选")).Placeholder(tr("Filter", "筛选")).Width(200)
-		ic, label := icPause, tr("Pause", "暂停")
-		if p.paused {
-			ic, label = icPlay, tr("Resume", "继续")
-		}
-		if iconButton(c, ic, label).Clicked() {
-			p.paused = !p.paused
-			p.frozen = nil
-			if p.paused {
-				p.frozen = slices.Clone(a.conns)
+	pageHeader(c, locales.Activity(), "", func() {
+		// The capsules are not all as high: centered on each other.
+		ui.Row(c).Gap(8).Children(func() {
+			segmentedCapsule(c, "activity-view", locales.Show(), &p.view, []string{locales.Connections(), locales.Apps(), locales.Traffic()}, nil)
+			if p.view == 2 {
+				return
 			}
-		}
-		if iconButton(c, icEraser, tr("Clear", "清空")).Disabled(len(a.conns) == 0).Clicked() {
-			a.clearConnections()
-		}
+			activitySearch(c, &p.query)
+			ic, label := icPause, locales.Pause()
+			if p.paused {
+				ic, label = icPlay, locales.Resume()
+			}
+			// Buttons the keyboard reaches, as the theme's are.
+			if glassCapsuleButton(c, "activity-pause", ic, "").Label(label).Tooltip(label).Focusable().Clicked() {
+				p.paused = !p.paused
+				p.frozen = nil
+				if p.paused {
+					p.frozen = slices.Clone(a.conns)
+				}
+			}
+			empty := len(a.conns) == 0
+			clear := glassCapsuleButton(c, "activity-clear", icEraser, "").Label(locales.Clear()).Tooltip(locales.Clear()).Focusable().Disabled(empty)
+			if empty {
+				clear.Opacity(0.4)
+			}
+			if clear.Clicked() {
+				a.clearConnections()
+			}
+		})
 	})
 	if p.view == 2 {
 		a.trafficView(c)
 		return
 	}
 	if !a.isRunning() {
-		ui.Row(c).Margin(0, 24, 12).Padding(10, 14).Gap(10).Radius(10).Background(subtle(t, 0.05)).Shrink(0).Children(func() {
-			ui.Icon(c, icInfo).TextColor(t.TextMuted)
-			muted(c, tr("Routing is off. This page shows the connections Pith routes.", "分流没有打开。这里显示经过橘核分流的连接。")).Grow(1)
-			if ui.PrimaryButton(c, tr("Turn On", "打开分流")).Disabled(a.busy != "" || a.status.State == api.Starting).Clicked() {
-				a.start(a.cfg.Selected)
-			}
-		})
+		a.activityOffCapsule(c)
 	} else {
 		a.ifaceStrip(c)
 	}
@@ -73,6 +77,36 @@ func (a *App) activityView(c *ui.Context) {
 		return
 	}
 	a.connectionsTable(c)
+}
+
+// activitySearch filters the connections and the apps: a search field
+// shaped as a capsule of glass, as high as the buttons beside it.
+func activitySearch(c *ui.Context, query *string) {
+	t := c.Theme()
+	ui.SearchField(c.Key("activity-search"), query).Label(locales.Filter()).Placeholder(locales.Filter()).
+		Width(200).Height(34).Padding(0, 14, 0, 12).Radius(999).Material(glass.Glass{}).Border(1, rim(t))
+}
+
+// activityOffCapsule says that routing is off, so that no connection
+// comes, and turns it on: the state as the routing capsule shows it, and
+// the action, in a capsule of glass; what the page shows is its tooltip.
+func (a *App) activityOffCapsule(c *ui.Context) {
+	t := c.Theme()
+	ui.Row(c).Padding(0, 32, 14).Shrink(0).Children(func() {
+		bar := capsule(c.Key("routing-off")).Gap(10).Padding(4, 4, 4, 14).Tooltip(locales.RoutingIsOffThisPageShows())
+		bar.Children(func() {
+			dot(c, t.TextMuted, 8, true)
+			ui.Text(c, locales.NotRouting()).FontWeight(500).SingleLine()
+			busy := a.busy != "" || a.status.State == api.Starting
+			on := primaryCapsule(c, "routing-on", icPower, locales.TurnOnRouting()).Padding(6, 14, 6, 12).Focusable().Disabled(busy)
+			if busy {
+				on.Opacity(0.5)
+			}
+			if on.Clicked() {
+				a.start(a.cfg.Selected)
+			}
+		})
+	})
 }
 
 // ifaceStrip shows, for each interface that carried traffic in the last
@@ -95,13 +129,15 @@ func (a *App) ifaceStrip(c *ui.Context) {
 	// The second the traffic was read in is not over: count from the one
 	// before it.
 	now := a.trafficAt.Truncate(time.Second)
-	ui.Row(c).Padding(0, 24, 12).Gap(10).Shrink(0).Children(func() {
+	ui.Row(c).Padding(0, 32, 14).Gap(12).Shrink(0).Children(func() {
 		for _, name := range names {
 			a.ifaceSpeedCard(c, name, series[name], now)
 		}
 	})
 }
 
+// ifaceSpeedCard is a small pane of an interface's speed: now, and over
+// the last minute.
 func (a *App) ifaceSpeedCard(c *ui.Context, name string, samples []api.TrafficSample, now time.Time) {
 	t := c.Theme()
 	col := a.colorOf(name)
@@ -119,19 +155,19 @@ func (a *App) ifaceSpeedCard(c *ui.Context, name string, samples []api.TrafficSa
 			nowDown, nowUp = s.Received, s.Sent
 		}
 	}
-	ui.Column(c.Key("speed-"+name)).Grow(1).Basis(0).MinWidth(180).Padding(12, 14).Gap(6).Radius(12).Border(1, t.Border).Children(func() {
+	pane(c.Key("speed-"+name)).Grow(1).Basis(0).MinWidth(180).Padding(12, 16, 12).Gap(8).Children(func() {
 		ui.Row(c).Gap(8).Children(func() {
 			dot(c, col, 8, false)
-			ui.Text(c, a.ifaceLabel(api.InterfaceRef{Name: name})).FontWeight(600).SingleLine().Grow(1)
-			ui.Text(c, "↓ "+rate(nowDown)).FontSize(12).Font("monospace").SingleLine()
-			ui.Text(c, "↑ "+rate(nowUp)).FontSize(12).Font("monospace").TextColor(t.TextMuted).SingleLine()
+			ui.Text(c, a.ifaceLabel(api.InterfaceRef{Name: name})).FontWeight(600).SingleLine().Grow(1).MinWidth(0)
+			ui.Text(c, "↓ "+rate(nowDown)).FontSize(12).FontWeight(600).FontFeatures("tnum").SingleLine()
+			ui.Text(c, "↑ "+rate(nowUp)).FontSize(12).FontFeatures("tnum").TextColor(t.TextMuted).SingleLine()
 		})
 		sparkline(c, down[:], up[:], col).Height(36)
 	})
 }
 
-// sparkline draws received bytes as a filled line, and sent bytes as a
-// fainter line, on one scale.
+// sparkline draws received bytes as a line over an area fading out below
+// it, and sent bytes as a fainter line, on one scale.
 func sparkline(c *ui.Context, down, up []float32, col ui.Color) ui.Element {
 	return ui.Box(c).FillWidth().Draw(func(p *ui.Painter, r ui.Rect) {
 		peak := float32(1)
@@ -153,7 +189,7 @@ func sparkline(c *ui.Context, down, up []float32, col ui.Color) ui.Element {
 			area.LineTo(x, y)
 		}
 		area.LineTo(r.X+r.W, r.Y+r.H).Close()
-		p.FillPath(area, col.Alpha(0.16))
+		p.FillPathGradient(area, ui.LinearGradient{From: col.Alpha(0.30), To: col.Alpha(0.02), Angle: 180})
 		p.StrokePolyline(line, 1.5, col)
 		upLine := make([][2]float32, n)
 		for i, v := range up {
@@ -187,32 +223,46 @@ func (a *App) shownConns() []*api.Connection {
 
 // Column widths of the connections table.
 const (
-	colTime   = 64
-	colApp    = 170
-	colRoute  = 190
-	colBytes  = 132
-	tablePadX = 24
+	colTime  = 68
+	colApp   = 170
+	colRoute = 190
+	colBytes = 120
+	// tablePadX is the room between a table's pane and its columns.
+	tablePadX = 18
 )
+
+// activityTable holds a table of the page in one pane of glass: the titles
+// of its columns, then its rows divided by hairlines, as many as fit; the
+// rows scroll in the pane when the window is too short for them.
+func activityTable(c *ui.Context, content func()) {
+	ui.Column(c).Grow(1).MinHeight(0).Padding(0, 32, 20).Children(func() {
+		pane(c).Shrink(1).MinHeight(0).Clip().Children(content)
+	})
+}
+
+// activityTableHead is the row of a table's column titles, over a hairline.
+func activityTableHead(c *ui.Context, titles func()) {
+	ui.Row(c).Padding(10, tablePadX, 9).Gap(12).Shrink(0).BorderWidth(0, 0, 1, 0).BorderColor(hairline(c.Theme())).Children(titles)
+}
+
+// activityColumnTitle is the title of a column w DIPs wide, or of the one
+// taking the rest when w is 0; end puts it at the column's end, over
+// numbers.
+func activityColumnTitle(c *ui.Context, s string, w float32, end bool) {
+	e := ui.Text(c, s).FontSize(12).FontWeight(500).TextColor(c.Theme().TextMuted).SingleLine()
+	if end {
+		e.TextAlign(ui.End)
+	}
+	if w > 0 {
+		e.Width(w).Shrink(0)
+	} else {
+		e.Grow(1).MinWidth(0)
+	}
+}
 
 func (a *App) connectionsTable(c *ui.Context) {
 	t := c.Theme()
 	conns := a.shownConns()
-	ui.Row(c).Padding(6, tablePadX+12).Gap(12).Shrink(0).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-		for _, h := range []struct {
-			s string
-			w float32
-		}{{tr("Time", "时间"), colTime}, {tr("App", "应用"), colApp}, {tr("Destination", "目标"), 0}, {tr("Route", "出口"), colRoute}, {tr("Traffic", "流量"), colBytes}} {
-			e := ui.Text(c, h.s).FontSize(12).FontWeight(600).TextColor(t.TextMuted).SingleLine()
-			if h.w == colBytes {
-				e.TextAlign(ui.End)
-			}
-			if h.w > 0 {
-				e.Width(h.w).Shrink(0)
-			} else {
-				e.Grow(1)
-			}
-		}
-	})
 	// Newest first: at the top, the list stays there as connections come.
 	a.activity.conns.KeepOffset = true
 	a.activity.conns.Key = func(i int) any {
@@ -222,41 +272,50 @@ func (a *App) connectionsTable(c *ui.Context) {
 		return i
 	}
 	now := a.Now()
-	ui.List(c, &a.activity.conns, len(conns), func(i int) {
-		a.connRow(c, conns[i], now)
-	}).Grow(1).Padding(4, tablePadX, 12).Label(tr("Connections", "连接")).Children(func() {
-		if len(conns) == 0 {
-			text := tr("No connections yet.", "还没有连接。")
-			if a.activity.query != "" {
-				text = tr("No connection matches.", "没有匹配的连接。")
+	activityTable(c, func() {
+		activityTableHead(c, func() {
+			activityColumnTitle(c, locales.Time(), colTime, false)
+			activityColumnTitle(c, locales.App(), colApp, false)
+			activityColumnTitle(c, locales.Destination(), 0, false)
+			activityColumnTitle(c, locales.Route(), colRoute, false)
+			activityColumnTitle(c, locales.Traffic(), colBytes, true)
+		})
+		ui.List(c, &a.activity.conns, len(conns), func(i int) {
+			a.connRow(c, conns[i], now)
+		}).Shrink(1).MinHeight(0).Dividers(1, hairline(t)).Label(locales.Connections()).Children(func() {
+			if len(conns) == 0 {
+				text := locales.NoConnectionsYet()
+				if a.activity.query != "" {
+					text = locales.NoConnectionMatches()
+				}
+				muted(c, text).Padding(28).Margin(0, ui.Auto)
 			}
-			muted(c, text).Padding(24).Margin(0, ui.Auto)
-		}
+		})
 	})
 }
 
 func (a *App) connRow(c *ui.Context, cn *api.Connection, now time.Time) {
 	t := c.Theme()
-	row := ui.Row(c).Gap(12).Padding(7, 12).Radius(8)
+	row := ui.Row(c).Gap(12).Padding(9, tablePadX)
 	if row.Hovered() {
-		row.Background(subtle(t, 0.04))
+		row.Background(subtle(t, 0.03))
 	}
 	open := cn.Ended.IsZero()
 	row.Children(func() {
-		ui.Text(c, clock(cn.Started, now)).FontSize(12).Font("monospace").TextColor(t.TextMuted).Width(colTime).Shrink(0).SingleLine()
+		ui.Text(c, clock(cn.Started, now)).FontSize(12).FontFeatures("tnum").TextColor(t.TextMuted).Width(colTime).Shrink(0).SingleLine()
 		ui.Row(c).Gap(8).Width(colApp).Shrink(0).Children(func() {
-			a.appIconView(c, cn.App, 18)
+			a.appIconView(c, cn.App, 20)
 			ui.Text(c, appName(cn.App)).SingleLine().Shrink(1)
 		})
-		ui.Column(c).Grow(1).MinWidth(0).Gap(1).Children(func() {
+		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			ui.Row(c).Gap(6).Children(func() {
 				host := cn.Domain
 				if host == "" {
 					host = cn.Remote
 				}
-				ui.Text(c, host).SingleLine().Shrink(1)
+				ui.Text(c, host).FontWeight(500).SingleLine().Shrink(1)
 				if open {
-					dot(c, running(t), 6, false).Tooltip(tr("Open", "进行中"))
+					dot(c, running(t), 6, false).Tooltip(locales.ConnectionOpen())
 				}
 			})
 			detail := strings.ToUpper(string(cn.Protocol))
@@ -268,27 +327,27 @@ func (a *App) connRow(c *ui.Context, cn *api.Connection, now time.Time) {
 			ui.Text(c, detail).FontSize(11).TextColor(t.TextMuted).SingleLine()
 		})
 		ui.Row(c).Width(colRoute).Shrink(0).Gap(6).Children(func() { a.outcomeView(c, cn) })
-		ui.Column(c).Width(colBytes).Shrink(0).Gap(1).AlignItems(ui.End).Children(func() {
-			ui.Text(c, "↓ "+byteSize(cn.Received)).FontSize(12).Font("monospace").SingleLine()
-			ui.Text(c, "↑ "+byteSize(cn.Sent)).FontSize(11).Font("monospace").TextColor(t.TextMuted).SingleLine()
+		ui.Column(c).Width(colBytes).Shrink(0).Gap(2).AlignItems(ui.End).Children(func() {
+			ui.Text(c, "↓ "+byteSize(cn.Received)).FontSize(12).FontFeatures("tnum").SingleLine()
+			ui.Text(c, "↑ "+byteSize(cn.Sent)).FontSize(11).FontFeatures("tnum").TextColor(t.TextMuted).SingleLine()
 		})
 	})
 	row.Tooltip(a.connTooltip(cn))
 	row.ContextMenu(func(m *ui.Menu) {
-		if m.Item(trf("New Rule for %s…", "为「%s」新建规则…", appName(cn.App))).Disabled(cn.App.Path == "").Chosen() {
+		if m.Item(locales.NewRuleForApp(appName(cn.App))).Disabled(cn.App.Path == "").Chosen() {
 			a.ruleFromConnection(cn, false)
 		}
 		if cn.Domain != "" || cn.Remote != "" {
-			label := tr("New Rule for This Destination…", "为这个目标新建规则…")
+			label := locales.NewRuleForThisDestination()
 			if m.Item(label).Chosen() {
 				a.ruleFromConnection(cn, true)
 			}
 		}
 		m.Separator()
-		if m.Item(tr("Show Rule", "查看规则")).Disabled(cn.RuleID == "").Chosen() {
+		if m.Item(locales.ShowRule()).Disabled(cn.RuleID == "").Chosen() {
 			a.showRule(cn.RuleID)
 		}
-		if m.Item(tr("Show Program in Finder", "在访达中显示程序")).Disabled(cn.Process.Path == "").Chosen() {
+		if m.Item(locales.ShowProgramInFinder()).Disabled(cn.Process.Path == "").Chosen() {
 			a.Desktop.Reveal(cn.Process.Path)
 		}
 	})
@@ -300,23 +359,23 @@ func (a *App) outcomeView(c *ui.Context, cn *api.Connection) {
 	t := c.Theme()
 	switch cn.Outcome {
 	case api.Blocked:
-		tagChip(c, icBlock, tr("Blocked", "已拦截"), t.Danger)
+		tagChip(c, icBlock, locales.Blocked(), t.Danger)
 	case api.Unreachable:
-		tagChip(c, icAlert, tr("Failed", "连接失败"), t.Warning).Tooltip(cn.Problem)
+		tagChip(c, icAlert, locales.Failed(), t.Warning).Tooltip(cn.Problem)
 	case api.System:
 		// macOS's own routing: a quiet chip, apart from the rules' colors.
 		if cn.Interface != "" {
-			a.systemChip(c, cn.Interface).Tooltip(tr("No rule matched: the system's network", "没有命中规则，走系统默认网络"))
+			a.systemChip(c, cn.Interface).Tooltip(locales.NoRuleMatchedTheSystemS())
 		}
 		if cn.RuleID != "" {
-			ui.Text(c, tr("fallback", "回退")).FontSize(11).TextColor(t.Warning).SingleLine().Tooltip(tr("None of its rule's interfaces connected", "规则里的网卡都没连上，回退到系统网络"))
+			ui.Text(c, locales.OutcomeFallback()).FontSize(11).TextColor(t.Warning).SingleLine().Tooltip(locales.NoneOfItsRuleSInterfaces())
 		}
 	default:
 		if cn.Interface != "" {
 			a.ifaceNameChip(c, cn.Interface)
 		}
 		if cn.Outcome == api.Fallback {
-			ui.Text(c, tr("backup", "备选")).FontSize(11).TextColor(t.Warning).SingleLine().Tooltip(tr("Its rule's first interface didn't connect", "规则里的首选网卡没连上，用了备选网卡"))
+			ui.Text(c, locales.OutcomeBackup()).FontSize(11).TextColor(t.Warning).SingleLine().Tooltip(locales.ItsRuleSFirstInterfaceDidn())
 		}
 	}
 }
@@ -332,11 +391,7 @@ func (a *App) connTooltip(cn *api.Connection) string {
 		for i := range a.cfg.Scenes {
 			sc := &a.cfg.Scenes[i]
 			if k := ruleIndex(sc, cn.RuleID); k >= 0 {
-				if zh() {
-					b.WriteString(fmt.Sprintf("\n「%s」第 %d 条规则：%s", sceneName(sc), k+1, a.ruleTitle(&sc.Rules[k])))
-				} else {
-					b.WriteString(fmt.Sprintf("\nRule %d of “%s”: %s", k+1, sceneName(sc), a.ruleTitle(&sc.Rules[k])))
-				}
+				b.WriteString("\n" + locales.ConnRule(k+1, sceneName(sc), a.ruleTitle(&sc.Rules[k])))
 			}
 		}
 	}
@@ -445,6 +500,13 @@ func (a *App) appTotals() []appTotal {
 	return out
 }
 
+// Column widths of the apps table.
+const (
+	activityColIfaces  = 220
+	activityColConns   = 80
+	activityColTraffic = 200
+)
+
 func (a *App) appsTable(c *ui.Context) {
 	t := c.Theme()
 	totals := a.appTotals()
@@ -452,53 +514,65 @@ func (a *App) appsTable(c *ui.Context) {
 	for _, tot := range totals {
 		peak = max(peak, tot.sent+tot.recv)
 	}
-	ui.Row(c).Padding(6, tablePadX+12).Gap(12).Shrink(0).BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
-		ui.Text(c, tr("App", "应用")).FontSize(12).FontWeight(600).TextColor(t.TextMuted).Grow(1)
-		ui.Text(c, tr("Interfaces", "网卡")).FontSize(12).FontWeight(600).TextColor(t.TextMuted).Width(220).Shrink(0)
-		ui.Text(c, tr("Connections", "连接")).FontSize(12).FontWeight(600).TextColor(t.TextMuted).Width(80).Shrink(0)
-		ui.Text(c, tr("Traffic", "流量")).FontSize(12).FontWeight(600).TextColor(t.TextMuted).Width(200).Shrink(0)
-	})
-	ui.List(c, &a.activity.apps, len(totals), func(i int) {
-		tot := totals[i]
-		row := ui.Row(c.Key(tot.app.Path)).Gap(12).Padding(9, 12).Radius(8)
-		if row.Hovered() {
-			row.Background(subtle(t, 0.04))
-		}
-		row.Children(func() {
-			ui.Row(c).Gap(10).Grow(1).MinWidth(0).Children(func() {
-				a.appIconView(c, tot.app, 24)
-				ui.Text(c, appName(tot.app)).SingleLine().Shrink(1)
-				if tot.open > 0 {
-					ui.Text(c, trf("%d open", "%d 个进行中", tot.open)).FontSize(11).TextColor(running(t)).SingleLine()
-				}
-			})
-			ui.Row(c).Width(220).Shrink(0).Gap(6).Children(func() {
-				for _, name := range tot.ifaces[:min(len(tot.ifaces), 2)] {
-					a.ifaceNameChip(c, name)
-				}
-			})
-			ui.Text(c, strconv.Itoa(tot.count)).Width(80).Shrink(0).Font("monospace").FontSize(12)
-			ui.Column(c).Width(200).Shrink(0).Gap(4).Children(func() {
-				ui.Row(c).Gap(10).Children(func() {
-					ui.Text(c, "↓ "+byteSize(tot.recv)).FontSize(12).Font("monospace").SingleLine()
-					ui.Text(c, "↑ "+byteSize(tot.sent)).FontSize(12).Font("monospace").TextColor(t.TextMuted).SingleLine()
-				})
-				frac := float32(tot.sent+tot.recv) / float32(peak)
-				ui.Box(c).FillWidth().Height(4).Radius(2).Background(subtle(t, 0.07)).Children(func() {
-					ui.Box(c).WidthPercent(max(2, frac*100)).Height(4).Radius(2).Background(t.Accent)
-				})
-			})
+	activityTable(c, func() {
+		activityTableHead(c, func() {
+			activityColumnTitle(c, locales.App(), 0, false)
+			activityColumnTitle(c, locales.Interfaces(), activityColIfaces, false)
+			activityColumnTitle(c, locales.Connections(), activityColConns, false)
+			activityColumnTitle(c, locales.Traffic(), activityColTraffic, false)
 		})
-		row.ContextMenu(func(m *ui.Menu) {
-			if m.Item(trf("New Rule for %s…", "为「%s」新建规则…", appName(tot.app))).Disabled(tot.app.Path == "").Chosen() {
-				a.openEditor(a.sceneID, -1)
-				a.editor.rule.Apps = []api.AppRef{tot.app}
-				a.page = "rules"
+		ui.List(c, &a.activity.apps, len(totals), func(i int) {
+			tot := totals[i]
+			row := ui.Row(c.Key(tot.app.Path)).Gap(12).Padding(11, tablePadX)
+			if row.Hovered() {
+				row.Background(subtle(t, 0.03))
+			}
+			row.Children(func() {
+				ui.Row(c).Gap(10).Grow(1).MinWidth(0).Children(func() {
+					a.appIconView(c, tot.app, 26)
+					ui.Text(c, appName(tot.app)).FontWeight(500).SingleLine().Shrink(1)
+					if tot.open > 0 {
+						ui.Row(c).Gap(5).Shrink(0).Children(func() {
+							dot(c, running(t), 6, false)
+							ui.Text(c, locales.AppOpenCount(tot.open)).FontSize(11).TextColor(t.TextMuted).SingleLine()
+						})
+					}
+				})
+				ui.Row(c).Width(activityColIfaces).Shrink(0).Gap(6).Children(func() {
+					for _, name := range tot.ifaces[:min(len(tot.ifaces), 2)] {
+						a.ifaceNameChip(c, name)
+					}
+				})
+				ui.Text(c, strconv.Itoa(tot.count)).Width(activityColConns).Shrink(0).FontFeatures("tnum").FontSize(12)
+				ui.Column(c).Width(activityColTraffic).Shrink(0).Gap(6).Children(func() {
+					ui.Row(c).Gap(10).Children(func() {
+						ui.Text(c, "↓ "+byteSize(tot.recv)).FontSize(12).FontFeatures("tnum").SingleLine()
+						ui.Text(c, "↑ "+byteSize(tot.sent)).FontSize(12).FontFeatures("tnum").TextColor(t.TextMuted).SingleLine()
+					})
+					activityShareBar(c, float32(tot.sent+tot.recv)/float32(peak))
+				})
+			})
+			row.ContextMenu(func(m *ui.Menu) {
+				if m.Item(locales.NewRuleForApp(appName(tot.app))).Disabled(tot.app.Path == "").Chosen() {
+					a.openEditor(a.sceneID, -1)
+					a.editor.rule.Apps = []api.AppRef{tot.app}
+					a.page = "rules"
+				}
+			})
+		}).Shrink(1).MinHeight(0).Dividers(1, hairline(t)).Label(locales.Apps()).Children(func() {
+			if len(totals) == 0 {
+				muted(c, locales.NoAppsYet()).Padding(28).Margin(0, ui.Auto)
 			}
 		})
-	}).Grow(1).Padding(4, tablePadX, 12).Label(tr("Apps", "应用")).Children(func() {
-		if len(totals) == 0 {
-			muted(c, tr("No apps yet.", "还没有应用。")).Padding(24).Margin(0, ui.Auto)
-		}
+	})
+}
+
+// activityShareBar shows a share, from 0 to 1, as a soft bar of the
+// accent, brightening toward its end, on a faint track.
+func activityShareBar(c *ui.Context, share float32) {
+	t := c.Theme()
+	fill := ui.LinearGradient{From: t.Accent.Alpha(0.35), To: t.Accent, Angle: 90, Oklab: true}
+	ui.Box(c).FillWidth().Height(5).Radius(999).Background(subtle(t, 0.06)).Children(func() {
+		ui.Box(c).WidthPercent(max(2, share*100)).Height(5).Radius(999).LinearGradient(fill)
 	})
 }

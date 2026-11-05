@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/ui"
+
 	"github.com/Kel077/pith/internal/api"
+	"github.com/Kel077/pith/locales"
 )
 
 // Desktop is what the interface asks of the operating system.
@@ -31,7 +33,9 @@ type Desktop interface {
 	OpenURL(url string)
 	Reveal(path string)
 	SetOpenAtLogin(on bool) error
-	PreferredLanguages() []string
+	// SetLanguage shows the app in a language of its catalogs ("en",
+	// "zh-Hans"), or the system's for "".
+	SetLanguage(tag string)
 	Quit()
 	// ReadState and WriteState keep a little state of the interface's
 	// between launches, by name.
@@ -88,6 +92,7 @@ type App struct {
 	colorsFor int                 // how many interfaces colors was made for
 	panelH    int                 // the height the panel's content took
 
+	langSet   string      // the language last asked of the desktop
 	routing   atomic.Bool // routing runs: read off the main thread
 	gen       uint64      // changes made to cfg; the saver writes the newest
 	saves     saver
@@ -331,7 +336,10 @@ func (a *App) setConfig(cfg api.Config) {
 	if a.scene(a.sceneID) == nil {
 		a.sceneID = cfg.Selected
 	}
-	lang = resolveLanguage(cmp.Or(a.Language, cfg.Settings.Language), a.Desktop.PreferredLanguages())
+	if tag := cmp.Or(a.Language, cfg.Settings.Language); tag != a.langSet {
+		a.langSet = tag
+		a.Desktop.SetLanguage(tag)
+	}
 	a.updateTray()
 }
 
@@ -353,7 +361,7 @@ func sceneName(s *api.Scene) string {
 		return ""
 	}
 	if s.Name == "" {
-		return tr("Default", "默认")
+		return locales.SceneDefaultName()
 	}
 	return s.Name
 }
@@ -697,21 +705,21 @@ func errorText(err error) string {
 	msg := ""
 	switch api.Code(err) {
 	case api.ErrHelperMissing:
-		msg = tr("The helper is not installed.", "后台助手还没有安装。")
+		msg = locales.TheHelperIsNotInstalled()
 	case api.ErrHelperOutdated:
-		msg = tr("The helper needs an update.", "后台助手需要更新。")
+		msg = locales.TheHelperNeedsAnUpdate()
 	case api.ErrCanceled:
-		msg = tr("Canceled.", "已取消。")
+		msg = locales.Canceled()
 	case api.ErrInvalidConfig:
-		msg = tr("These settings can't be saved.", "这些设置无法保存。")
+		msg = locales.TheseSettingsCanTBeSaved()
 	case api.ErrNoScene:
-		msg = tr("That scene no longer exists.", "这个场景已经不存在了。")
+		msg = locales.ThatSceneNoLongerExists()
 	case api.ErrRouteConflict:
-		msg = tr("Another VPN or network tool holds the routes Pith needs.", "另一个 VPN 或网络工具占用了橘核需要的路由。")
+		msg = locales.AnotherVpnOrNetworkToolHolds()
 	case api.ErrNetworkLost:
-		msg = tr("Routing cut the internet, so Pith undid it.", "启动分流后网络断开了，橘核已自动撤销。")
+		msg = locales.RoutingCutTheInternetSoPith()
 	default:
-		msg = tr("Something went wrong.", "出了点问题。")
+		msg = locales.SomethingWentWrong()
 		if detail == "" {
 			detail = err.Error()
 		}

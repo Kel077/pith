@@ -13,5 +13,11 @@
       "LSApplicationCategoryType": "public.app-category.utilities"
     }
   },
-  "linux": { "webview": false }
+  "linux": {
+    "webview": false
+  },
+  "i18n": {
+    "dir": "locales",
+    "source": "en"
+  }
 }
