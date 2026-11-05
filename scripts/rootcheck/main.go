@@ -28,6 +28,7 @@ const usage = `rootcheck prepares a private, scoped acceptance session.
   install   --session DIRECTORY [--auth keychain:SERVICE]
   check     --session DIRECTORY [--batch | --safe-failure | --preserve | --app-bypass | --observe 90s]
   check     --session DIRECTORY --crash [--auth keychain:SERVICE]
+  check     --session DIRECTORY --observe 90s --renew-hotspot
   stop      --session DIRECTORY
   rebaseline --session DIRECTORY --label MODE [--accept-external-change]
   uninstall --session DIRECTORY [--auth keychain:SERVICE]
@@ -91,6 +92,7 @@ func run(args []string) error {
 		fs.BoolVar(&opts.appBypass, "app-bypass", false, "verify app-specific IP/domain routing and an unmatched process using the same frozen target")
 		fs.BoolVar(&opts.crash, "crash", false, "deliberately crash the reviewed active helper once, then verify cleanup and idle restart")
 		fs.DurationVar(&opts.observe, "observe", 0, "manual observation window, at most 90s; always stops afterward")
+		fs.BoolVar(&opts.renewHotspot, "renew-hotspot", false, "explicitly renew hotspot A during --observe, then verify a new routed connection")
 	}
 	if err := fs.Parse(args[1:]); err != nil {
 		return err

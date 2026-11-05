@@ -146,7 +146,10 @@ cancel click or administrator-password dialog is expected; Keychain access may
 still be denied or require user authorization under the user's macOS settings.
 
 The harness reads `/usr/bin/security find-generic-password -s SERVICE -w` into a
-bounded memory buffer and passes it only on stdin to `/usr/bin/sudo -S -k -p ''`.
+bounded memory buffer. Hex-looking output requires a matching private `-g` read:
+only an explicit `password: 0x...` representation permits decoding non-ASCII
+bytes; a literal hexadecimal password stays literal. Failed or inconsistent
+reads abort authorization. The password goes only on stdin to `/usr/bin/sudo -S -k -p ''`.
 Only the frozen reviewed script goes in the command arguments. Passwords never
 enter arguments, reports, files or forwarded child output, and temporary buffers
 are cleared afterward. Each use records its operation, mode, script checksum,
@@ -176,7 +179,7 @@ alternative removal authorization, not an automatic extra step.
 | 2. Installation | `"$PITH_TEST_BIN/rootcheck" install --session "$PITH_SESSION"` | Same install prompt; enter the administrator password. Creates the root-owned helper and launchd plist/data directory, plus a listed shared parent only if absent; the daemon creates its authenticated socket. It starts idle. | Version and executable checksum match; plist arguments contain only the reviewed host captures; plist inode/mtime identify this installation; engine is stopped; routes and utun inventory match the initial snapshot. Undo is step 9 or emergency cleanup. |
 | 3. One smoke check | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION"` | No dialog. Saves only a temporary config, starts the scoped utun with SafeStart, requests HTTPS through ordinary system routing, then hot-applies an IP rule for interface A. | SafeStart succeeds; both logged flows belong to this test process; outcome, rule, interface, bidirectional byte counts, and live traffic are correct. `Stop` restores routes and utun inventory before the command returns. Only a successful smoke check unlocks later cases. |
 | 4. Rule batch | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --batch` | No dialog. Starts a fresh bounded capture and changes only the test scene. | Verifies interface B, TLS SNI domain matching, the second target of one rule, block priority over an earlier route, missing-interface fallback, explicit system fallback, and strict unreachable. Opens TLS on A, changes the rule to B, completes the same connection on A, then verifies a new connection on B. The capture start timestamp stays unchanged during hot reload. Ends stopped. |
-| 4a. Optional app-specific routing | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --app-bypass` | No dialog. Requires a passed smoke check and public-IP preflight evidence. Uses the current standalone `rootcheck` executable path as the app/tool identity, and creates a checksum-verified copy at a different path inside the private session directory. Each controlled child makes exactly one ordinary TLS request to the same frozen target. No helper installation, capture expansion, or VPN setting change occurs. | The parent matches app+IP and then app+domain rules through physical interface A. Under each rule, the different executable remains unmatched and uses the saved system route. A final app block after the route rule wins. Every case checks PID, executable/app path, destination, rule, outcome, interface, and byte counts; successful requests must match the physical or system public-IP preflight. Children are acknowledged and waited for on every outcome, their copy is removed, and routing ends stopped. Identical public exits do not prove a distinct exit-node bypass. |
+| 4a. Optional app-specific routing | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --app-bypass` | No dialog. Requires a passed smoke check and public-IP preflight evidence. Uses the current standalone `rootcheck` executable path as the app/tool identity, and creates a checksum-verified copy at a different path inside the private session directory. Each controlled child makes exactly one ordinary TLS request to the same frozen target. No helper installation, capture expansion, or VPN setting change occurs. | The parent matches app+IP and then app+domain rules through physical interface A. Under each rule, the different executable remains unmatched and uses the saved system route. A final app block after the route rule wins. Every case checks PID, executable/app path, destination, rule, outcome, interface, and byte counts; successful requests use the public-IP drift policy below. Children are acknowledged and waited for on every outcome, their copy is removed, and routing ends stopped. Identical public exits do not prove a distinct exit-node bypass. |
 | 5. Native TCP preservation | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --preserve` | No dialog. Establishes an ordinary TLS connection **before** capture, starts capture, then sends HTTP over that same native connection. | The pre-existing kernel connection survives route activation and receives a verified HTTPS response. This flow is not claimed as a new proxied/logged connection. Ends stopped. A server that closes idle TLS before the request makes this case inconclusive; do not count it as a pass. |
 | 6. SafeStart rollback | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --safe-failure` | No dialog. Starts with a block rule for the exact SafeStart destination and SafeStart enabled. | `Start` returns `ErrNetworkLost`; status reports the same failure; routes/utun are restored. Cleanup calls `Stop` so the next command sees an idle helper. |
 | 7. Optional observation | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --observe 90s` | No dialog. Runs the smoke checks, then holds the reviewed host capture for at most 90 seconds. See the manual cases below. | The harness records an observation window, not a pass for an unimplemented manual assertion. It polls helper status and stops on interruption, failure, or expiry. |
@@ -199,9 +202,45 @@ ordinary traffic refreshing those caches does not change the baseline. Static
 host routes, cloning parents and VPN routes remain in the comparison. Another
 VPN, interface change, or configured-route change can make the result
 inconclusive; the harness never removes an unrelated route to force a pass.
-It also checks public-IP
-echoes against preflight when available. A rotating public exit can make this
-evidence inconclusive and requires review rather than an automatic retry.
+Connection records (process, target, rule, outcome, interface and bytes) are the
+primary path evidence. Public-IP echoes supplement them: an unchanged expected
+exit passes; a changed echo that matches no other system/adapter preflight passes
+with `exitIPDrift` and an explanatory note. An echo matching another preflight
+exit fails. Missing/invalid echoes fail when a preflight supplied one. A shared
+expected exit still cannot distinguish two paths by itself. The same policy
+applies to app-bypass requests; carrier NAT rotation does not by itself fail a
+correctly attributed connection.
+
+### Optional hotspot renewal during observation
+
+Only an explicit `check --observe 90s --renew-hotspot` renews interface A. It
+requires prior smoke, a connected unlocked M2000, and public-IP preflights.
+Ordinary `--observe` never contacts the hotspot. Review this separate device
+action first: it briefly interrupts the hotspot's cellular connection and uses
+the app's existing stored credential through `client.RenewHotspot`. It requires
+no additional root authorization and does not set or replace any password.
+Do not run it while keychain/device operations are suspended by the user.
+
+After the current capture's system/A checks, the harness archives intent, calls
+renewal once, and polls the same capture identity/start time every 250 ms. A
+stopped, failed, restarted or replaced capture fails the case. After renewal it
+requires the client's successful A probe, a fresh bound request to the frozen
+endpoint, and a new ordinary request with the expected A rule/connection record.
+The latter uses the fresh bound echo under the same drift policy. The private
+report retains all evidence, including the client's independent probe addresses.
+An unchanged public IP is reported as observed; renewal cannot promise a different
+carrier NAT allocation. This automated case returns as soon as verification
+finishes; `--observe` is its upper time bound, not a minimum wait.
+
+Cancellation waits for the client's bounded cellular-data restoration before
+Stop; no renewal worker remains running after return. Stop still checks owned
+capture removal. A's changed IPv4 address or IPv6 prefix/connected routes produces
+external-change evidence, never a Pith-residue claim or an automatic baseline
+rewrite. IPv6 privacy rotation within the same prefix alone remains harmless.
+Inspect the private changes and explicitly rebaseline with
+`--accept-external-change` before the next smoke or final baseline comparison.
+There is no automatic retry, second renewal, or device reconfiguration to undo
+the new carrier-assigned addresses.
 
 Every capture start first clears and saves the previous cleanup proof, then
 durably records a pending attempt before calling Start. Failed Stop, non-stopped

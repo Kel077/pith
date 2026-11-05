@@ -22,13 +22,14 @@ import (
 )
 
 type checkOptions struct {
-	batch       bool
-	safeFailure bool
-	preserve    bool
-	appBypass   bool
-	crash       bool
-	auth        authorization
-	observe     time.Duration
+	batch        bool
+	safeFailure  bool
+	preserve     bool
+	appBypass    bool
+	crash        bool
+	auth         authorization
+	observe      time.Duration
+	renewHotspot bool
 }
 
 type tlsEvidence struct {
@@ -56,21 +57,22 @@ type checkCase struct {
 }
 
 type checkReport struct {
-	Started     time.Time   `json:"started"`
-	Finished    time.Time   `json:"finished"`
-	Mode        string      `json:"mode"`
-	Baseline    string      `json:"baselineLabel"`
-	BaselineSHA string      `json:"baselineSHA256"`
-	Cases       []checkCase `json:"cases"`
-	Traffic     api.Traffic `json:"traffic"`
-	Events      []api.Event `json:"events"`
-	Before      snapshot    `json:"before"`
-	After       snapshot    `json:"after"`
-	Error       string      `json:"error,omitempty"`
-	StopError   string      `json:"stopError,omitempty"`
-	Restored    bool        `json:"restored"`
-	Observation bool        `json:"manualObservationOnly"`
-	Notes       []string    `json:"notes,omitempty"`
+	Started     time.Time           `json:"started"`
+	Finished    time.Time           `json:"finished"`
+	Mode        string              `json:"mode"`
+	Baseline    string              `json:"baselineLabel"`
+	BaselineSHA string              `json:"baselineSHA256"`
+	Cases       []checkCase         `json:"cases"`
+	Traffic     api.Traffic         `json:"traffic"`
+	Events      []api.Event         `json:"events"`
+	Before      snapshot            `json:"before"`
+	After       snapshot            `json:"after"`
+	Error       string              `json:"error,omitempty"`
+	StopError   string              `json:"stopError,omitempty"`
+	Restored    bool                `json:"restored"`
+	Observation bool                `json:"manualObservationOnly"`
+	Notes       []string            `json:"notes,omitempty"`
+	Hotspot     *hotspotObservation `json:"hotspotRenewal,omitempty"`
 }
 
 func check(parent context.Context, s *session, c api.Service, opts checkOptions) (resultErr error) {
@@ -90,10 +92,13 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 	if choices > 1 || opts.observe < 0 || opts.observe > 90*time.Second {
 		return errors.New("choose at most one of --batch, --safe-failure, --preserve, --app-bypass, --crash, or --observe with a duration in (0,90s]")
 	}
+	if opts.renewHotspot && opts.observe == 0 {
+		return errors.New("--renew-hotspot requires an explicit --observe duration")
+	}
 	if choices != 0 && !s.SmokePassed {
 		return errors.New("run the default smoke check successfully before additional checks")
 	}
-	if opts.appBypass {
+	if opts.appBypass || opts.renewHotspot {
 		if err := appBypassPreflight(s); err != nil {
 			return err
 		}
@@ -126,6 +131,9 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		report.Mode = "crash"
 	} else if opts.observe > 0 {
 		report.Mode, report.Observation = "observe", true
+		if opts.renewHotspot {
+			report.Mode, report.Observation = "hotspot-renewal", false
+		}
 	}
 	report.Before, err = ops.snapshot(ctx)
 	if err != nil {
@@ -240,7 +248,8 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 	}
 	runningSince := status.Since
 	system := capture.SystemInterface(report.Before.Routes, address.Addr())
-	runCase := func(name string, rules []api.Rule, outcome api.Outcome, iface, ruleID string, existing *tls.Conn) error {
+	echoBaseline := s
+	runCase := func(ctx context.Context, name string, rules []api.Rule, outcome api.Outcome, iface, ruleID string, existing *tls.Conn) error {
 		cfg.Scenes[0].Rules = rules
 		if err := c.SaveConfig(ctx, cfg); err != nil {
 			return err
@@ -307,7 +316,7 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 			if outcome == api.System {
 				echoInterface = ""
 			}
-			err = s.checkEcho(&entry, echoInterface)
+			err = echoBaseline.checkEcho(&entry, echoInterface)
 		}
 		if err == nil {
 			current, statusErr := c.Status(ctx)
@@ -324,7 +333,7 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		}
 		return err
 	}
-	if err := runCase("system routing after SafeStart", nil, api.System, system, "", nil); err != nil {
+	if err := runCase(ctx, "system routing after SafeStart", nil, api.System, system, "", nil); err != nil {
 		return err
 	}
 	if opts.crash {
@@ -356,10 +365,23 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 	}
 	a := route("route-a", []string{address.Addr().String()}, s.Interfaces[0])
 	b := route("route-b", []string{address.Addr().String()}, s.Interfaces[1])
-	if err := runCase("IP rule through interface A", []api.Rule{a}, api.Routed, s.Interfaces[0].Name, a.ID, nil); err != nil {
+	if err := runCase(ctx, "IP rule through interface A", []api.Rule{a}, api.Routed, s.Interfaces[0].Name, a.ID, nil); err != nil {
 		return err
 	}
 	if opts.observe > 0 {
+		if opts.renewHotspot {
+			return observeHotspot(ctx, s, c, status, opts.observe, &report, ops, func(probeCtx context.Context, bound tlsEvidence) error {
+				fresh := *s
+				fresh.Preflight = append([]preflight(nil), s.Preflight...)
+				for i := range fresh.Preflight {
+					if fresh.Preflight[i].Interface == s.Interfaces[0].Name {
+						fresh.Preflight[i].TLS = bound
+					}
+				}
+				echoBaseline = &fresh
+				return runCase(probeCtx, "new connection uses interface A after hotspot renewal", []api.Rule{a}, api.Routed, s.Interfaces[0].Name, a.ID, nil)
+			})
+		}
 		fmt.Printf("Manual observation window: %s. Capture remains limited to the reviewed hosts and stops when this command returns.\n", opts.observe)
 		deadline := time.NewTimer(opts.observe)
 		defer deadline.Stop()
@@ -380,32 +402,32 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		}
 	}
 	if opts.batch {
-		if err := runCase("IP rule through interface B", []api.Rule{b}, api.Routed, s.Interfaces[1].Name, b.ID, nil); err != nil {
+		if err := runCase(ctx, "IP rule through interface B", []api.Rule{b}, api.Routed, s.Interfaces[1].Name, b.ID, nil); err != nil {
 			return err
 		}
 		domain := route("domain", []string{s.ServerName}, s.Interfaces[0])
-		if err := runCase("TLS SNI domain rule", []api.Rule{domain}, api.Routed, s.Interfaces[0].Name, domain.ID, nil); err != nil {
+		if err := runCase(ctx, "TLS SNI domain rule", []api.Rule{domain}, api.Routed, s.Interfaces[0].Name, domain.ID, nil); err != nil {
 			return err
 		}
 		multi := route("multi", []string{"unrelated.example", address.Addr().String()}, s.Interfaces[1])
-		if err := runCase("second target of one rule", []api.Rule{multi}, api.Routed, s.Interfaces[1].Name, multi.ID, nil); err != nil {
+		if err := runCase(ctx, "second target of one rule", []api.Rule{multi}, api.Routed, s.Interfaces[1].Name, multi.ID, nil); err != nil {
 			return err
 		}
-		if err := runCase("block wins over an earlier route", []api.Rule{a, block}, api.Blocked, "", block.ID, nil); err != nil {
+		if err := runCase(ctx, "block wins over an earlier route", []api.Rule{a, block}, api.Blocked, "", block.ID, nil); err != nil {
 			return err
 		}
 		missing := api.InterfaceRef{Name: "pith-missing"}
 		fallback := route("ordered-fallback", a.Targets, missing, s.Interfaces[0])
-		if err := runCase("ordered interface fallback", []api.Rule{fallback}, api.Fallback, s.Interfaces[0].Name, fallback.ID, nil); err != nil {
+		if err := runCase(ctx, "ordered interface fallback", []api.Rule{fallback}, api.Fallback, s.Interfaces[0].Name, fallback.ID, nil); err != nil {
 			return err
 		}
 		fallback = route("system-fallback", a.Targets, missing)
 		fallback.Fallback = true
-		if err := runCase("explicit fallback to system routing", []api.Rule{fallback}, api.System, system, fallback.ID, nil); err != nil {
+		if err := runCase(ctx, "explicit fallback to system routing", []api.Rule{fallback}, api.System, system, fallback.ID, nil); err != nil {
 			return err
 		}
 		strict := route("strict", a.Targets, missing)
-		if err := runCase("missing interface without fallback", []api.Rule{strict}, api.Unreachable, "", strict.ID, nil); err != nil {
+		if err := runCase(ctx, "missing interface without fallback", []api.Rule{strict}, api.Unreachable, "", strict.ID, nil); err != nil {
 			return err
 		}
 		// Complete TLS on A, then edit the rule before writing the HTTP request.
@@ -419,10 +441,10 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 			return err
 		}
 		defer conn.Close()
-		if err := runCase("open connection survives hot reload", []api.Rule{b}, api.Routed, s.Interfaces[0].Name, a.ID, conn); err != nil {
+		if err := runCase(ctx, "open connection survives hot reload", []api.Rule{b}, api.Routed, s.Interfaces[0].Name, a.ID, conn); err != nil {
 			return err
 		}
-		if err := runCase("new connection uses hot-reloaded route", []api.Rule{b}, api.Routed, s.Interfaces[1].Name, b.ID, nil); err != nil {
+		if err := runCase(ctx, "new connection uses hot-reloaded route", []api.Rule{b}, api.Routed, s.Interfaces[1].Name, b.ID, nil); err != nil {
 			return err
 		}
 	}

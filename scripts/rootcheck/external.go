@@ -29,13 +29,15 @@ type captureHistory struct {
 }
 
 type externalChange struct {
-	RoutesAdded       []capture.Route `json:"routesAdded,omitempty"`
-	RoutesRemoved     []capture.Route `json:"routesRemoved,omitempty"`
-	InterfacesAdded   []api.Interface `json:"interfacesAdded,omitempty"`
-	InterfacesRemoved []api.Interface `json:"interfacesRemoved,omitempty"`
-	IndicesAdded      map[string]int  `json:"indicesAdded,omitempty"`
-	IndicesRemoved    map[string]int  `json:"indicesRemoved,omitempty"`
-	Migrations        []vpnMigration  `json:"verifiedVPNMigrations,omitempty"`
+	RoutesAdded       []capture.Route           `json:"routesAdded,omitempty"`
+	RoutesRemoved     []capture.Route           `json:"routesRemoved,omitempty"`
+	InterfacesAdded   []api.Interface           `json:"interfacesAdded,omitempty"`
+	InterfacesRemoved []api.Interface           `json:"interfacesRemoved,omitempty"`
+	IndicesAdded      map[string]int            `json:"indicesAdded,omitempty"`
+	IndicesRemoved    map[string]int            `json:"indicesRemoved,omitempty"`
+	Migrations        []vpnMigration            `json:"verifiedVPNMigrations,omitempty"`
+	AddressesAdded    map[string][]netip.Prefix `json:"addressesAdded,omitempty"`
+	AddressesRemoved  map[string][]netip.Prefix `json:"addressesRemoved,omitempty"`
 }
 
 func (s *session) validCapture(id *api.CaptureIdentity) bool {
@@ -186,6 +188,10 @@ func (s *session) externalDifferences(after snapshot, status api.Status) (*exter
 	}
 	diff := &externalChange{RoutesAdded: routeDifference(after.Routes, s.Original.Routes), RoutesRemoved: routeDifference(s.Original.Routes, after.Routes), IndicesAdded: map[string]int{}, IndicesRemoved: map[string]int{}}
 	diff.Migrations = migrations
+	if s.Original.completeAddresses() && after.completeAddresses() {
+		diff.AddressesAdded = addressDifference(after.InterfaceAddresses, s.Original.InterfaceAddresses)
+		diff.AddressesRemoved = addressDifference(s.Original.InterfaceAddresses, after.InterfaceAddresses)
+	}
 	for _, part := range []struct {
 		routes  []capture.Route
 		allowed map[interfaceKey]bool
@@ -219,7 +225,7 @@ func (s *session) externalDifferences(after snapshot, status api.Status) (*exter
 		}
 		slices.SortFunc(*pair.out, func(a, b api.Interface) int { return strings.Compare(a.Name, b.Name) })
 	}
-	if len(diff.RoutesAdded)+len(diff.RoutesRemoved)+len(diff.InterfacesAdded)+len(diff.InterfacesRemoved) == 0 {
+	if len(diff.RoutesAdded)+len(diff.RoutesRemoved)+len(diff.InterfacesAdded)+len(diff.InterfacesRemoved)+len(diff.AddressesAdded)+len(diff.AddressesRemoved) == 0 {
 		return nil, errors.New("no external differences to accept")
 	}
 	if len(diff.IndicesAdded) == 0 {
@@ -267,7 +273,51 @@ func sameCleanupBaseline(a, b snapshot) bool {
 		}
 		return result
 	}
-	return a.BootSession == b.BootSession && sameRoutes(a.Routes, b.Routes) && sameTunnels(a.Interfaces, b.Interfaces) && reflect.DeepEqual(tunnels(a), tunnels(b))
+	return a.BootSession == b.BootSession && sameRoutes(a.Routes, b.Routes) && sameTunnels(a.Interfaces, b.Interfaces) && reflect.DeepEqual(tunnels(a), tunnels(b)) && sameAddressNetworks(a, b)
+}
+
+// IPv6 privacy rotation within one prefix is not a topology change. A changed
+// assigned prefix or IPv4 address is external evidence, even if no corresponding
+// configured route changed. Raw addresses remain in the private snapshots.
+func sameAddressNetworks(a, b snapshot) bool {
+	if !a.completeAddresses() || !b.completeAddresses() {
+		return true // Legacy snapshots retain their existing route/tunnel checks.
+	}
+	networks := func(s snapshot) map[string][]netip.Prefix {
+		out := map[string][]netip.Prefix{}
+		for name, addresses := range s.InterfaceAddresses {
+			for _, p := range addresses {
+				if !p.Addr().IsGlobalUnicast() {
+					continue
+				}
+				if p.Addr().Is6() {
+					p = p.Masked()
+				}
+				if !slices.Contains(out[name], p) {
+					out[name] = append(out[name], p)
+				}
+			}
+			slices.SortFunc(out[name], func(x, y netip.Prefix) int { return strings.Compare(x.String(), y.String()) })
+		}
+		return out
+	}
+	return reflect.DeepEqual(networks(a), networks(b))
+}
+
+func addressDifference(a, b map[string][]netip.Prefix) map[string][]netip.Prefix {
+	result := map[string][]netip.Prefix{}
+	for name, addresses := range a {
+		for _, p := range addresses {
+			if !slices.Contains(b[name], p) {
+				result[name] = append(result[name], p)
+			}
+		}
+		slices.SortFunc(result[name], func(x, y netip.Prefix) int { return strings.Compare(x.String(), y.String()) })
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 func (s *session) recheckExternal(after snapshot, st api.Status, recorded *externalChange) error {
