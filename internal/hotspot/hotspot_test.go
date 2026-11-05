@@ -2,6 +2,7 @@ package hotspot
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -22,6 +23,40 @@ func device(t *testing.T, f *hotspottest.MiFi, password string) *Inseego {
 		Base: srv.URL, Model: "M2000", Poll: time.Millisecond,
 		HTTP:     &http.Client{Jar: jar, Timeout: 5 * time.Second},
 		Password: func() (string, error) { return password, nil },
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestRenewRestoresDataAfterCancellationOrLostDisableReply(t *testing.T) {
+	for _, lost := range []bool{false, true} {
+		t.Run(map[bool]string{false: "cancel", true: "lost-reply"}[lost], func(t *testing.T) {
+			f := hotspottest.New()
+			d := device(t, f, hotspottest.Password)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			d.HTTP.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				res, err := http.DefaultTransport.RoundTrip(req)
+				if err == nil && req.URL.Path == "/wwan/disablecellulardata/" {
+					if lost {
+						res.Body.Close()
+						return nil, errors.New("synthetic lost disable reply")
+					}
+					cancel()
+				}
+				return res, err
+			})
+			if err := d.Renew(ctx); err == nil {
+				t.Fatal("failed operation counted as success")
+			}
+			f.Do(func(f *hotspottest.MiFi) {
+				if !f.DataOn || strings.Join(f.Calls, ",") != "off,on" {
+					t.Fatal("data left disabled", f.Calls)
+				}
+			})
+		})
 	}
 }
 

@@ -87,7 +87,7 @@ func (d *Inseego) TryPassword(ctx context.Context, password string) error {
 
 // Renew has the hotspot reconnect to its carrier: it turns its cellular
 // data off and on, and waits until it is connected again.
-func (d *Inseego) Renew(ctx context.Context) error {
+func (d *Inseego) Renew(ctx context.Context) (resultErr error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	page, err := d.adminPage(ctx, "/networks/", func(p string) bool { return strings.Contains(p, "/wwan/enablecellulardata/") })
@@ -99,6 +99,26 @@ func (d *Inseego) Renew(ctx context.Context) error {
 		return errors.New("hotspot: no session token on its network settings")
 	}
 	form := url.Values{"gSecureToken": {m[1]}}
+	// A canceled or failed disable request may still have reached the device.
+	// Always try to restore data with an independent bounded context in that case.
+	needsEnable := true
+	defer func() {
+		if !needsEnable {
+			return
+		}
+		restoreCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		var restoreErr error
+		for range 2 {
+			restoreErr = d.post(restoreCtx, "/wwan/enablecellulardata/", "/networks/", form)
+			if restoreErr == nil || restoreCtx.Err() != nil {
+				break
+			}
+		}
+		if restoreErr != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("hotspot: restore cellular data: %w", restoreErr))
+		}
+	}()
 	if err := d.post(ctx, "/wwan/disablecellulardata/", "/networks/", form); err != nil {
 		return fmt.Errorf("hotspot: turn cellular data off: %w", err)
 	}
@@ -112,6 +132,7 @@ func (d *Inseego) Renew(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("hotspot: turn cellular data on: %w", err)
 	}
+	needsEnable = false
 	if !d.await(ctx, 90*time.Second, func(h api.Hotspot) bool { return h.Connected }) {
 		if err := ctx.Err(); err != nil {
 			return err

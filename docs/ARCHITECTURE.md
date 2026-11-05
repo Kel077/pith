@@ -7,6 +7,21 @@ request starts routing. The app's rules/configuration are atomically saved with
 mode 0600; interface labels remain the System Settings names, with aliases
 applied by the UI.
 
+Mobile-hotspot management stays in the unprivileged client. Device requests use
+the selected interface, refresh the binding for every new socket, recheck the
+name/MAC/router before requests (including pooled sockets), and reject redirects
+outside the original origin. Cached sessions have bounded idle connections.
+Credentials require a hardware identity and live under the app's keychain
+service. Writing an item uses one quoted command on `security -i` stdin; no
+password appears in the process arguments, diagnostics, or application files.
+The command-input format is bounded and rejects embedded line breaks/NULs.
+
+Hotspot renewal restores cellular data with an independent 15-second bound if
+cancellation or a lost response follows an attempted disable. At most two restore
+requests are made; failures remain errors and are not reported as successful
+renewals. This is a device operation, independent of helper capture: changes to
+its public addresses, LAN addresses or DNS do not by themselves stop routing.
+
 ## Capturing and forwarding
 
 `engine/capture` records the routing table, creates a WireGuard-Go utun, and
