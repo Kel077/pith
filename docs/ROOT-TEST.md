@@ -139,6 +139,8 @@ mode-0600 files include:
 | `bundle-plan.json` | Optional standalone tool checksum/size, exact bundle metadata/layout, TLS target and one/six-request smoke/batch limits for disposable bundle fixtures |
 | `webkit-plan.json` | Optional frozen Safari app/executable checksums, current A-record set and lookup time, nonce URL, manual/single-open trigger and a 60-second maximum delegation observation |
 | `process-audit-*.json` | Independent read-only inventory after browser observation/uninstall: all still-present processes whose kernel start time falls in the recorded observation/cleanup windows, regardless of owner or executable |
+| `throughput-plan.json` | Optional frozen IPv4 throughput endpoint/TLS name, two adapter budgets, payload/socket caps and exact direct/minimal/many-rule request counts |
+| `throughput-a-attempt.json`, `throughput-b-attempt.json` | Exclusive durable reservations created before any measurement request; interruption, failure, rebaseline and reinstall never refund these attempts |
 | `install-plan.json`, `install.sh` | Exact scoped launchd arguments, fixed destinations, helper SHA-256 check, rollback, and authorization prompt |
 | `uninstall.sh` | Exact bootout, ownership-checked route cleanup, and managed-path removal |
 | `emergency-command.txt` | A standalone, single command that can be pasted into Terminal without IPC or the test executable |
@@ -716,6 +718,89 @@ bounds capture duration, not Safari's total network bytes, and does not override
 DNS, proxies, certificates or ECH. Use the approved small endpoint only. Background
 URLSession remains skipped. The coordinator decides whether manual page evidence
 is sufficient separately from the automatic socket result.
+
+## Bounded throughput comparison
+
+This extension is implemented with fake service/route/usage tests and loopback TLS
+transfers; hardware acceptance is pending. Keep the actual endpoint and separate
+adapter byte caps in the private session. The coordinator runs all privileged
+steps. Preparation does not transfer performance payloads.
+
+In a new `host-ipv4` session, add a canonical public IPv4:443 and certificate name
+for the permitted performance service, plus explicit total byte caps for A and B:
+
+```sh
+# Add to the ordinary reviewed prepare invocation:
+--throughput-target "$PITH_SPEED_TARGET" \
+--throughput-server-name "$PITH_SPEED_NAME" \
+--throughput-budget-a "$PITH_SPEED_BUDGET_A" \
+--throughput-budget-b "$PITH_SPEED_BUDGET_B"
+```
+
+The target contributes one frozen `/32`, deduplicated if already in the scope;
+no other target, DNS capture or full takeover is added. Review the complete scope
+and `throughput-plan.json` before installation. The service must implement verified
+HTTPS HTTP/1.1 `GET /__down?bytes=N` and `POST /__up?bytes=N`, following the
+[service's open client protocol](https://github.com/cloudflare/speedtest/blob/main/src/engines/BandwidthEngine/BandwidthEngine.ts).
+Uploads contain generated zeros, never a user file. Replies are discarded, not
+saved. Redirects, proxies, DNS resolution during transfer, compression, connection
+reuse, automatic retries and replacement endpoints are disabled.
+
+Optional `--throughput-download-a`, `--throughput-upload-a` and corresponding
+`-b` flags specify payload bytes per sample. Defaults are the smaller of 32 MiB or
+one twelfth of the adapter cap for download, and 4 MiB or one ninety-sixth for
+upload. Each phase also downloads a 64 KiB warmup. Download samples are limited
+to 64 KiB..256 MiB and upload samples to 64 KiB..64 MiB. Each measured request has
+a 15-second deadline; each warmup has a five-second deadline. These are finite
+single-stream comparisons, not a duration-based unlimited generator.
+
+After installation and a successful ordinary TCP smoke, run **one adapter first**,
+review its report and cleanup, then run the other adapter:
+
+```sh
+"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --throughput a
+# Only after reviewing the first adapter's completed result:
+"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --throughput b
+```
+
+Each adapter invocation reserves nine requests before the first measurement:
+direct bound baseline while the helper is idle, then captured minimal rules and
+captured 1001 rules. Every phase has one warmup, one download and one upload with
+identical payload sizes. The larger scene has 1000 nonmatching domain blocks before
+the same final explicit route; it does not send requests to those domains. Capture
+starts only after the direct baseline succeeds. The shared three-minute controller
+deadline, helper's five-minute scoped lease, unconditional Stop and baseline checks
+still apply. Requests/capture are sequential, never concurrent speed streams.
+
+Reservation files use exclusive creation, private permissions and file/directory
+sync. They survive failed requests, interrupted commands, rebaseline and reinstall;
+do not delete a claim to rerun. A new attempt requires a newly reviewed session
+and accounting for the **remaining** budget. Each socket enforces a combined TLS
+read/write cap of payload + 12.5% + 128 KiB, including handshake, HTTP headers,
+warmups and failure traffic. The full reservation includes a 1 MiB control allowance
+and must fit in half the adapter's reviewed cap. The unused half is overhead
+headroom: TCP retransmissions, kernel queues and carrier billing are not measurable
+at this application boundary. Reported byte totals must not be described as exact
+on-wire or billable bytes. Other applications' background traffic is outside this
+test's budget and measurement.
+
+Captured samples require matching helper process, exact local/remote tuple, TCP,
+rule, outcome, actual interface, outbound local tuple and byte counters. A verified
+HTTP success alone is insufficient. Requests bind the current reviewed adapter for
+the direct baseline; captured requests are unbound locally and must follow the
+explicit rule. Missing/down adapters fail this stage instead of silently choosing
+another link. A changed helper identity, capture token, external topology or VPN
+invalidates the comparison and stops further requests. No stage retries failure.
+
+The private report retains payload/TLS bytes, transfer and total elapsed time,
+Mbps, exact captured records, cumulative helper CPU and RSS before/after phases,
+and a separate two-second idle CPU sample while still running. CPU uses bounded
+read-only `ps` for the independently identified helper; no privilege or process
+signal is involved. Percentages use one core as 100%, RSS is a point sample, and
+serialized connection JSON size is **not** on-disk log volume. Current samples do
+not prove sustained capacity or the 500 Mbps target; short transfers, endpoint
+limits and link conditions can dominate. Uninstall and independently verify the
+usual service, path, route, tunnel and process cleanup after reviewing both results.
 
 ## Ordered execution
 

@@ -31,32 +31,34 @@ import (
 )
 
 type session struct {
-	Dir              string                 `json:"directory"`
-	UID              int                    `json:"uid"`
-	Helper           string                 `json:"helper"`
-	HelperSHA256     string                 `json:"helperSHA256"`
-	Version          string                 `json:"version"`
-	Target           string                 `json:"target"`
-	ServerName       string                 `json:"serverName"`
-	DNSTarget        string                 `json:"dnsTarget,omitempty"`
-	ExtraDNSTargets  []string               `json:"extraDNSTargets,omitempty"`
-	DNSName          string                 `json:"dnsName,omitempty"`
-	DNSPlanSHA256    string                 `json:"dnsPlanSHA256,omitempty"`
-	DNSPassed        bool                   `json:"dnsPassed,omitempty"`
-	QUICTarget       string                 `json:"quicTarget,omitempty"`
-	QUICServerName   string                 `json:"quicServerName,omitempty"`
-	QUICPlanSHA256   string                 `json:"quicPlanSHA256,omitempty"`
-	QUICPassed       bool                   `json:"quicPassed,omitempty"`
-	Bundle           *bundlePlan            `json:"bundle,omitempty"`
-	BundlePlanSHA256 string                 `json:"bundlePlanSHA256,omitempty"`
-	BundlePassed     bool                   `json:"bundlePassed,omitempty"`
-	WebKit           *webkitPlan            `json:"webKit,omitempty"`
-	WebKitPlanSHA256 string                 `json:"webKitPlanSHA256,omitempty"`
-	ProcessWindows   []processWindow        `json:"processObservationWindows,omitempty"`
-	Interfaces       [2]api.InterfaceRef    `json:"interfaces"`
-	Preflight        []preflight            `json:"preflight"`
-	TestProfile      *testprofile.Profile   `json:"testProfile,omitempty"`
-	SkippedDNS       []capture.DNSExclusion `json:"skippedDNS,omitempty"`
+	Dir                  string                 `json:"directory"`
+	UID                  int                    `json:"uid"`
+	Helper               string                 `json:"helper"`
+	HelperSHA256         string                 `json:"helperSHA256"`
+	Version              string                 `json:"version"`
+	Target               string                 `json:"target"`
+	ServerName           string                 `json:"serverName"`
+	DNSTarget            string                 `json:"dnsTarget,omitempty"`
+	ExtraDNSTargets      []string               `json:"extraDNSTargets,omitempty"`
+	DNSName              string                 `json:"dnsName,omitempty"`
+	DNSPlanSHA256        string                 `json:"dnsPlanSHA256,omitempty"`
+	DNSPassed            bool                   `json:"dnsPassed,omitempty"`
+	QUICTarget           string                 `json:"quicTarget,omitempty"`
+	QUICServerName       string                 `json:"quicServerName,omitempty"`
+	QUICPlanSHA256       string                 `json:"quicPlanSHA256,omitempty"`
+	QUICPassed           bool                   `json:"quicPassed,omitempty"`
+	Bundle               *bundlePlan            `json:"bundle,omitempty"`
+	BundlePlanSHA256     string                 `json:"bundlePlanSHA256,omitempty"`
+	BundlePassed         bool                   `json:"bundlePassed,omitempty"`
+	WebKit               *webkitPlan            `json:"webKit,omitempty"`
+	WebKitPlanSHA256     string                 `json:"webKitPlanSHA256,omitempty"`
+	ProcessWindows       []processWindow        `json:"processObservationWindows,omitempty"`
+	Throughput           *throughputPlan        `json:"throughput,omitempty"`
+	ThroughputPlanSHA256 string                 `json:"throughputPlanSHA256,omitempty"`
+	Interfaces           [2]api.InterfaceRef    `json:"interfaces"`
+	Preflight            []preflight            `json:"preflight"`
+	TestProfile          *testprofile.Profile   `json:"testProfile,omitempty"`
+	SkippedDNS           []capture.DNSExclusion `json:"skippedDNS,omitempty"`
 	// Original is the active rollback baseline; original.json is never replaced.
 	Original               snapshot        `json:"original"`
 	BaselineLabel          string          `json:"baselineLabel"`
@@ -117,6 +119,15 @@ func prepare(ctx context.Context, args []string) error {
 	fs.StringVar(&s.QUICServerName, "quic-server-name", "", "reviewed HTTP/3 TLS certificate name")
 	bundle := fs.Bool("app-bundle", false, "freeze a disposable pure-Go app and helper fixture using this rootcheck executable")
 	webkit := fs.String("webkit-app", "", "freeze an absolute Safari .app path for explicit bounded delegation observation")
+	var speed throughputPlan
+	fs.StringVar(&speed.Target, "throughput-target", "", "optional reviewed throughput public IPv4:443")
+	fs.StringVar(&speed.ServerName, "throughput-server-name", "", "reviewed throughput TLS certificate name")
+	fs.Int64Var(&speed.Adapters[0].Limit, "throughput-budget-a", 0, "explicit total byte cap for all adapter A measurements")
+	fs.Int64Var(&speed.Adapters[1].Limit, "throughput-budget-b", 0, "explicit total byte cap for all adapter B measurements")
+	for i, suffix := range []string{"a", "b"} {
+		fs.Int64Var(&speed.Adapters[i].Download, "throughput-download-"+suffix, 0, "optional bytes per download sample; default min(32 MiB, budget/12)")
+		fs.Int64Var(&speed.Adapters[i].Upload, "throughput-upload-"+suffix, 0, "optional bytes per upload sample; default min(4 MiB, budget/96)")
+	}
 	mode := fs.String("capture-mode", "host-ipv4", "reviewed installation mode: host-ipv4, full-ipv4 or host-ipv6")
 	lease := fs.Duration("test-lease", 0, "profile lease: default/max 120s for full-ipv4, 60s for host-ipv6; minimum 30s")
 	if err := fs.Parse(args); err != nil {
@@ -158,6 +169,22 @@ func prepare(ctx context.Context, args []string) error {
 	if *webkit != "" {
 		if err := s.freezeWebKit(ctx, *webkit, net.DefaultResolver.LookupNetIP); err != nil {
 			return err
+		}
+	}
+	fs.Visit(func(f *flag.Flag) {
+		if strings.HasPrefix(f.Name, "throughput-") {
+			s.Throughput = &speed
+		}
+	})
+	if s.Throughput != nil {
+		for i := range s.Throughput.Adapters {
+			b := &s.Throughput.Adapters[i]
+			if b.Download == 0 {
+				b.Download = min(32<<20, b.Limit/12)
+			}
+			if b.Upload == 0 {
+				b.Upload = min(4<<20, b.Limit/96)
+			}
 		}
 	}
 	if _, err := s.scopes(); err != nil {
@@ -255,6 +282,9 @@ func prepare(ctx context.Context, args []string) error {
 	if err := s.writeQUICPlan(); err != nil {
 		return err
 	}
+	if err := s.writeThroughputPlan(); err != nil {
+		return err
+	}
 	if err := writeJSON(filepath.Join(s.Dir, "install-plan.json"), plan); err != nil {
 		return err
 	}
@@ -303,6 +333,9 @@ func prepare(ctx context.Context, args []string) error {
 }
 
 func (s *session) scopes() ([]netip.Prefix, error) {
+	if err := s.validateThroughput(); err != nil {
+		return nil, err
+	}
 	if err := s.validateWebKit(); err != nil {
 		return nil, err
 	}
@@ -342,6 +375,13 @@ func (s *session) scopes() ([]netip.Prefix, error) {
 	}
 	if s.QUICTarget != "" {
 		endpoint, _ := netip.ParseAddrPort(s.QUICTarget)
+		prefix := netip.PrefixFrom(endpoint.Addr(), 32)
+		if !slices.Contains(prefixes, prefix) {
+			prefixes = append(prefixes, prefix)
+		}
+	}
+	if s.Throughput != nil {
+		endpoint, _ := netip.ParseAddrPort(s.Throughput.Target)
 		prefix := netip.PrefixFrom(endpoint.Addr(), 32)
 		if !slices.Contains(prefixes, prefix) {
 			prefixes = append(prefixes, prefix)

@@ -26,6 +26,8 @@ const usage = `rootcheck prepares a private, bounded acceptance session.
             [--dns-target IP:53 [--dns-target IP:53] --dns-name DNS_NAME]
             [--quic-target IP:443 --quic-server-name TLS_NAME]
             [--app-bundle] [--webkit-app ABSOLUTE_SAFARI_APP]
+            [--throughput-target IP:443 --throughput-server-name TLS_NAME
+             --throughput-budget-a BYTES --throughput-budget-b BYTES]
             [--capture-mode full-ipv4 --test-lease 120s]
             [--capture-mode host-ipv6 --test-lease 60s]
   cancel    --session DIRECTORY [--auth keychain:SERVICE]
@@ -37,6 +39,7 @@ const usage = `rootcheck prepares a private, bounded acceptance session.
   check     --session DIRECTORY [--quic | --quic-batch]
   check     --session DIRECTORY [--app-bundle | --app-bundle-batch]
   check     --session DIRECTORY --webkit 45s [--webkit-open]
+  check     --session DIRECTORY --throughput a|b
   stop      --session DIRECTORY
   rebaseline --session DIRECTORY --label MODE [--accept-external-change]
   uninstall --session DIRECTORY [--auth keychain:SERVICE]
@@ -114,6 +117,7 @@ func run(args []string) error {
 		fs.BoolVar(&opts.appBundleBatch, "app-bundle-batch", false, "nested helper and outside-bundle controls after bundle smoke")
 		fs.DurationVar(&opts.webkit, "webkit", 0, "observe one manually triggered Safari navigation for at most 60s")
 		fs.BoolVar(&opts.webkitOpen, "webkit-open", false, "after READY, open the frozen Safari URL once using LaunchServices; requires --webkit")
+		fs.StringVar(&opts.throughput, "throughput", "", "one reserved direct/minimal/many-rule measurement on adapter a or b")
 	}
 	if err := fs.Parse(args[1:]); err != nil {
 		return err

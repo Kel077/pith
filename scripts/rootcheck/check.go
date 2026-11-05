@@ -39,6 +39,7 @@ type checkOptions struct {
 	appBundleBatch bool
 	webkit         time.Duration
 	webkitOpen     bool
+	throughput     string
 }
 
 type tlsEvidence struct {
@@ -91,6 +92,7 @@ type checkReport struct {
 	LogError         string                 `json:"connectionLogError,omitempty"`
 	RouteDiagnostics []string               `json:"routeDiagnostics,omitempty"`
 	WebKit           *webkitEvidence        `json:"webKit,omitempty"`
+	Throughput       *throughputEvidence    `json:"throughput,omitempty"`
 }
 
 func check(parent context.Context, s *session, c api.Service, opts checkOptions) (resultErr error) {
@@ -102,16 +104,27 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		return errors.New("check requires recorded cancellation or a managed skip, and this session's reviewed installation")
 	}
 	choices := 0
-	for _, selected := range []bool{opts.batch, opts.safeFailure, opts.preserve, opts.appBypass, opts.crash, opts.observe != 0, opts.udpDNS, opts.udpDNSBatch, opts.quic, opts.quicBatch, opts.appBundle, opts.appBundleBatch, opts.webkit != 0} {
+	for _, selected := range []bool{opts.batch, opts.safeFailure, opts.preserve, opts.appBypass, opts.crash, opts.observe != 0, opts.udpDNS, opts.udpDNSBatch, opts.quic, opts.quicBatch, opts.appBundle, opts.appBundleBatch, opts.webkit != 0, opts.throughput != ""} {
 		if selected {
 			choices++
 		}
 	}
 	if choices > 1 || opts.observe < 0 || opts.observe > 90*time.Second || opts.webkit < 0 || opts.webkit > 60*time.Second {
-		return errors.New("choose one check mode: batch, safe-failure, preserve, app-bypass, crash, udp-dns, udp-dns-batch, quic, quic-batch, app-bundle, app-bundle-batch, webkit in (0,60s], or observe in (0,90s]")
+		return errors.New("choose one check mode: batch, safe-failure, preserve, app-bypass, crash, udp-dns, udp-dns-batch, quic, quic-batch, app-bundle, app-bundle-batch, throughput a|b, webkit in (0,60s], or observe in (0,90s]")
 	}
 	if opts.webkitOpen && opts.webkit == 0 {
 		return errors.New("--webkit-open requires an explicit --webkit observation duration")
+	}
+	if opts.throughput != "" {
+		if _, err := throughputAdapter(opts.throughput); err != nil {
+			return err
+		}
+		if err := s.reviewedThroughputPlan(); err != nil {
+			return err
+		}
+		if ops.throughput == nil {
+			return errors.New("throughput boundaries unavailable")
+		}
 	}
 	if opts.renewHotspot && opts.observe == 0 {
 		return errors.New("--renew-hotspot requires an explicit --observe duration")
@@ -188,6 +201,8 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		report.Mode = "app-bundle-batch"
 	} else if opts.webkit != 0 {
 		report.Mode, report.Observation = "webkit", true
+	} else if opts.throughput != "" {
+		report.Mode = "throughput-" + opts.throughput
 	} else if opts.safeFailure {
 		report.Mode = "safe-failure"
 	} else if opts.preserve {
@@ -290,6 +305,16 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 			fmt.Println("PASS: this command completed and routing is stopped; uninstall the idle helper when the session is finished.")
 		}
 	}()
+	var speed *throughputRun
+	if opts.throughput != "" {
+		speed, err = newThroughputRun(s, opts.throughput, &report, *ops.throughput)
+		if err != nil {
+			return err
+		}
+		if err := speed.phase(ctx, c, "direct", 0, nil); err != nil {
+			return err
+		}
+	}
 	settings := api.DefaultSettings()
 	settings.KeepRouting, settings.ResumeOnLaunch, settings.OpenAtLogin = false, false, false
 	settings.IPv6, settings.SafeStart, settings.SniffDomains, settings.LogDays = s.ipv6(), true, true, 1
@@ -461,6 +486,12 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 	}
 	if opts.webkit != 0 {
 		return runWebKitCheck(ctx, s, c, cfg, status, &report, opts.webkit, opts.webkitOpen, liveWebKitChecks())
+	}
+	if speed != nil {
+		if err := speed.captured(ctx, c, cfg, status); err != nil {
+			return err
+		}
+		return collectTraffic(ctx, c, &report)
 	}
 	if opts.crash {
 		err := crashCapture(ctx, s, c, opts.auth, ops)
