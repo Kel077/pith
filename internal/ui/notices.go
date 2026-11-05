@@ -42,6 +42,10 @@ func (a *App) notices() []notice {
 			out = append(out, notice{text: locales.WarnVpnShort(w.Detail), detail: locales.WarnVpn(w.Detail)})
 		case api.WarnInterfaceDown:
 			down = append(down, a.ifaceLabel(api.InterfaceRef{Name: w.Detail}))
+		case api.WarnDNSUnobserved:
+			// Not shown: on most home networks the router is the DNS server,
+			// so a bar would show at every start, while domain rules still
+			// work from the names connections carry (TLS, HTTP, QUIC).
 		case api.WarnNoDomains:
 			out = append(out, notice{
 				text:   locales.RecognizingDomainsIsOff(),
