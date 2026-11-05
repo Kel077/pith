@@ -18,6 +18,7 @@ import (
 	"github.com/Kel077/pith/internal/engine/capture"
 	"github.com/Kel077/pith/internal/engine/egress"
 	"github.com/Kel077/pith/internal/engine/telemetry"
+	"golang.org/x/net/dns/dnsmessage"
 	"golang.zx2c4.com/wireguard/tun"
 	"gvisor.dev/gvisor/pkg/buffer"
 	"gvisor.dev/gvisor/pkg/tcpip"
@@ -236,6 +237,50 @@ func TestDomainBlockDoesNotDial(t *testing.T) {
 	}
 	rows := x.store.Connections(api.ConnectionQuery{})
 	if len(rows) != 1 || rows[0].Outcome != api.Blocked || rows[0].Domain != "example.com" {
+		t.Fatal(rows)
+	}
+}
+
+func TestSniffedHostOverridesCachedDomainBlock(t *testing.T) {
+	scene := api.Scene{ID: "test", Rules: []api.Rule{{ID: "block", Enabled: true, Protocol: api.TCP, Action: api.Block, Targets: []string{"example.com"}}}}
+	x := newFixture(t, echoDial(t), scene)
+	name := dnsmessage.MustNewName("example.com.")
+	question := dnsmessage.Question{Name: name, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET}
+	query := dnsmessage.Message{Header: dnsmessage.Header{ID: 7}, Questions: []dnsmessage.Question{question}}
+	response := dnsmessage.Message{Header: dnsmessage.Header{ID: 7, Response: true}, Questions: []dnsmessage.Question{question}, Answers: []dnsmessage.Resource{{
+		Header: dnsmessage.ResourceHeader{Name: name, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET, TTL: 300},
+		Body:   &dnsmessage.AResource{A: [4]byte{192, 0, 2, 1}},
+	}}}
+	queryBytes, err := query.Pack()
+	if err != nil {
+		t.Fatal(err)
+	}
+	responseBytes, err := response.Pack()
+	if err != nil {
+		t.Fatal(err)
+	}
+	x.f.cache.Observe(queryBytes, responseBytes, time.Now())
+	if got := x.f.cache.Lookup(netip.MustParseAddr("192.0.2.1"), time.Now()); got != "example.com" {
+		t.Fatal("missing cached name", got)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	conn, err := x.dialTCP(ctx, "192.0.2.1:80")
+	if err != nil {
+		t.Fatal("cached domain blocked the SYN before sniffing", err)
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(time.Second))
+	request := "GET / HTTP/1.1\r\nHost: example.org\r\n\r\n"
+	if _, err := io.WriteString(conn, request); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, len(request))
+	if _, err := io.ReadFull(conn, buf); err != nil || string(buf) != request {
+		t.Fatal("allowed host on shared address was blocked", string(buf), err)
+	}
+	rows := x.store.Connections(api.ConnectionQuery{})
+	if len(rows) != 1 || rows[0].Domain != "example.org" || rows[0].Outcome != api.System {
 		t.Fatal(rows)
 	}
 }

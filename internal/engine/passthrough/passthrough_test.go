@@ -109,6 +109,89 @@ func TestNewUDPIsNeverAdoptedAndSendFailureIsReported(t *testing.T) {
 	}
 }
 
+func TestPreservedUDPRequiresLiveSocketGeneration(t *testing.T) {
+	for _, state := range []string{"unchanged", "reused", "closed"} {
+		t.Run(state, func(t *testing.T) {
+			socket := legacySocket()
+			live := []attribution.Socket{socket}
+			sender := new(fakeSender)
+			table, err := New(Options{Routes: []capture.Route{{Prefix: netip.MustParsePrefix("0.0.0.0/0"), Interface: "en0"}}, Sender: sender, Snapshot: func(proto api.Protocol) ([]attribution.Socket, error) {
+				if proto == api.UDP {
+					return live, nil
+				}
+				return nil, nil
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer table.Close()
+			switch state {
+			case "reused":
+				live[0].Generation++
+			case "closed":
+				live = nil
+			}
+			// Do not call Refresh: a new UDP socket must never borrow the old
+			// tuple's bypass permission in the interval before the next tick.
+			preserved := table.Unknown(socket.Local, socket.Remote, api.UDP, make([]byte, 8))
+			if preserved != (state == "unchanged") {
+				t.Fatal("incorrect UDP preservation", preserved)
+			}
+			if state == "unchanged" {
+				if len(sender.sent) != 1 {
+					t.Fatal("lost pre-existing UDP packet")
+				}
+			} else if len(sender.sent) != 0 || len(table.existing) != 0 {
+				t.Fatal("reused or closed UDP socket bypassed current rules")
+			}
+		})
+	}
+}
+
+func TestInboundTCPSynAckRequiresLiveNativeSocket(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		flags       byte
+		live        bool
+		intercepted bool
+		want        bool
+	}{
+		{name: "native inbound reply", flags: 18, live: true, want: true},
+		{name: "missing native socket", flags: 18},
+		{name: "new outbound SYN", flags: 2, live: true},
+		{name: "intercepted socket", flags: 18, live: true, intercepted: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			socket := legacySocket()
+			var live []attribution.Socket
+			sender := new(fakeSender)
+			table, err := New(Options{Routes: []capture.Route{{Prefix: netip.MustParsePrefix("0.0.0.0/0"), Interface: "en0"}}, Sender: sender, Snapshot: func(proto api.Protocol) ([]attribution.Socket, error) {
+				if proto == api.TCP {
+					return live, nil
+				}
+				return nil, nil
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer table.Close()
+			// The accepted native socket appeared after the capture snapshot.
+			if tc.live {
+				live = []attribution.Socket{socket}
+			}
+			if tc.intercepted {
+				table.Intercepted(socket.Local, socket.Remote)
+			}
+			if got := table.Unknown(socket.Local, socket.Remote, api.TCP, tcpSegment(socket, tc.flags)); got != tc.want {
+				t.Fatal("incorrect SYN adoption", got)
+			}
+			if (len(sender.sent) == 1) != tc.want {
+				t.Fatal("incorrect native packet replay", len(sender.sent))
+			}
+		})
+	}
+}
+
 func TestParseKernelPackets(t *testing.T) {
 	socket := legacySocket()
 	segment := tcpSegment(socket, 16)

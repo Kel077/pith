@@ -126,9 +126,11 @@ func (t *Table) Packet(data []byte) bool { p, ok := parse(data); return ok && t.
 
 // Unknown handles a reassembled transport packet with no netstack endpoint.
 // A native TCP socket missed in the short snapshot/activation window may be
-// adopted only for a non-SYN segment. New UDP flows are never adopted here.
+// adopted for a non-SYN segment. A SYN-ACK may also belong to a new inbound
+// native connection; pure SYNs and new UDP flows are never adopted here.
 func (t *Table) Unknown(local, remote netip.AddrPort, proto api.Protocol, data []byte) bool {
-	return t.process(Packet{local, remote, proto, data}, proto == api.TCP && len(data) >= 20 && data[13]&2 == 0)
+	adopt := proto == api.TCP && len(data) >= 20 && (data[13]&2 == 0 || data[13]&16 != 0)
+	return t.process(Packet{local, remote, proto, data}, adopt)
 }
 
 func (t *Table) process(p Packet, adopt bool) bool {
@@ -142,7 +144,10 @@ func (t *Table) process(p Packet, adopt bool) bool {
 		return false
 	}
 	generation, found := t.existing[k]
-	if adopt && !found || found && p.Protocol == api.TCP && p.Data[13]&2 != 0 {
+	// Unlike TCP's SYN, a UDP datagram cannot identify tuple reuse. Validate every
+	// preserved UDP packet against its live socket generation: a periodic refresh
+	// alone could let a new socket inherit the old flow's exemption from rules.
+	if adopt && !found || found && (p.Protocol == api.UDP || p.Protocol == api.TCP && p.Data[13]&2 != 0) {
 		sockets, err := t.opts.Snapshot(p.Protocol)
 		if err != nil {
 			t.mu.Unlock()

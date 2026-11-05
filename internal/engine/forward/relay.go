@@ -41,8 +41,10 @@ func (f *Forwarder) tcp(req *tcp.ForwarderRequest) {
 	f.rememberTCP(local, remote)
 	a, _ := f.opts.Lookup(f.ctx, api.TCP, local, remote)
 	c := api.Connection{Started: time.Now(), App: a.App, Process: a.Process, Protocol: api.TCP, Remote: remote.String(), Domain: f.cache.Lookup(remote.Addr(), time.Now())}
-	// An address/app block can refuse the SYN without accepting the connection.
-	d := policy.Match(a, api.TCP, remote, c.Domain)
+	// Only an address/app block can refuse the SYN before accepting it. A cached
+	// name may describe another host sharing this address; sniffing gets the
+	// opportunity to replace it before any domain rule is applied.
+	d := policy.Match(a, api.TCP, remote, "")
 	if d.Action == api.Block {
 		c.RuleID = d.RuleID
 		c.Outcome = api.Blocked
