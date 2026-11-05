@@ -2,13 +2,17 @@ package ui
 
 import (
 	"context"
+
 	"encoding/json"
-	"fmt"
 	"slices"
 	"strings"
 
+	"github.com/egoist/mygo/plugins/glass"
+
 	"github.com/egoist/mygo/ui"
+
 	"github.com/Kel077/pith/internal/api"
+	"github.com/Kel077/pith/locales"
 )
 
 // rulesPage is the state of the rules page.
@@ -25,11 +29,11 @@ func (a *App) rulesView(c *ui.Context) {
 		a.sceneID = a.cfg.Scenes[0].ID
 		sc = &a.cfg.Scenes[0]
 	}
-	pageHeader(c, tr("Rules", "规则"), func() {
-		if textIconButton(c, icInspect, tr("Check", "检查")).Tooltip(tr("See where a connection would go", "看看一个连接会走哪张网卡")).Clicked() {
+	pageHeader(c, locales.Rules(), "", func() {
+		if glassCapsuleButton(c, "check", icInspect, locales.Check()).Tooltip(locales.SeeWhereAConnectionWouldGo()).Clicked() {
 			a.openChecker()
 		}
-		if primaryIconButton(c, icPlus, tr("Add Rule", "添加规则")).Clicked() && sc != nil {
+		if primaryCapsule(c, "add-rule", icPlus, locales.AddRule()).Clicked() && sc != nil {
 			a.openEditor(sc.ID, -1)
 		}
 	})
@@ -42,28 +46,26 @@ func (a *App) rulesView(c *ui.Context) {
 	}
 	a.sceneBar(c)
 	if ns := a.notices(); len(ns) > 0 {
-		ui.Column(c).Margin(0, 24, 10).Gap(6).Shrink(0).Children(func() {
+		ui.Column(c).Margin(0, 32, 12).Gap(6).Shrink(0).Children(func() {
 			for _, n := range ns {
 				noticeBar(c, n, false)
 			}
 		})
 	}
 	if a.isRunning() && a.status.SceneID != sc.ID {
-		ui.Row(c).Margin(0, 24, 10).Padding(10, 14).Gap(10).Radius(10).Background(subtle(t, 0.05)).Children(func() {
+		paneRow(c).Margin(0, 32, 12).Padding(10, 10, 10, 16).Gap(10).Children(func() {
 			ui.Icon(c, icInfo).TextColor(t.TextMuted)
-			muted(c, trf("Routing runs by “%s”. These rules apply once you switch.", "正在按「%s」分流，这些规则要切换后才生效。", sceneName(a.scene(a.status.SceneID)))).Grow(1)
-			if ui.Button(c, trf("Switch to “%s”", "切换到「%s」", sceneName(sc))).Clicked() {
+			muted(c, locales.OtherSceneRunning(sceneName(a.scene(a.status.SceneID)))).Grow(1)
+			if ui.Button(c, locales.SwitchToScene(sceneName(sc))).Clicked() {
 				a.start(sc.ID)
 			}
 		})
 	}
 	id := sc.ID
 	if len(sc.Rules) == 0 {
-		emptyState(c, icRules, tr("No rules yet", "还没有规则"),
-			tr("Rules send apps or destinations out through the network you pick. Everything else goes as usual.",
-				"规则把指定的应用或网址送到你选的网卡上，其余连接照常走系统网络。"),
+		emptyState(c, icRules, locales.NoRulesYet(), "",
 			func() {
-				if primaryIconButton(c, icPlus, tr("Add Rule", "添加规则")).Clicked() {
+				if primaryIconButton(c, icPlus, locales.AddRule()).Clicked() {
 					a.openEditor(id, -1)
 				}
 			})
@@ -82,32 +84,31 @@ func (a *App) rulesView(c *ui.Context) {
 			}
 		})
 	}
-	ui.List(c, &a.rules.list, len(sc.Rules), func(i int) {
-		if s := a.scene(id); s != nil && i < len(s.Rules) {
-			a.ruleRow(c, id, i, &s.Rules[i])
-		}
-	}).Grow(1).Gap(8).Padding(2, 24, 12).Label(tr("Rules", "规则"))
-	ui.Row(c).Padding(10, 28, 14).Gap(6).Shrink(0).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Children(func() {
-		ui.Icon(c, icInfo).FontSize(12).TextColor(t.TextMuted)
-		ui.Text(c, tr("Block rules always win; otherwise the first matching rule from the top decides. Drag to reorder.",
-			"拦截规则总是优先；其余从上往下，第一条匹配的规则生效。拖动可以调整顺序。")).FontSize(12).TextColor(t.TextMuted)
+	// The list takes the room it needs, and scrolls in its pane when the
+	// window is too short; the hint stays under it.
+	ui.Column(c).Grow(1).MinHeight(0).Padding(0, 32, 20).Children(func() {
+		list := ui.List(c, &a.rules.list, len(sc.Rules), func(i int) {
+			if s := a.scene(id); s != nil && i < len(s.Rules) {
+				a.ruleRow(c, id, i, &s.Rules[i])
+			}
+		}).Shrink(1).MinHeight(0).Label(locales.Rules())
+		glassy(c, list).Dividers(1, hairline(t)).Clip()
 	})
 }
 
 // loadErrorView explains that the configuration could not be read, and
 // offers to read it again or to start over.
 func (a *App) loadErrorView(c *ui.Context) {
-	emptyState(c, icAlert, tr("Your rules can't be read", "无法读取规则"),
-		errorText(a.loadErr)+" "+tr("Pith saves nothing over the file until you decide.", "在你决定之前，橘核不会覆盖这个文件。"),
+	emptyState(c, icAlert, locales.YourRulesCanTBeRead(),
+		errorText(a.loadErr)+" "+locales.PithSavesNothingOverTheFile(),
 		func() {
-			if ui.Button(c, tr("Try Again", "重试")).Clicked() {
+			if ui.Button(c, locales.TryAgain()).Clicked() {
 				a.reload()
 			}
-			if ui.Button(c, tr("Start Over…", "重新开始…")).Clicked() {
+			if ui.Button(c, locales.StartOver()).Clicked() {
 				a.confirm = &confirmation{
-					title:  tr("Start over with no rules?", "清空规则重新开始？"),
-					body:   tr("Pith saves an empty configuration in place of the one it can't read.", "橘核会用一份空白配置替换无法读取的那份。"),
-					action: tr("Start Over", "重新开始"),
+					title:  locales.StartOverWithNoRules(),
+					action: locales.StartOverConfirm(),
 					danger: true,
 					do: func() {
 						a.setConfig(api.DefaultConfig())
@@ -130,46 +131,54 @@ func (a *App) reload() {
 // sceneBar chooses the scene the page shows, which the switch starts.
 func (a *App) sceneBar(c *ui.Context) {
 	t := c.Theme()
-	ui.Row(c).Padding(0, 24, 12, 24).Gap(6).Shrink(0).Children(func() {
-		for _, s := range a.cfg.Scenes {
-			id, name := s.ID, sceneName(&s)
-			shown := id == a.sceneID
-			pill := ui.Row(c.Key("scene-"+id)).Gap(6).Padding(5, 12).Radius(999).Cursor(ui.CursorPointer).Label(name)
-			switch {
-			case shown:
-				pill.Background(t.Accent.Alpha(0.14))
-			case pill.Hovered():
-				pill.Background(subtle(t, 0.06))
-			}
-			pill.Children(func() {
-				if a.isRunning() && a.status.SceneID == id {
-					dot(c, running(t), 7, false).Tooltip(tr("Routing", "正在分流"))
+	ui.Row(c).Padding(0, 32, 14).Gap(8).Shrink(0).Children(func() {
+		// The scenes, as a segmented capsule: the arrow keys move among them,
+		// and each has the scene's menu on a right click.
+		chosen := slices.IndexFunc(a.cfg.Scenes, func(s api.Scene) bool { return s.ID == a.sceneID })
+		before := chosen
+		seg := ui.SegmentedBase(c.Key("scenes"), &chosen, len(a.cfg.Scenes))
+		seg.Track.Padding(4).Gap(2).Radius(999).Material(glass.Glass{}).Border(1, rim(t)).Label(locales.Scene())
+		seg.Track.Children(func() {
+			for i, s := range a.cfg.Scenes {
+				id, name := s.ID, sceneName(&s)
+				shown := i == chosen
+				e := seg.Segment(i).Gap(6).Padding(6, 14).Radius(999).Cursor(ui.CursorPointer).Label(name)
+				switch {
+				case shown && t.Dark:
+					e.Background(ui.RGBA(255, 255, 255, 0.16)).Shadow(0, 1, 3, 0, ui.RGBA(0, 0, 0, 0.3))
+				case shown:
+					e.Background(ui.RGBA(255, 255, 255, 0.92)).Shadow(0, 1, 4, 0, ui.RGBA(60, 40, 20, 0.12))
+				case e.Hovered():
+					e.Background(subtle(t, 0.05))
 				}
-				text := ui.Text(c, name).SingleLine()
-				if shown {
-					text.FontWeight(600).TextColor(t.Accent)
-				} else {
-					text.TextColor(t.TextMuted)
-				}
-			})
-			if pill.Clicked() {
-				a.showScene(id)
+				e.Children(func() {
+					if a.isRunning() && a.status.SceneID == id {
+						dot(c, running(t), 7, false).Tooltip(locales.RoutingNow())
+					}
+					text := ui.Text(c, name).SingleLine()
+					if shown {
+						text.FontWeight(600)
+					} else {
+						text.TextColor(t.TextMuted)
+					}
+				})
+				e.ContextMenu(func(m *ui.Menu) { a.sceneMenu(m, id) })
 			}
-			pill.ContextMenu(func(m *ui.Menu) { a.sceneMenu(m, id) })
+		})
+		if chosen != before && chosen >= 0 && chosen < len(a.cfg.Scenes) {
+			a.showScene(a.cfg.Scenes[chosen].ID)
 		}
-		add := ui.Row(c.Key("scene-add")).Padding(6, 9).Radius(999).Cursor(ui.CursorPointer).Label(tr("New Scene", "新建场景")).Tooltip(tr("New Scene", "新建场景"))
-		if add.Hovered() {
-			add.Background(subtle(t, 0.06))
-		}
-		add.Children(func() { ui.Icon(c, icPlus).FontSize(15).TextColor(t.TextMuted) })
-		if add.Clicked() {
+		if glassCapsuleButton(c, "scene-add", icPlus, "").Label(locales.NewScene()).Tooltip(locales.NewScene()).Clicked() {
 			a.openRename("")
 		}
+		// How rules decide, for whoever wonders: a tip, not a line of text.
+		ui.Box(c.Key("rules-order")).Size(28, 28).Center().Tooltip(locales.BlockRulesAlwaysWinOtherwiseThe()).Children(func() {
+			ui.Icon(c, icInfo).FontSize(14).TextColor(t.TextMuted)
+		})
 		ui.Spacer(c)
 		shownID := a.sceneID
-		ui.Button(c, "").Label(tr("Scene", "场景")).Tooltip(tr("Scene", "场景")).Children(func() {
-			ui.Icon(c, icMore)
-		}).Menu(func(m *ui.Menu) { a.sceneMenu(m, shownID) })
+		glassCapsuleButton(c, "scene-menu", icMore, "").Label(locales.Scene()).Tooltip(locales.Scene()).
+			Menu(func(m *ui.Menu) { a.sceneMenu(m, shownID) })
 	})
 }
 
@@ -187,26 +196,26 @@ func (a *App) sceneMenu(m *ui.Menu, id string) {
 	if sc == nil {
 		return
 	}
-	if m.Item(tr("Rename…", "重命名…")).Chosen() {
+	if m.Item(locales.Rename()).Chosen() {
 		a.openRename(id)
 	}
-	if m.Item(tr("Duplicate", "复制场景")).Chosen() {
+	if m.Item(locales.DuplicateScene()).Chosen() {
 		a.duplicateScene(id)
 	}
 	m.Separator()
-	if m.Item(tr("Export Rules…", "导出规则…")).Disabled(len(sc.Rules) == 0).Chosen() {
+	if m.Item(locales.ExportRules()).Disabled(len(sc.Rules) == 0).Chosen() {
 		a.exportRules(id)
 	}
-	if m.Item(tr("Import Rules…", "导入规则…")).Chosen() {
+	if m.Item(locales.ImportRules()).Chosen() {
 		a.importRules(id)
 	}
 	m.Separator()
-	if m.Item(tr("Delete Scene…", "删除场景…")).Disabled(len(a.cfg.Scenes) < 2).Chosen() {
+	if m.Item(locales.DeleteScene()).Disabled(len(a.cfg.Scenes) < 2).Chosen() {
 		name := sceneName(sc)
 		a.confirm = &confirmation{
-			title:  trf("Delete “%s”?", "删除「%s」？", name),
-			body:   trf("Its %d rules go with it.", "其中的 %d 条规则会一起删除。", len(sc.Rules)),
-			action: tr("Delete", "删除"),
+			title:  locales.DeleteSceneTitle(name),
+			body:   locales.DeleteSceneBody(len(sc.Rules)),
+			action: locales.Delete(),
 			danger: true,
 			do:     func() { a.deleteScene(id) },
 		}
@@ -218,7 +227,7 @@ func (a *App) duplicateScene(id string) {
 	if src == nil {
 		return
 	}
-	cp := api.Scene{ID: api.NewID(), Name: trf("%s copy", "%s 副本", sceneName(src))}
+	cp := api.Scene{ID: api.NewID(), Name: locales.SceneCopyName(sceneName(src))}
 	for _, r := range src.Rules {
 		r = cloneRule(r)
 		r.ID = api.NewID()
@@ -249,10 +258,10 @@ func (a *App) deleteScene(id string) {
 func (a *App) ruleRow(c *ui.Context, sceneID string, i int, r *api.Rule) {
 	t := c.Theme()
 	ruleID := r.ID
-	row := ui.Row(c).Gap(12).Padding(12, 14, 12, 8).Radius(12).Border(1, t.Border).Background(t.Background)
+	row := ui.Row(c).Gap(12).Padding(13, 16, 13, 8)
 	hovered := row.Hovered()
 	if hovered {
-		row.Background(subtle(t, 0.03)).Border(1, subtle(t, 0.16))
+		row.Background(subtle(t, 0.025))
 	}
 	row.Cursor(ui.CursorPointer).Label(a.ruleTitle(r))
 	row.Children(func() {
@@ -287,7 +296,7 @@ func (a *App) ruleRow(c *ui.Context, sceneID string, i int, r *api.Rule) {
 					if by := shadowedBy(s.Rules, i); by > 0 {
 						ui.Row(c).Gap(5).Children(func() {
 							ui.Icon(c, icAlert).FontSize(12).TextColor(t.Warning)
-							ui.Text(c, trf("Never applies: rule %d matches all of it first", "不会生效：第 %d 条规则已经覆盖了它", by)).FontSize(12).TextColor(t.Warning).SingleLine()
+							ui.Text(c, locales.RuleNeverApplies(by)).FontSize(12).TextColor(t.Warning).SingleLine()
 						})
 						return
 					}
@@ -297,7 +306,7 @@ func (a *App) ruleRow(c *ui.Context, sceneID string, i int, r *api.Rule) {
 			a.ruleRoute(c, r)
 		})
 		on := r.Enabled
-		if ui.Switch(c, &on).Label(tr("Enabled", "启用")).Changed() {
+		if ui.Switch(c, &on).Label(locales.Enabled()).Changed() {
 			a.change(func(cfg *api.Config) {
 				if s := a.scene(sceneID); s != nil {
 					if k := ruleIndex(s, ruleID); k >= 0 {
@@ -311,10 +320,10 @@ func (a *App) ruleRow(c *ui.Context, sceneID string, i int, r *api.Rule) {
 		a.openEditor(sceneID, i)
 	}
 	row.ContextMenu(func(m *ui.Menu) {
-		if m.Item(tr("Edit…", "编辑…")).Chosen() {
+		if m.Item(locales.Edit()).Chosen() {
 			a.openEditor(sceneID, i)
 		}
-		if m.Item(tr("Duplicate", "复制")).Chosen() {
+		if m.Item(locales.DuplicateRule()).Chosen() {
 			a.change(func(cfg *api.Config) {
 				if s := a.scene(sceneID); s != nil {
 					if k := ruleIndex(s, ruleID); k >= 0 {
@@ -325,7 +334,7 @@ func (a *App) ruleRow(c *ui.Context, sceneID string, i int, r *api.Rule) {
 				}
 			})
 		}
-		if m.Item(tr("Move to Top", "移到最上面")).Disabled(i == 0).Chosen() {
+		if m.Item(locales.MoveToTop()).Disabled(i == 0).Chosen() {
 			a.change(func(cfg *api.Config) {
 				if s := a.scene(sceneID); s != nil {
 					if k := ruleIndex(s, ruleID); k >= 0 {
@@ -335,7 +344,7 @@ func (a *App) ruleRow(c *ui.Context, sceneID string, i int, r *api.Rule) {
 			})
 		}
 		m.Separator()
-		if m.Item(tr("Delete", "删除")).Chosen() {
+		if m.Item(locales.Delete()).Chosen() {
 			a.deleteRule(sceneID, ruleID)
 		}
 	})
@@ -347,7 +356,7 @@ func (a *App) ruleRoute(c *ui.Context, r *api.Rule) {
 	t := c.Theme()
 	ui.Row(c).Gap(6).Shrink(0).Justify(ui.End).Children(func() {
 		if r.Action == api.Block {
-			tagChip(c, icBlock, tr("Block", "拦截"), t.Danger)
+			tagChip(c, icBlock, locales.Block(), t.Danger)
 			return
 		}
 		ui.Icon(c, icArrow).FontSize(14).TextColor(t.TextMuted)
@@ -359,7 +368,7 @@ func (a *App) ruleRoute(c *ui.Context, r *api.Rule) {
 		}
 		if r.Fallback {
 			ui.Icon(c, icChevron).FontSize(12).TextColor(t.TextMuted)
-			tagChip(c, nil, tr("System", "系统"), t.TextMuted).Tooltip(tr("When none of these connect, the connection goes as macOS routes it", "以上网卡都连不上时，按系统默认网络连接"))
+			tagChip(c, nil, locales.SystemRoute(), t.TextMuted).Tooltip(locales.WhenNoneOfTheseConnectThe())
 		}
 	})
 }
@@ -373,10 +382,7 @@ func (a *App) ruleTitle(r *api.Rule) string {
 			names = append(names, appName(app))
 		}
 		if len(r.Apps) > 2 {
-			if zh() {
-				return fmt.Sprintf("%s 等 %d 个应用", strings.Join(names, "、"), len(r.Apps))
-			}
-			return fmt.Sprintf("%s and %d more", strings.Join(names, ", "), len(r.Apps)-2)
+			return locales.AppsAndMore(strings.Join(names, locales.ListComma()), len(r.Apps)-2)
 		}
 		return list(names)
 	case r.Note != "":
@@ -384,7 +390,7 @@ func (a *App) ruleTitle(r *api.Rule) string {
 	case len(r.Targets) > 0:
 		return targetsSummary(r.Targets)
 	}
-	return tr("Every connection", "所有连接")
+	return locales.EveryConnection()
 }
 
 // ruleDetail is the second line of a rule: the rest of what it matches.
@@ -392,22 +398,22 @@ func (a *App) ruleDetail(r *api.Rule) string {
 	var parts []string
 	switch {
 	case len(r.Apps) > 0 && len(r.Targets) > 0:
-		parts = append(parts, tr("To ", "访问 ")+targetsSummary(r.Targets))
+		parts = append(parts, locales.RuleToTargets(targetsSummary(r.Targets)))
 	case len(r.Apps) > 0:
-		parts = append(parts, tr("Every destination", "所有目标"))
+		parts = append(parts, locales.EveryDestination())
 	case r.Note != "" && len(r.Targets) > 0:
-		parts = append(parts, tr("Every app, to ", "所有应用，访问 ")+targetsSummary(r.Targets))
+		parts = append(parts, locales.RuleEveryAppToTargets(targetsSummary(r.Targets)))
 	default:
-		parts = append(parts, tr("Every app", "所有应用"))
+		parts = append(parts, locales.EveryApp())
 	}
 	switch r.Protocol {
 	case api.TCP:
-		parts = append(parts, tr("TCP only", "仅 TCP"))
+		parts = append(parts, locales.TcpOnly())
 	case api.UDP:
-		parts = append(parts, tr("UDP only", "仅 UDP"))
+		parts = append(parts, locales.UdpOnly())
 	}
 	if !r.Enabled {
-		parts = append(parts, tr("Off", "已停用"))
+		parts = append(parts, locales.RuleOff())
 	}
 	return strings.Join(parts, " · ")
 }
@@ -418,13 +424,9 @@ func targetsSummary(targets []string) string {
 	for _, s := range targets[:min(len(targets), 2)] {
 		shown = append(shown, targetLabel(s))
 	}
-	text := strings.Join(shown, tr(", ", "、"))
+	text := strings.Join(shown, locales.ListComma())
 	if len(targets) > 2 {
-		if zh() {
-			text += fmt.Sprintf(" 等 %d 个", len(targets))
-		} else {
-			text += fmt.Sprintf(" and %d more", len(targets)-2)
-		}
+		return locales.TargetsAndMore(text, len(targets)-2)
 	}
 	return text
 }
@@ -461,7 +463,7 @@ func (a *App) deleteRule(sceneID, ruleID string) {
 			}
 		}
 	})
-	a.undo = &undoAction{msg: tr("Rule deleted", "已删除规则"), do: func() {
+	a.undo = &undoAction{msg: locales.RuleDeleted(), do: func() {
 		a.change(func(cfg *api.Config) {
 			if s := a.scene(sceneID); s != nil {
 				s.Rules = slices.Insert(s.Rules, min(at, len(s.Rules)), removed)
@@ -543,9 +545,9 @@ func (a *App) importRules(id string) {
 		if len(file.Rules) == 0 && skipped == 0 {
 			return
 		}
-		msg := trf("Imported %d rules", "已导入 %d 条规则", added)
+		msg := locales.ImportedRuleCount(added)
 		if skipped > 0 {
-			msg += trf(", skipped %d invalid", "，跳过 %d 条无效规则", skipped)
+			msg += locales.ImportSkipped(skipped)
 		}
 		a.toast(msg)
 	}, nil)

@@ -3,6 +3,8 @@ package ui
 import (
 	"fmt"
 	"time"
+
+	"github.com/Kel077/pith/locales"
 )
 
 // byteSize writes a count of bytes: 0 B, 812 B, 4.2 KB, 18 MB, 1.25 GB.
@@ -47,13 +49,13 @@ func ago(t, now time.Time) string {
 	d := now.Sub(t)
 	switch {
 	case d < 5*time.Second:
-		return tr("just now", "刚刚")
+		return locales.JustNow()
 	case d < time.Minute:
-		return trf("%d s ago", "%d 秒前", int(d.Seconds()))
+		return locales.AgoSeconds(int(d.Seconds()))
 	case d < time.Hour:
-		return trf("%d min ago", "%d 分钟前", int(d.Minutes()))
+		return locales.AgoMinutes(int(d.Minutes()))
 	case d < 24*time.Hour:
-		return trf("%d h ago", "%d 小时前", int(d.Hours()))
+		return locales.AgoHours(int(d.Hours()))
 	}
 	return t.Format("2006-01-02")
 }
@@ -62,15 +64,15 @@ func ago(t, now time.Time) string {
 func duration(d time.Duration) string {
 	switch {
 	case d < time.Minute:
-		return trf("%d s", "%d 秒", int(d.Seconds()))
+		return locales.DurationSeconds(int(d.Seconds()))
 	case d < time.Hour:
-		return trf("%d min", "%d 分钟", int(d.Minutes()))
+		return locales.DurationMinutes(int(d.Minutes()))
 	}
 	h, m := int(d.Hours()), int(d.Minutes())%60
 	if m == 0 {
-		return trf("%d h", "%d 小时", h)
+		return locales.DurationHours(h)
 	}
-	return trf("%d h %d min", "%d 小时 %d 分钟", h, m)
+	return locales.DurationHoursMinutes(h, m)
 }
 
 // millis writes a latency: 23 ms.

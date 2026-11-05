@@ -1,24 +1,27 @@
 package ui
 
 import (
-	"fmt"
+	"slices"
 
 	"github.com/egoist/mygo/ui"
+
 	"github.com/Kel077/pith/internal/api"
+	"github.com/Kel077/pith/locales"
 )
 
-// WindowView is the main window: a sidebar of four pages and the routing
-// switch, beside the page shown.
+// pages are the window's pages, in the order of the navigation.
+var pages = []string{"rules", "activity", "network", "settings"}
+
+// WindowView is the main window: the background's glows, a capsule of
+// navigation and the routing switch at the top, and the page shown.
 func (a *App) WindowView(c *ui.Context) {
 	t := theme(c)
 	c.SetTheme(t)
 	a.flushToasts(c)
-	if c.Vibrancy() {
-		c.Root().Background(ui.Transparent)
-	}
-	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
-		a.sidebar(c)
-		ui.Column(c).Grow(1).MinWidth(0).Background(t.Background).Children(func() {
+	c.Root().Background(ui.Transparent)
+	ambient(c, ui.Column(c).Fill()).Children(func() {
+		a.topBar(c)
+		ui.Column(c).Grow(1).MinHeight(0).Children(func() {
 			switch a.page {
 			case "activity":
 				a.activityView(c)
@@ -36,77 +39,68 @@ func (a *App) WindowView(c *ui.Context) {
 		a.page = "rules"
 		a.openEditor(a.sceneID, -1)
 	}
-	for i, p := range []string{"rules", "activity", "network", "settings"} {
+	for i, p := range pages {
 		if c.Shortcut(ui.Cmd, ui.Key1+ui.Key(i)) {
 			a.page = p
 		}
 	}
 }
 
-// pageHeader is the top of a page: its title, and its actions on the right.
+// topBar holds the window's controls: the traffic lights on the left, the
+// pages in a capsule in the middle, and the routing switch on the right.
 // It drags the window, as a title bar does.
-func pageHeader(c *ui.Context, title string, actions func()) {
+func (a *App) topBar(c *ui.Context) {
 	bar := c.TitleBar()
-	ui.Row(c).Height(max(bar.Height, 56)).Padding(12, 24, 0, 28).Gap(8).DragWindow().Shrink(0).Children(func() {
-		ui.Text(c, title).FontSize(20).Bold().SingleLine()
-		ui.Spacer(c)
+	ui.Row(c).Height(64).Padding(0, 20, 0, max(bar.Left, 76)+12).Gap(12).DragWindow().Shrink(0).Children(func() {
+		ui.Row(c).Grow(1).Basis(0).Children(func() {})
+		chosen := slices.Index(pages, a.page)
+		labels := []string{locales.Rules(), locales.Activity(), locales.Network(), locales.Settings()}
+		if segmentedCapsule(c, "nav", locales.Pages(), &chosen, labels, []*ui.SVG{icRules, icActivity, icNetwork, icSettings}) {
+			a.page = pages[chosen]
+		}
+		ui.Row(c).Grow(1).Basis(0).Justify(ui.End).Children(func() { a.routingCapsule(c) })
+	})
+}
+
+// routingCapsule is the switch that starts and stops routing, with what
+// runs: a capsule at the top right of the window.
+func (a *App) routingCapsule(c *ui.Context) {
+	t := c.Theme()
+	on := a.isRunning() || a.status.State == api.Starting
+	capsule(c.Key("routing")).Gap(8).Padding(5, 6, 5, 12).Tooltip(a.stateDetail()).Children(func() {
+		col := t.TextMuted
+		switch {
+		case a.status.State == api.Failed:
+			col = t.Danger
+		case on:
+			col = running(t)
+		}
+		dot(c, col, 8, !on)
+		text := a.stateText()
+		if a.isRunning() {
+			text = sceneName(a.scene(a.status.SceneID))
+		}
+		ui.Text(c, text).FontWeight(500).SingleLine().MaxWidth(160)
+		sw := on
+		if ui.Switch(c, &sw).Label(locales.RoutingSwitch()).Disabled(a.busy != "" || !a.loaded).Changed() {
+			a.toggle()
+		}
+	})
+}
+
+// pageHeader is the top of a page: its title, a line under it, and its
+// actions on the right.
+func pageHeader(c *ui.Context, title, subtitle string, actions func()) {
+	ui.Row(c).Padding(8, 32, 18).Gap(10).AlignItems(ui.End).Shrink(0).Children(func() {
+		ui.Column(c).Grow(1).Gap(4).MinWidth(0).Children(func() {
+			ui.Text(c, title).FontSize(28).FontWeight(700).LetterSpacing(-0.4).SingleLine()
+			if subtitle != "" {
+				ui.Text(c, subtitle).TextColor(c.Theme().TextMuted).SingleLine()
+			}
+		})
 		if actions != nil {
 			actions()
 		}
-	})
-}
-
-func (a *App) sidebar(c *ui.Context) {
-	t := c.Theme()
-	bar := c.TitleBar()
-	side := ui.Column(c).Width(212).Shrink(0).Padding(max(bar.Height, 28)+14, 12, 12).Gap(14)
-	if !c.Vibrancy() {
-		side.Background(t.Surface)
-	}
-	side.BorderWidth(0, 1, 0, 0).BorderColor(t.Border).DragWindow()
-	side.Children(func() {
-		ui.Row(c).Gap(8).Padding(0, 8).Children(func() {
-			ui.Icon(c, pithMark).FontSize(20).TextColor(t.Accent)
-			ui.Text(c, tr("Pith", "橘核")).FontSize(16).Bold()
-		})
-		page := a.page
-		if ui.Sidebar(c, &page, func() {
-			ui.SidebarItem(c, "rules", icRules, tr("Rules", "规则"))
-			act := ui.SidebarItem(c, "activity", icActivity, tr("Activity", "活动"))
-			if a.isRunning() && a.status.Open > 0 {
-				act.Children(func() { ui.Badge(c, fmt.Sprint(a.status.Open)) })
-			}
-			ui.SidebarItem(c, "network", icNetwork, tr("Network", "网络"))
-			ui.SidebarItem(c, "settings", icSettings, tr("Settings", "设置"))
-		}).Grow(1).Label(tr("Pages", "页面")).Changed() {
-			a.page = page
-		}
-		a.routingCard(c)
-	})
-}
-
-// routingCard is the switch that starts and stops routing, with what runs.
-func (a *App) routingCard(c *ui.Context) {
-	t := c.Theme()
-	on := a.isRunning() || a.status.State == api.Starting
-	box := ui.Column(c).Padding(12).Gap(6).Radius(12).Background(t.Background).Border(1, t.Border)
-	box.Children(func() {
-		ui.Row(c).Gap(8).Children(func() {
-			col := t.TextMuted
-			switch {
-			case a.status.State == api.Failed:
-				col = t.Danger
-			case on:
-				col = running(t)
-			}
-			dot(c, col, 8, !on)
-			ui.Text(c, a.stateText()).FontWeight(600).Grow(1).SingleLine()
-			sw := on
-			if ui.Switch(c, &sw).Label(tr("Routing", "分流")).Disabled(a.busy != "" || !a.loaded).Changed() {
-				a.toggle()
-			}
-		})
-		ui.Text(c, a.stateDetail()).FontSize(12).TextColor(t.TextMuted).SingleLine()
 	})
 }
 
@@ -114,17 +108,17 @@ func (a *App) routingCard(c *ui.Context) {
 func (a *App) stateText() string {
 	switch {
 	case a.busy == "install":
-		return tr("Installing…", "正在安装…")
+		return locales.Installing()
 	case a.busy == "start" || a.status.State == api.Starting:
-		return tr("Starting…", "正在启动…")
+		return locales.Starting()
 	case a.busy == "stop" || a.status.State == api.Stopping:
-		return tr("Stopping…", "正在停止…")
+		return locales.Stopping()
 	case a.status.State == api.Running:
-		return tr("Routing", "正在分流")
+		return locales.RoutingNow()
 	case a.status.State == api.Failed:
-		return tr("Stopped by an error", "因错误停止")
+		return locales.StoppedByAnError()
 	}
-	return tr("Off", "未分流")
+	return locales.RoutingOff()
 }
 
 // stateDetail says which scene runs and for how long, or which would.
@@ -137,7 +131,7 @@ func (a *App) stateDetail() string {
 		return errorText(a.status.Error)
 	}
 	if !a.status.Helper.Installed {
-		return tr("Turn on to install the helper", "打开时会安装后台助手")
+		return locales.TurnOnToInstallTheHelper()
 	}
-	return trf("Turn on to route by “%s”", "打开后按「%s」分流", sceneName(a.scene(a.cfg.Selected)))
+	return locales.TurnOnToRoute(sceneName(a.scene(a.cfg.Selected)))
 }

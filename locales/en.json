@@ -1,0 +1,614 @@
+{
+  "@@locale": "en",
+  "mygo.appName": "Pith",
+  "appName": "Pith",
+  "@appName": {
+    "description": "The app's name, as the interface shows it."
+  },
+  "aDestinationIsNotADomain": "A destination is not a domain, an IP address or a range.",
+  "aDomainAnIpAddressOr": "A domain, an IP address or a URL",
+  "about": "About",
+  "action": "Action",
+  "activity": "Activity",
+  "actualIpOptionalElseLookedUp": "Actual IP (optional; else looked up)",
+  "addInterface": "Add Interface",
+  "addRule": "Add Rule",
+  "afterARestartRouteAgainIf": "After a restart, route again if it was on.",
+  "anAppHasNoLocation": "An app has no location.",
+  "warnVpn": "Another VPN ({iface}) carries all traffic: connections no rule matches still go through it.",
+  "@warnVpn": {
+    "placeholders": {
+      "iface": {
+        "type": "String"
+      }
+    }
+  },
+  "anotherVpnOrNetworkToolHolds": "Another VPN or network tool holds the routes Pith needs.",
+  "anyApp": "Any app",
+  "app": "App",
+  "apps": "Apps",
+  "backUpEverything": "Back up everything",
+  "outcomeBackup": "backup",
+  "block": "Block",
+  "blockRulesAlwaysWinOtherwiseThe": "Block rules always win; otherwise the first matching rule from the top decides. Drag to reorder.",
+  "blocked": "Blocked",
+  "byRuleNumber": "by rule {number}",
+  "@byRuleNumber": {
+    "placeholders": {
+      "number": {
+        "type": "int"
+      }
+    }
+  },
+  "canTConnectNoInterfaceOf": "Can't connect: no interface of its rule is up",
+  "cancel": "Cancel",
+  "canceled": "Canceled.",
+  "check": "Check",
+  "checkAConnection": "Check a Connection",
+  "checkBlocked": "Blocked",
+  "choose": "Choose…",
+  "clear": "Clear",
+  "connectToAHostAndPort": "Connect to a host and port through each interface, to compare them.",
+  "connected": "Connected",
+  "connections": "Connections",
+  "sceneCopyName": "{scene} copy",
+  "@sceneCopyName": {
+    "placeholders": {
+      "scene": {
+        "type": "String"
+      }
+    }
+  },
+  "data": "Data",
+  "delete": "Delete",
+  "deleteSceneTitle": "Delete “{scene}”?",
+  "@deleteSceneTitle": {
+    "placeholders": {
+      "scene": {
+        "type": "String"
+      }
+    }
+  },
+  "deleteScene": "Delete Scene…",
+  "destination": "Destination",
+  "destinations": "Destinations",
+  "done": "Done",
+  "doubleClickToRename": "Double-click to rename",
+  "duplicateRule": "Duplicate",
+  "duplicateScene": "Duplicate",
+  "eGOfficeHome": "e.g. Office, Home",
+  "edit": "Edit…",
+  "editRule": "Edit Rule",
+  "enabled": "Enabled",
+  "everyApp": "Every app",
+  "everyConnection": "Every connection",
+  "everyDestination": "Every destination",
+  "targetPlaceholder": "example.com, 192.168.50.10 or 10.0.0.0/8, then Return",
+  "export": "Export…",
+  "exportRules": "Export Rules…",
+  "failed": "Failed",
+  "outcomeFallback": "fallback",
+  "filter": "Filter",
+  "findingApps": "Finding apps…",
+  "general": "General",
+  "goesOutThrough": "Goes out through",
+  "durationHours": "{h} h",
+  "@durationHours": {
+    "placeholders": {
+      "h": {
+        "type": "int"
+      }
+    }
+  },
+  "agoHours": "{hours} h ago",
+  "@agoHours": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "durationHoursMinutes": "{h} h {m} min",
+  "@durationHoursMinutes": {
+    "placeholders": {
+      "h": {
+        "type": "int"
+      },
+      "m": {
+        "type": "int"
+      }
+    }
+  },
+  "hardware": "Hardware",
+  "helper": "Helper",
+  "hostPortEGGithubCom": "host:port, e.g. github.com:443",
+  "stepHours": "{hours, plural, one {# hour} other {# hours}}",
+  "@stepHours": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "ifTheMacLosesTheInternet": "If the Mac loses the internet right after routing starts, undo it.",
+  "import": "Import…",
+  "importRules": "Import Rules…",
+  "importedRuleCount": "{count, plural, one {Imported # rule} other {Imported # rules}}",
+  "@importedRuleCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "includesItsSubdomainsClickForThis": "Includes its subdomains: click for this domain alone",
+  "install": "Install…",
+  "installTheHelper": "Install the helper",
+  "installedNotAnswering": "Installed, not answering.",
+  "helperInstalledVersion": "Installed, version {version}.",
+  "@helperInstalledVersion": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "installing": "Installing…",
+  "interfaces": "Interfaces",
+  "warnInterfaceDown": "Not connected: {names}. Rules that use them try their next interface.",
+  "@warnInterfaceDown": {
+    "placeholders": {
+      "names": {
+        "type": "String"
+      }
+    }
+  },
+  "itNeverReadsWhatAppsSend": "It never reads what apps send: no decryption, nothing uploaded.",
+  "itOnlyRoutesWhileYouTurn": "It only routes while you turn routing on.",
+  "itsRuleSFirstInterfaceDidn": "Its rule's first interface didn't connect",
+  "deleteSceneBody": "{count, plural, =0 {It has no rules.} one {Its rule goes with it.} other {Its # rules go with it.}}",
+  "@deleteSceneBody": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "justNow": "just now",
+  "keepRoutingAfterQuitting": "Keep routing after quitting",
+  "keepTheConnectionLog": "Keep the connection log",
+  "language": "Language",
+  "languageSystem": "System",
+  "leaveEmptyForEveryAppAn": "Leave empty for every app. An app's helpers and the system services that work for it match too.",
+  "macosSendsConnectionsNoRuleMatches": "macOS sends connections no rule matches here",
+  "matchesButAnotherRuleDecides": "Matches, but another rule decides",
+  "matchesDecides": "Matches — decides",
+  "durationMinutes": "{minutes} min",
+  "@durationMinutes": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "agoMinutes": "{minutes} min ago",
+  "@agoMinutes": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "stepMinute": "minute",
+  "stepMinutes": "{minutes, plural, one {# minute} other {# minutes}}",
+  "@stepMinutes": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "moveDown": "Move Down",
+  "moveToTop": "Move to Top",
+  "moveUp": "Move Up",
+  "logKeep1Day": "1 day",
+  "logKeep30Days": "30 days",
+  "logKeep7Days": "7 days",
+  "network": "Network",
+  "ruleNeverApplies": "Covered by rule {number}",
+  "@ruleNeverApplies": {
+    "placeholders": {
+      "number": {
+        "type": "int"
+      }
+    }
+  },
+  "newDomainsIncludeTheirSubdomains": "New domains include their subdomains",
+  "newMatchingConnectionsAreRefusedConnections": "New matching connections are refused. Connections already open stay.",
+  "newRule": "New Rule",
+  "newRuleForApp": "New Rule for {app}…",
+  "@newRuleForApp": {
+    "placeholders": {
+      "app": {
+        "type": "String"
+      }
+    }
+  },
+  "newRuleForThisDestination": "New Rule for This Destination…",
+  "newScene": "New Scene",
+  "noAppMatches": "No app matches.",
+  "noAppsYet": "No apps yet.",
+  "noConnectionMatches": "No connection matches.",
+  "noConnectionsYet": "No connections yet.",
+  "noInternet": "No internet",
+  "noNetworkIsConnected": "No network is connected.",
+  "noRuleMatchedTheSystemS": "No rule matched: the system's network",
+  "noRuleMatchesTheSystemS": "no rule matches: the system's routing",
+  "noRulesYet": "No rules yet",
+  "noTrafficInThisPeriod": "No traffic in this period.",
+  "noneOfItsRuleSInterfaces": "None of its rule's interfaces connected",
+  "notADomainIpAddressOr": "Not a domain, IP address or range",
+  "notConnected": "Not connected",
+  "notConnectedLower": "not connected",
+  "notInstalledRoutingNeedsItMacos": "Not installed. Routing needs it; macOS asks for your password once.",
+  "notNow": "Not Now",
+  "notRouting": "Not routing",
+  "notTested": "Not tested",
+  "note": "Note",
+  "offQuittingPithStopsRouting": "Off: quitting Pith stops routing.",
+  "onlyWhatPithRoutedTheBytes": "Only what Pith routed: the bytes apps sent and received, without the network's own overhead.",
+  "connectionOpen": "Open",
+  "appOpenCount": "{count} open",
+  "@appOpenCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "panelTotals": "{count} open · ↓ {received} · ↑ {sent}",
+  "@panelTotals": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "received": {
+        "type": "String"
+      },
+      "sent": {
+        "type": "String"
+      }
+    }
+  },
+  "openAtLogin": "Open at login",
+  "openPith": "Open Pith",
+  "optionalEGNas": "Optional, e.g. NAS",
+  "otherApps": "Other apps",
+  "otherDestinations": "Other destinations",
+  "otherProgram": "Other Program…",
+  "otherProtocol": "Other protocol",
+  "pages": "Pages",
+  "pause": "Pause",
+  "perDay": "Per day",
+  "period": "Period",
+  "pickAtLeastOneInterface": "Pick at least one interface.",
+  "pithRoutesConnectionsWithASmall": "Pith routes connections with a small helper that runs with administrator rights. macOS asks for your password once to install it.",
+  "pithSavesNothingOverTheFile": "Pith saves nothing over the file until you decide.",
+  "pithWaitsInTheMenuBar": "Pith waits in the menu bar.",
+  "protocol": "Protocol",
+  "quit": "Quit",
+  "reachAServer": "Reach a server",
+  "readTheHostNameAppsConnect": "Read the host name apps connect to (TLS SNI, HTTP Host), so domain rules match. Contents stay unread.",
+  "recognizeDomains": "Recognize domains",
+  "recognizingDomainsIsOffSoDomain": "Recognizing domains is off, so domain rules may not match.",
+  "remove": "Remove",
+  "rename": "Rename…",
+  "renameScene": "Rename Scene",
+  "replace": "Replace",
+  "replaceYourSettings": "Replace your settings?",
+  "resume": "Resume",
+  "resumeRoutingOnLaunch": "Resume routing on launch",
+  "route": "Route",
+  "routeIpv6ConnectionsToo": "Route IPv6 connections too.",
+  "routeThrough": "Route through",
+  "router": "Router",
+  "routingCutTheInternetSoPith": "Routing cut the internet, so Pith undid it.",
+  "routingHelper": "Routing helper",
+  "routingIsOffThisPageShows": "Routing is off. This page shows the connections Pith routes.",
+  "routingNow": "Routing",
+  "routingOff": "Off",
+  "otherSceneRunning": "Routing runs by “{scene}”. These rules apply once you switch.",
+  "@otherSceneRunning": {
+    "placeholders": {
+      "scene": {
+        "type": "String"
+      }
+    }
+  },
+  "routingStopped": "Routing stopped: ",
+  "routingSwitch": "Routing",
+  "ruleDeleted": "Rule deleted",
+  "ruleOff": "Off",
+  "rules": "Rules",
+  "ruleCount": "{count, plural, one {# rule} other {# rules}}",
+  "@ruleCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "durationSeconds": "{seconds} s",
+  "@durationSeconds": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "agoSeconds": "{seconds} s ago",
+  "@agoSeconds": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "safeStart": "Safe start",
+  "save": "Save",
+  "scene": "Scene",
+  "sceneDefaultName": "Default",
+  "scenesRulesInterfaceNamesAndSettings": "Scenes, rules, interface names and settings, in one file.",
+  "searchApps": "Search apps",
+  "seeWhereAConnectionWouldGo": "See where a connection would go",
+  "settings": "Settings",
+  "show": "Show",
+  "showProgramInFinder": "Show Program in Finder",
+  "showRule": "Show Rule",
+  "importSkipped": ", skipped {count} invalid",
+  "@importSkipped": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "somethingIsListedTwice": "Something is listed twice.",
+  "somethingWentWrong": "Something went wrong.",
+  "speedInTheMenuBar": "Speed in the menu bar",
+  "startOver": "Start Over…",
+  "startOverConfirm": "Start Over",
+  "startOverWithNoRules": "Start over with no rules?",
+  "starting": "Starting…",
+  "stoppedByAnError": "Stopped by an error",
+  "stopping": "Stopping…",
+  "subdomains": "+ subdomains",
+  "switchToScene": "Switch to “{scene}”",
+  "@switchToScene": {
+    "placeholders": {
+      "scene": {
+        "type": "String"
+      }
+    }
+  },
+  "systemDefault": "Default",
+  "systemRoute": "System",
+  "tcpAndUdp": "TCP and UDP",
+  "tcpOnly": "TCP only",
+  "test": "Test",
+  "testAll": "Test All",
+  "testing": "Testing…",
+  "testsConnectThroughOneInterfaceAt": "Tests connect through one interface at a time, whatever the rules say.",
+  "thatSceneNoLongerExists": "That scene no longer exists.",
+  "replaceBackupBody": "{count, plural, one {The backup has # scene.} other {The backup has # scenes.}}",
+  "@replaceBackupBody": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "theHelperIsNotInstalled": "The helper is not installed.",
+  "theHelperNeedsAnUpdate": "The helper needs an update.",
+  "theseSettingsCanTBeSaved": "These settings can't be saved.",
+  "thisDomainAloneClickToInclude": "This domain alone: click to include its subdomains",
+  "time": "Time",
+  "traffic": "Traffic",
+  "triedFromTheTopTheNext": "Tried from the top: the next one when one can't connect.",
+  "tryAgain": "Try Again",
+  "turnOnDomains": "Turn On",
+  "turnOnRouting": "Turn On",
+  "turnOnToInstallTheHelper": "Turn on to install the helper",
+  "turnOnToRoute": "Turn on to route by “{scene}”",
+  "@turnOnToRoute": {
+    "placeholders": {
+      "scene": {
+        "type": "String"
+      }
+    }
+  },
+  "udpOnly": "UDP only",
+  "undo": "Undo",
+  "uninstall": "Uninstall…",
+  "uninstall2": "Uninstall",
+  "uninstallTheHelper": "Uninstall the helper?",
+  "unknownApp": "Unknown app",
+  "untilQuitting": "Until quitting",
+  "update": "Update…",
+  "updateTheHelper": "Update the helper",
+  "helperOutdatedVersion": "Version {version} is outdated.",
+  "@helperOutdatedVersion": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "whenNoneOfThemConnectsUse": "When none of them connects, use the system's network",
+  "whenNoneOfTheseConnectThe": "When none of these connect, the connection goes as macOS routes it",
+  "youCanRemoveItInSettings": "You can remove it in Settings at any time.",
+  "yourRulesCanTBeRead": "Your rules can't be read",
+  "resolvedTo": "Resolved to {addresses}",
+  "@resolvedTo": {
+    "placeholders": {
+      "addresses": {
+        "type": "String"
+      }
+    }
+  },
+  "publicIp": "Public IP {ip}",
+  "@publicIp": {
+    "placeholders": {
+      "ip": {
+        "type": "String"
+      }
+    }
+  },
+  "ruleToTargets": "To {targets}",
+  "@ruleToTargets": {
+    "placeholders": {
+      "targets": {
+        "type": "String"
+      }
+    }
+  },
+  "ruleEveryAppToTargets": "Every app, to {targets}",
+  "@ruleEveryAppToTargets": {
+    "placeholders": {
+      "targets": {
+        "type": "String"
+      }
+    }
+  },
+  "chartPer": "Per {step}",
+  "@chartPer": {
+    "placeholders": {
+      "step": {
+        "type": "String"
+      }
+    }
+  },
+  "chartPeak": "Peak {amount}",
+  "@chartPeak": {
+    "placeholders": {
+      "amount": {
+        "type": "String"
+      }
+    }
+  },
+  "listComma": ", ",
+  "@listComma": {
+    "description": "Between the items of a list, before the last."
+  },
+  "listAnd": "{head} and {last}",
+  "@listAnd": {
+    "description": "A list's items before the last, joined by listComma, and its last.",
+    "placeholders": {
+      "head": {
+        "type": "String"
+      },
+      "last": {
+        "type": "String"
+      }
+    }
+  },
+  "appsAndMore": "{names} and {count} more",
+  "@appsAndMore": {
+    "description": "A rule's first two apps, then how many more it has.",
+    "placeholders": {
+      "names": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "targetsAndMore": "{names} and {count} more",
+  "@targetsAndMore": {
+    "description": "A rule's first two destinations, then how many more it has.",
+    "placeholders": {
+      "names": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "connRule": "Rule {number} of “{scene}”: {rule}",
+  "@connRule": {
+    "placeholders": {
+      "number": {
+        "type": "int"
+      },
+      "scene": {
+        "type": "String"
+      },
+      "rule": {
+        "type": "String"
+      }
+    }
+  },
+  "spanHour": "Last hour",
+  "spanDay": "Last day",
+  "spanWeek": "Last week",
+  "windowTitle": "Pith",
+  "@windowTitle": {
+    "description": "The main window's title, and the menu bar icon's tooltip."
+  },
+  "openPithMenu": "Open Pith…",
+  "@openPithMenu": {
+    "description": "The item of the menu bar icon's menu that opens the window."
+  },
+  "helperInstalled": "Installed",
+  "@helperInstalled": {
+    "description": "The helper's state in a word, in Settings: installed and answering. Its version follows."
+  },
+  "helperNotInstalled": "Not installed",
+  "@helperNotInstalled": {
+    "description": "The helper's state in a word, in Settings."
+  },
+  "helperOutdated": "Outdated",
+  "@helperOutdated": {
+    "description": "The helper's state in a word, in Settings: older than the app. Its version follows."
+  },
+  "helperNotAnswering": "Not answering",
+  "@helperNotAnswering": {
+    "description": "The helper's state in a word, in Settings: installed, but it does not answer. Its version follows."
+  },
+  "mitLicense": "MIT License",
+  "@mitLicense": {
+    "description": "The app's license, under its name and version in Settings › About."
+  },
+  "macosAsksForYourPassword": "macOS will ask for your administrator password.",
+  "@macosAsksForYourPassword": {
+    "description": "The one line of the prompt to install or update the helper."
+  },
+  "targetPlaceholderShort": "Domain, IP or range",
+  "@targetPlaceholderShort": {
+    "description": "The placeholder of the rule editor's field that adds destinations."
+  },
+  "warnVpnShort": "Another VPN ({iface}) carries all traffic",
+  "@warnVpnShort": {
+    "description": "A notice, short; warnVpn says it whole, on hover.",
+    "placeholders": {
+      "iface": {
+        "type": "String"
+      }
+    }
+  },
+  "warnInterfaceDownShort": "Not connected: {names}",
+  "@warnInterfaceDownShort": {
+    "description": "A notice, short: interfaces rules use that are down. warnInterfaceDown says it whole, on hover.",
+    "placeholders": {
+      "names": {
+        "type": "String"
+      }
+    }
+  },
+  "recognizingDomainsIsOff": "Recognizing domains is off",
+  "@recognizingDomainsIsOff": {
+    "description": "A notice, short; recognizingDomainsIsOffSoDomain says it whole, on hover."
+  }
+}

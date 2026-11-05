@@ -3,8 +3,11 @@ package ui
 import (
 	"strings"
 
+	"github.com/egoist/mygo/plugins/glass"
 	"github.com/egoist/mygo/ui"
+
 	"github.com/Kel077/pith/internal/api"
+	"github.com/Kel077/pith/locales"
 )
 
 // dot is a small round mark: filled, or a ring for something off.
@@ -57,11 +60,13 @@ func muted(c *ui.Context, s string) ui.Element {
 func emptyState(c *ui.Context, ic *ui.SVG, title, body string, actions func()) {
 	t := c.Theme()
 	ui.Column(c).Grow(1).Center().Gap(10).Padding(40).Children(func() {
-		ui.Box(c).Size(56, 56).Radius(18).Background(t.Accent.Alpha(0.12)).Center().Children(func() {
-			ui.Icon(c, ic).FontSize(26).TextColor(t.Accent)
+		ui.Box(c).Size(64, 64).Radius(999).Material(glass.Glass{Tint: t.Accent.Alpha(0.14)}).Border(1, rim(t)).Center().Children(func() {
+			ui.Icon(c, ic).FontSize(28).TextColor(t.Accent)
 		})
-		ui.Text(c, title).FontSize(16).Bold().MarginY(4)
-		ui.Text(c, body).TextColor(t.TextMuted).MaxWidth(340).TextAlign(ui.Center)
+		ui.Text(c, title).FontSize(18).FontWeight(600).MarginY(4)
+		if body != "" {
+			ui.Text(c, body).TextColor(t.TextMuted).MaxWidth(340).TextAlign(ui.Center)
+		}
 		if actions != nil {
 			ui.Row(c).Gap(8).MarginY(8).Children(actions)
 		}
@@ -105,7 +110,7 @@ func (a *App) ifaceChip(c *ui.Context, ref api.InterfaceRef) ui.Element {
 		}
 	})
 	if !up {
-		chip.Tooltip(tr("Not connected", "未连接"))
+		chip.Tooltip(locales.NotConnected())
 	}
 	return chip
 }
@@ -182,7 +187,7 @@ func appName(app api.AppRef) string {
 		return app.Name
 	}
 	if app.Path == "" {
-		return tr("Unknown app", "未知应用")
+		return locales.UnknownApp()
 	}
 	base := app.Path[strings.LastIndex(app.Path, "/")+1:]
 	return strings.TrimSuffix(base, ".app")

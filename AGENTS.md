@@ -46,6 +46,8 @@ needs Claude's agreement first.
 - `go vet ./... && go test ./...` must pass before every commit.
 - The helper ships inside the app as `resources/darwin-arm64/bin/pithd`
   (a build product, not committed), which `mygo build` signs with the app.
+- Notes about the maintainer's own Mac for local tests live in
+  `AGENTS.local.md`, which is not committed.
 
 ## Safety rules (the user's, non-negotiable)
 

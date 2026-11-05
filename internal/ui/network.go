@@ -4,8 +4,11 @@ import (
 	"context"
 	"strings"
 
+	"github.com/egoist/mygo/plugins/glass"
 	"github.com/egoist/mygo/ui"
+
 	"github.com/Kel077/pith/internal/api"
+	"github.com/Kel077/pith/locales"
 )
 
 // networkPage is the state of the network page.
@@ -19,12 +22,20 @@ type networkPage struct {
 	testGen  int      // the test results belong to
 }
 
+// networkInset is how far the rows of the page's groups, and the titles
+// above them, keep from the groups' edges.
+const networkInset = 16
+
 // networkView shows the interfaces, what each is connected to, and tests
-// of the internet through each.
+// of the internet through each: a pane of glass for each connected
+// interface, two by two; the others as rows of one group; and a server
+// reached through all of them.
 func (a *App) networkView(c *ui.Context) {
 	t := c.Theme()
-	pageHeader(c, tr("Network", "网络"), func() {
-		if textIconButton(c, icRefresh, tr("Test All", "全部测试")).Disabled(len(a.probing) > 0).Clicked() {
+	pageHeader(c, locales.Network(), "", func() {
+		all := glassCapsuleButton(c, "test-all", icRefresh, locales.TestAll()).Focusable().Shrink(0).
+			Tooltip(locales.TestsConnectThroughOneInterfaceAt()).Disabled(len(a.probing) > 0)
+		if all.Clicked() {
 			for _, i := range a.ifaces {
 				if i.Up {
 					a.probe(i.Name)
@@ -32,7 +43,7 @@ func (a *App) networkView(c *ui.Context) {
 			}
 		}
 	})
-	ui.Scroll(c).Grow(1).Padding(0, 24, 24).Gap(16).Children(func() {
+	ui.Scroll(c).Grow(1).Padding(0, 32, 28).Gap(24).Children(func() {
 		var up, down []*api.Interface
 		for _, i := range a.visibleIfaces() {
 			if i.Up {
@@ -41,163 +52,181 @@ func (a *App) networkView(c *ui.Context) {
 				down = append(down, i)
 			}
 		}
-		ui.Grid(c).Columns(2).Gap(12).Children(func() {
-			for _, i := range up {
-				a.ifaceCard(c, i)
-			}
-		})
-		if len(up) == 0 {
-			muted(c, tr("No network is connected.", "没有已连接的网络。")).Padding(24)
+		if len(up) > 0 {
+			ui.Grid(c).Columns(2).Gap(16).Children(func() {
+				for _, i := range up {
+					a.ifaceCard(c, i)
+				}
+			})
+		} else {
+			pane(c).Padding(28).Gap(10).AlignItems(ui.Center).Children(func() {
+				ui.Icon(c, icNetwork).FontSize(22).TextColor(t.TextMuted)
+				muted(c, locales.NoNetworkIsConnected())
+			})
 		}
 		if len(down) > 0 {
-			ui.Column(c).Gap(8).Children(func() {
-				sectionTitle(c, tr("Not connected", "未连接")).Padding(0, 4)
-				ui.Column(c).Radius(12).Border(1, t.Border).Dividers(1, t.Border).Children(func() {
-					for _, i := range down {
-						a.downRow(c, i)
-					}
-				})
+			networkGroup(c, locales.NotConnected(), func() {
+				for _, i := range down {
+					a.downRow(c, i)
+				}
 			})
 		}
 		a.reachability(c)
-		ui.Row(c).Gap(6).Children(func() {
-			ui.Icon(c, icInfo).FontSize(12).TextColor(t.TextMuted)
-			ui.Text(c, tr("Tests connect through one interface at a time, whatever the rules say.", "测试会直接从指定网卡连接，不受规则影响。")).FontSize(12).TextColor(t.TextMuted)
-		})
 	})
 }
 
-// ifaceCard shows one interface.
+// networkGroup is a group of rows under a small title.
+func networkGroup(c *ui.Context, title string, rows func()) {
+	ui.Column(c).Gap(8).Children(func() {
+		sectionTitle(c, title).Padding(0, networkInset)
+		paneRows(c).Children(rows)
+	})
+}
+
+// networkKindIcon shows the icon of an interface's kind in a circle of
+// glass tinted with the interface's color, or gray for one that is not
+// connected.
+func networkKindIcon(c *ui.Context, kind api.InterfaceKind, col ui.Color, up bool, size float32) {
+	t := c.Theme()
+	tint, fg := col.Alpha(0.2), col
+	if t.Dark {
+		tint, fg = col.Alpha(0.28), col.Mix(ui.Hex("#ffffff"), 0.3)
+	}
+	if !up {
+		tint, fg = subtle(t, 0.05), t.TextMuted
+	}
+	ui.Box(c).Size(size, size).Radius(size/2).Material(glass.Glass{Tint: tint}).Border(1, rim(t)).Center().Shrink(0).Children(func() {
+		ui.Icon(c, kindIcon(kind)).FontSize(size * 0.48).TextColor(fg)
+	})
+}
+
+// networkField gives a text input of the page its look: a capsule, a
+// shade deeper than the glass it is on.
+func networkField(c *ui.Context, in ui.Element) ui.Element {
+	t := c.Theme()
+	return in.Radius(999).Padding(8, 16).Background(subtle(t, 0.045)).Border(1, hairline(t))
+}
+
+// ifaceCard shows one interface: a pane with its icon, name and state, its
+// addresses, and a test of the internet through it.
 func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 	t := c.Theme()
 	ref := refOf(i)
 	col := a.colorOf(i.Name)
 	n := &a.network
-	box := ui.Column(c.Key("iface-"+i.Name)).Padding(16).Gap(12).Radius(14).Border(1, t.Border)
-	if !i.Up {
-		box.Background(subtle(t, 0.025))
-	}
+	box := pane(c.Key("iface-" + i.Name)).Padding(18).Gap(14)
 	box.Children(func() {
 		ui.Row(c).Gap(12).Children(func() {
-			badge := ui.Box(c).Size(38, 38).Radius(11).Center().Shrink(0)
-			if i.Up {
-				badge.Background(col.Alpha(0.14))
-			} else {
-				badge.Background(subtle(t, 0.06))
-			}
-			badge.Children(func() {
-				ic := ui.Icon(c, kindIcon(i.Kind)).FontSize(20)
-				if i.Up {
-					ic.TextColor(col)
-				} else {
-					ic.TextColor(t.TextMuted)
-				}
-			})
-			ui.Column(c).Grow(1).Gap(2).MinWidth(0).Children(func() {
+			networkKindIcon(c, i.Kind, col, i.Up, 40)
+			ui.Column(c).Grow(1).Gap(3).MinWidth(0).Children(func() {
 				if n.renaming == ref.Key()+"|"+i.Name {
-					in := ui.TextInput(c.Key("alias"), &n.alias).AutoFocus().Placeholder(i.Label)
+					in := networkField(c, ui.TextInput(c.Key("alias"), &n.alias)).Padding(1, 10).FontSize(15).FontWeight(600).AutoFocus().Placeholder(i.Label)
 					if in.Submitted() {
 						a.setAlias(ref.Key(), n.alias)
 						n.renaming = ""
 					}
 				} else {
-					name := ui.Text(c, a.ifaceLabel(ref)).FontSize(15).FontWeight(600).SingleLine().Cursor(ui.CursorText).Tooltip(tr("Double-click to rename", "双击重命名"))
+					name := ui.Text(c, a.ifaceLabel(ref)).FontSize(15).FontWeight(600).SingleLine().Cursor(ui.CursorText).Tooltip(locales.DoubleClickToRename())
 					if name.DoubleClicked() {
 						n.renaming, n.alias = ref.Key()+"|"+i.Name, a.cfg.Aliases[ref.Key()]
 					}
 				}
-				status := tr("Not connected", "未连接")
+				status, state := locales.NotConnected(), t.TextMuted
 				if i.Up {
-					status = tr("Connected", "已连接")
+					status, state = locales.Connected(), running(t)
 				}
 				ui.Row(c).Gap(6).Children(func() {
-					dot(c, map[bool]ui.Color{true: running(t), false: t.TextMuted}[i.Up], 7, !i.Up)
+					dot(c, state, 7, !i.Up)
 					ui.Text(c, i.Name+" · "+status).FontSize(12).TextColor(t.TextMuted).SingleLine()
 				})
 			})
 			if i.Primary {
-				ui.Text(c, tr("Default", "系统默认")).FontSize(11).FontWeight(600).TextColor(t.Accent).Padding(2, 8).Radius(999).Background(t.Accent.Alpha(0.12)).Tooltip(tr("macOS sends connections no rule matches here", "未命中规则的连接默认从这里出去"))
+				tagChip(c, nil, locales.SystemDefault(), t.Accent).Tooltip(locales.MacosSendsConnectionsNoRuleMatches())
 			}
 		})
 		if !i.Up {
 			return
 		}
-		ui.Column(c).Gap(5).Children(func() {
+		// The details, as rows of their own inside the pane.
+		ui.Column(c).Radius(12).Background(subtle(t, 0.03)).Dividers(1, hairline(t)).Children(func() {
 			kv(c, "IPv4", strings.Join(i.IPv4, ", "))
 			if len(i.IPv6) > 0 {
 				kv(c, "IPv6", i.IPv6[0])
 			}
-			kv(c, tr("Router", "路由器"), i.Router)
+			kv(c, locales.Router(), i.Router)
 			kv(c, "DNS", strings.Join(i.DNS, ", "))
 			if i.HardwareAddr != "" {
-				kv(c, tr("Hardware", "硬件地址"), i.HardwareAddr)
+				kv(c, locales.Hardware(), i.HardwareAddr)
 			}
 		})
-		ui.Divider(c)
-		ui.Row(c).Gap(10).Children(func() {
+		// The test, at the foot of the pane however tall its row makes it.
+		ui.Row(c).Gap(10).Margin(ui.Auto, 0, 0, 0).Children(func() {
 			p, tested := a.probes[i.Name]
 			switch {
 			case a.probing[i.Name]:
 				ui.Spinner(c)
-				muted(c, tr("Testing…", "正在测试…"))
+				muted(c, locales.Testing())
 			case tested && p.OK:
-				ui.Text(c, millis(p.Latency)).FontWeight(600).Font("monospace")
+				ui.Text(c, millis(p.Latency)).FontSize(15).FontWeight(600).FontFeatures("tnum").SingleLine().Shrink(0)
 				ip := p.PublicIPv4
 				if ip == "" {
 					ip = p.PublicIPv6
 				}
 				if ip != "" {
-					muted(c, tr("Public IP ", "公网 IP ")+ip).SingleLine().Shrink(1)
+					muted(c, locales.PublicIp(ip)).FontSize(12).SingleLine().Shrink(1)
 				}
 			case tested:
-				ui.Icon(c, icAlert).TextColor(t.Danger)
-				ui.Text(c, tr("No internet", "无法上网")).TextColor(t.Danger)
+				ui.Icon(c, icAlert).FontSize(14).TextColor(t.Danger).Shrink(0)
+				ui.Text(c, locales.NoInternet()).TextColor(t.Danger).SingleLine().Shrink(0)
 				if p.Problem != "" {
 					ui.Text(c, p.Problem).FontSize(12).TextColor(t.TextMuted).SingleLine().Shrink(1)
 				}
 			default:
-				muted(c, tr("Not tested", "尚未测试"))
+				muted(c, locales.NotTested())
 			}
 			ui.Spacer(c)
-			if ui.Button(c, tr("Test", "测试")).Disabled(a.probing[i.Name]).Clicked() {
+			if glassCapsuleButton(c, "test", nil, locales.Test()).Focusable().Shrink(0).Disabled(a.probing[i.Name]).Clicked() {
 				a.probe(i.Name)
 			}
 		})
 	})
 }
 
-// downRow is a compact row for an interface that is not connected.
+// downRow is a row for an interface that is not connected.
 func (a *App) downRow(c *ui.Context, i *api.Interface) {
 	t := c.Theme()
 	ref := refOf(i)
 	n := &a.network
-	ui.Row(c.Key("down-"+i.Name)).Gap(12).Padding(9, 14).Children(func() {
-		ui.Icon(c, kindIcon(i.Kind)).FontSize(16).TextColor(t.TextMuted)
+	ui.Row(c.Key("down-"+i.Name)).Gap(12).Padding(10, networkInset).Children(func() {
+		networkKindIcon(c, i.Kind, t.TextMuted, false, 30)
 		if n.renaming == ref.Key()+"|"+i.Name {
-			if ui.TextInput(c.Key("alias"), &n.alias).AutoFocus().Placeholder(i.Label).Width(220).Submitted() {
+			if networkField(c, ui.TextInput(c.Key("alias"), &n.alias)).Padding(3, 10).FontWeight(500).AutoFocus().Placeholder(i.Label).Width(220).Submitted() {
 				a.setAlias(ref.Key(), n.alias)
 				n.renaming = ""
 			}
 		} else {
-			name := ui.Text(c, a.ifaceLabel(ref)).SingleLine().Cursor(ui.CursorText).Tooltip(tr("Double-click to rename", "双击重命名"))
+			name := ui.Text(c, a.ifaceLabel(ref)).FontWeight(500).SingleLine().Cursor(ui.CursorText).Tooltip(locales.DoubleClickToRename())
 			if name.DoubleClicked() {
 				n.renaming, n.alias = ref.Key()+"|"+i.Name, a.cfg.Aliases[ref.Key()]
 			}
 		}
-		ui.Text(c, i.Name).FontSize(12).Font("monospace").TextColor(t.TextMuted)
+		ui.Text(c, i.Name).FontSize(12).TextColor(t.TextMuted)
 		ui.Spacer(c)
-		ui.Text(c, tr("Not connected", "未连接")).FontSize(12).TextColor(t.TextMuted)
+		dot(c, t.TextMuted, 7, true)
+		ui.Text(c, locales.NotConnected()).FontSize(12).TextColor(t.TextMuted).SingleLine().Shrink(0)
 	})
 }
 
+// kv is a row of an interface's details: what it is on the left, quietly,
+// and its value on the right.
 func kv(c *ui.Context, k, v string) {
 	if v == "" {
 		return
 	}
 	t := c.Theme()
-	ui.Row(c).Gap(10).Children(func() {
-		ui.Text(c, k).FontSize(12).TextColor(t.TextMuted).Width(64).Shrink(0)
-		ui.Text(c, v).FontSize(12).Font("monospace").SingleLine().Shrink(1).Selectable()
+	ui.Row(c).Gap(16).Padding(7, 12).Children(func() {
+		ui.Text(c, k).FontSize(12).TextColor(t.TextMuted).SingleLine().Shrink(0)
+		ui.Text(c, v).FontSize(12).FontFeatures("tnum").SingleLine().Grow(1).MinWidth(0).TextAlign(ui.End).Selectable()
 	})
 }
 
@@ -237,18 +266,18 @@ func (a *App) probe(name string) {
 	}, func(error) { delete(a.probing, name) })
 }
 
-// reachability tests a host and port through every connected interface.
+// reachability tests a host and port through every connected interface: a
+// group whose first row takes the server, and whose next rows tell how
+// each interface reached it.
 func (a *App) reachability(c *ui.Context) {
 	t := c.Theme()
 	n := &a.network
-	box := card(c)
-	box.Children(func() {
-		ui.Text(c, tr("Reach a server", "连通性测试")).FontSize(15).FontWeight(600)
-		muted(c, tr("Connect to a host and port through each interface, to compare them.", "分别从每张网卡连接同一个服务器，比较哪张能通、快多少。"))
-		ui.Row(c).Gap(8).Children(func() {
-			submit := ui.TextInput(c.Key("reach"), &n.target).Placeholder(tr("host:port, e.g. github.com:443", "主机:端口，例如 github.com:443")).Grow(1).Submitted()
+	networkGroup(c, locales.ReachAServer(), func() {
+		ui.Row(c).Gap(10).Padding(12).Children(func() {
+			submit := networkField(c, ui.TextInput(c.Key("reach"), &n.target)).Placeholder(locales.HostPortEGGithubCom()).Grow(1).Submitted()
 			ready := strings.TrimSpace(n.target) != "" && n.testing == 0
-			if (ui.PrimaryButton(c, tr("Test", "测试")).Disabled(!ready).Clicked() || submit) && ready {
+			test := primaryCapsule(c, "reach-test", nil, locales.Test()).Focusable().Shrink(0).Tooltip(locales.ConnectToAHostAndPort()).Disabled(!ready)
+			if (test.Clicked() || submit) && ready {
 				a.reach(strings.TrimSpace(n.target))
 			}
 		})
@@ -261,17 +290,17 @@ func (a *App) reachability(c *ui.Context) {
 				continue
 			}
 			p, ok := n.results[i.Name]
-			ui.Row(c.Key("reach-" + i.Name)).Gap(10).PaddingY(4).Children(func() {
+			ui.Row(c.Key("reach-"+i.Name)).Gap(10).Padding(10, networkInset).Children(func() {
 				ui.Row(c).Width(200).Shrink(0).Children(func() { a.ifaceChip(c, refOf(i)) })
 				switch {
 				case !ok:
 					ui.Spinner(c)
 				case p.OK:
-					ui.Icon(c, icCheck).TextColor(running(t))
-					ui.Text(c, millis(p.Latency)).Font("monospace").FontWeight(600)
-					muted(c, p.Address).SingleLine()
+					ui.Icon(c, icCheck).FontSize(14).TextColor(running(t)).Shrink(0)
+					ui.Text(c, millis(p.Latency)).FontWeight(600).FontFeatures("tnum").SingleLine().Shrink(0)
+					muted(c, p.Address).FontSize(12).SingleLine().Shrink(1)
 				default:
-					ui.Icon(c, icX).TextColor(t.Danger)
+					ui.Icon(c, icX).FontSize(14).TextColor(t.Danger).Shrink(0)
 					ui.Text(c, p.Problem).TextColor(t.Danger).SingleLine().Shrink(1)
 				}
 			})

@@ -11,3 +11,4 @@
 *.pcap
 /tmp/
 .DS_Store
+/AGENTS.local.md

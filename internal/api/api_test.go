@@ -34,7 +34,7 @@ func TestParseTarget(t *testing.T) {
 			t.Errorf("ParseTarget(%q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
-	for _, in := range []string{"", "  ", "exa mple.com", "-bad.com", "a..b", "中国.cn", "*.", "1.2.3.4/33", "http://"} {
+	for _, in := range []string{"", "  ", "exa mple.com", "-bad.com", "a..b", "\u4e2d\u56fd.cn", "*.", "1.2.3.4/33", "http://"} {
 		if got, err := ParseTarget(in); err == nil {
 			t.Errorf("ParseTarget(%q) = %q, want an error", in, got)
 		}

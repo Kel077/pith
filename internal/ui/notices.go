@@ -4,14 +4,18 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/egoist/mygo/plugins/glass"
 	"github.com/egoist/mygo/ui"
+
 	"github.com/Kel077/pith/internal/api"
+	"github.com/Kel077/pith/locales"
 )
 
 // notice is something the user should know about routing: a warning of
 // the backend, or why routing stopped.
 type notice struct {
-	text   string
+	text   string // as short as it can be
+	detail string // the whole of it, shown on hover
 	danger bool
 	action string
 	do     func()
@@ -22,9 +26,9 @@ func (a *App) notices() []notice {
 	var out []notice
 	if a.status.State == api.Failed && a.status.Error != nil {
 		out = append(out, notice{
-			text:   tr("Routing stopped: ", "分流已停止：") + errorText(a.status.Error),
+			text:   locales.RoutingStopped() + errorText(a.status.Error),
 			danger: true,
-			action: tr("Try Again", "重试"),
+			action: locales.TryAgain(),
 			do:     func() { a.start(cmpOr(a.status.SceneID, a.cfg.Selected)) },
 		})
 	}
@@ -35,14 +39,14 @@ func (a *App) notices() []notice {
 	for _, w := range a.status.Warnings {
 		switch w.Code {
 		case api.WarnVPN:
-			out = append(out, notice{text: trf("Another VPN (%s) carries all traffic: connections no rule matches still go through it.",
-				"另一个 VPN（%s）正在接管所有流量，未命中规则的连接仍会经过它。", w.Detail)})
+			out = append(out, notice{text: locales.WarnVpnShort(w.Detail), detail: locales.WarnVpn(w.Detail)})
 		case api.WarnInterfaceDown:
 			down = append(down, a.ifaceLabel(api.InterfaceRef{Name: w.Detail}))
 		case api.WarnNoDomains:
 			out = append(out, notice{
-				text:   tr("Recognizing domains is off, so domain rules may not match.", "识别域名已关闭，域名规则可能匹配不到。"),
-				action: tr("Turn On", "打开"),
+				text:   locales.RecognizingDomainsIsOff(),
+				detail: locales.RecognizingDomainsIsOffSoDomain(),
+				action: locales.TurnOnDomains(),
 				do: func() {
 					a.change(func(cfg *api.Config) { cfg.Settings.SniffDomains = true })
 				},
@@ -50,7 +54,7 @@ func (a *App) notices() []notice {
 		}
 	}
 	if len(down) > 0 {
-		out = append(out, notice{text: trf("%s is not connected: its rules use their next interface.", "%s 没有连接，用到它的规则会改用下一张网卡。", list(down))})
+		out = append(out, notice{text: locales.WarnInterfaceDownShort(list(down)), detail: locales.WarnInterfaceDown(list(down))})
 	}
 	return out
 }
@@ -62,7 +66,11 @@ func cmpOr(a, b string) string {
 	return b
 }
 
-// noticeBar shows a notice in a tinted bar.
+// noticeBar shows a notice in a bar of glass tinted amber, or red for a
+// failure, with its action as a capsule; the whole of it shows on hover.
+// Compact is the menu bar panel's: smaller, and tinted rather than glass,
+// as glass over the system's material of the panel would show the
+// panel's emptiness, gray.
 func noticeBar(c *ui.Context, n notice, compact bool) {
 	t := c.Theme()
 	col := t.Warning
@@ -70,20 +78,42 @@ func noticeBar(c *ui.Context, n notice, compact bool) {
 	if n.danger {
 		col = t.Danger
 	}
-	bar := ui.Row(c).Gap(10).Padding(9, 12).Radius(10).Background(col.Alpha(0.1))
+	bar := ui.Row(c).Gap(10).Padding(10, 10, 10, 14).Radius(14)
 	if compact {
-		bar.Padding(7, 10).Gap(8)
+		fill := col.Alpha(0.13)
+		if t.Dark {
+			fill = col.Alpha(0.17)
+		}
+		bar.Padding(7, 7, 7, 11).Gap(8).Radius(12).Background(fill).Border(1, col.Alpha(0.16))
+	} else {
+		bar.Material(glass.Glass{Tint: col.Alpha(0.16), Clarity: 0.5}).Border(1, rim(t))
+	}
+	if n.detail != "" {
+		bar.Tooltip(n.detail)
 	}
 	bar.Children(func() {
-		ui.Icon(c, ic).TextColor(col).Shrink(0)
+		icon := ui.Icon(c, ic).TextColor(col).Shrink(0)
 		text := ui.Text(c, n.text).Grow(1).MinWidth(0)
 		if compact {
-			text.FontSize(12)
+			icon.FontSize(13)
+			text.FontSize(12).FontWeight(500)
 		}
-		if n.action != "" && n.do != nil {
-			if ui.Button(c, n.action).Clicked() {
-				n.do()
+		if n.action == "" || n.do == nil {
+			return
+		}
+		var b ui.Element
+		if compact {
+			b = ui.Row(c.Key("notice-action")).Padding(4, 11).Radius(999).Cursor(ui.CursorPointer).Label(n.action).
+				Background(col.Alpha(0.16)).Focusable()
+			if b.Hovered() {
+				b.Background(col.Alpha(0.24))
 			}
+			b.Children(func() { ui.Text(c, n.action).FontSize(12).FontWeight(600).TextColor(col).SingleLine() })
+		} else {
+			b = glassCapsuleButton(c, "notice-action", nil, n.action).Focusable()
+		}
+		if b.Clicked() {
+			n.do()
 		}
 	})
 }

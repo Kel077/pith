@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/egoist/mygo"
+
 	"github.com/Kel077/pith/internal/api"
 )
 
@@ -72,7 +73,7 @@ func (desktop) Open() ([]byte, error) {
 func (desktop) OpenURL(url string)           { mygo.Shell.OpenExternal(url) }
 func (desktop) Reveal(path string)           { mygo.Shell.ShowItemInFolder(path) }
 func (desktop) SetOpenAtLogin(on bool) error { return mygo.App.SetOpenAtLogin(on) }
-func (desktop) PreferredLanguages() []string { return mygo.App.PreferredLanguages() }
+func (desktop) SetLanguage(tag string)       { mygo.App.SetLocale(tag) }
 func (desktop) Quit()                        { mygo.App.Quit() }
 
 // statePath is the file of the interface's state between launches.

@@ -6,7 +6,9 @@ import (
 	"strconv"
 
 	"github.com/egoist/mygo/ui"
+
 	"github.com/Kel077/pith/internal/api"
+	"github.com/Kel077/pith/locales"
 )
 
 // checker is the state of the dialog that checks where a connection goes.
@@ -51,13 +53,11 @@ func (a *App) runCheck() {
 func (a *App) checkerView(c *ui.Context) {
 	k := a.checker
 	t := c.Theme()
-	ui.Modal(c, &k.open, func() {
-		ui.Column(c).Width(560).Gap(0).Children(func() {
-			ui.Text(c, tr("Check a Connection", "检查连接")).FontSize(17).Bold()
-			ui.Text(c, tr("See which rule a connection would match, and where it would go now.", "看看一个连接会命中哪条规则、现在会从哪张网卡出去。")).
-				TextColor(t.TextMuted).Margin(4, 0, 12)
+	sheet(c, &k.open, 580, func() {
+		sheetTitle(c, locales.CheckAConnection()).Margin(0, 0, 12)
 
-			editorRow(c, tr("Scene", "场景"), func() {
+		sheetScroll(c, func() {
+			editorRow(c, locales.Scene(), "", func() {
 				names := make([]string, len(a.cfg.Scenes))
 				chosen := ""
 				seen := map[string]int{}
@@ -71,7 +71,9 @@ func (a *App) checkerView(c *ui.Context) {
 					}
 				}
 				ui.Row(c).Children(func() {
-					if ui.Select(c, &chosen, names).Label(tr("Scene", "场景")).Changed() {
+					sel := ui.Select(c, &chosen, names).Label(locales.Scene())
+					checkSelectLook(c, sel)
+					if sel.Changed() {
 						for i := range a.cfg.Scenes {
 							if names[i] == chosen {
 								k.sceneID = a.cfg.Scenes[i].ID
@@ -80,38 +82,39 @@ func (a *App) checkerView(c *ui.Context) {
 					}
 				})
 			})
-			editorRow(c, tr("App", "应用"), func() {
-				ui.Row(c).Gap(8).Children(func() {
+			editorRow(c, locales.App(), "", func() {
+				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 					if k.app.Path != "" {
 						a.removableChip(c, func() {
-							a.appIconView(c, k.app, 16)
-							ui.Text(c, appName(k.app)).FontSize(13).SingleLine()
+							a.appIconView(c, k.app, 18)
+							ui.Text(c, appName(k.app)).SingleLine().AlignSelf(ui.Baseline) // the label lines up with it
 						}, func() { k.app = api.AppRef{} })
 					} else {
-						ui.Text(c, tr("Any app", "任意应用")).TextColor(t.TextMuted).Padding(4, 2)
+						ui.Text(c, locales.AnyApp()).TextColor(t.TextMuted).Padding(0, 4, 0, 2)
 					}
-					pick := textIconButton(c, icPlus, tr("Choose…", "选择…"))
+					pick := editorAddButton(c, "choose-app", locales.Choose())
 					if pick.Clicked() {
 						k.picker.open = !k.picker.open
 					}
 					a.appPickerPopover(c, pick, &k.picker, func(app api.AppRef) { k.app = app })
 				})
 			})
-			editorRow(c, tr("Destination", "目标"), func() {
-				if ui.TextInput(c.Key("check-target"), &k.target).Placeholder(tr("A domain, an IP address or a URL", "域名、IP 地址或网址")).AutoFocus().Submitted() {
+			editorRow(c, locales.Destination(), "", func() {
+				if sheetInput(c, ui.TextInput(c.Key("check-target"), &k.target)).Placeholder(locales.ADomainAnIpAddressOr()).AutoFocus().Submitted() {
 					a.runCheck()
 				}
-				ui.TextInput(c.Key("check-address"), &k.address).Placeholder(tr("Actual IP (optional; else looked up)", "实际 IP（可选，不填则自动解析）"))
+				sheetInput(c, ui.TextInput(c.Key("check-address"), &k.address)).Placeholder(locales.ActualIpOptionalElseLookedUp())
 			})
-			editorRow(c, tr("Protocol", "协议"), func() {
-				ui.Row(c).Children(func() { ui.Segmented(c, &k.protocol, "TCP", "UDP").Label(tr("Protocol", "协议")) })
+			editorRow(c, locales.Protocol(), "", func() {
+				ui.Row(c).Children(func() {
+					editorSegmented(c, "protocol", locales.Protocol(), &k.protocol, []string{"TCP", "UDP"}, nil, nil)
+				})
 			})
-			ui.Row(c).Gap(8).Margin(8, 0, 0).Children(func() {
-				ui.Spacer(c)
-				if ui.Button(c, tr("Done", "完成")).Clicked() {
+			sheetFooter(c, nil, func() {
+				if sheetButton(c, "done", locales.Done()).Clicked() {
 					k.open = false
 				}
-				if ui.PrimaryButton(c, tr("Check", "检查")).Disabled(k.target == "" || k.busy).Clicked() {
+				if sheetPrimary(c, "check", locales.Check(), k.target == "" || k.busy).Clicked() {
 					a.runCheck()
 				}
 			})
@@ -122,70 +125,100 @@ func (a *App) checkerView(c *ui.Context) {
 	})
 }
 
-// checkResult shows what the check found: the outcome first, then how each
-// rule compared.
+// checkSelectLook gives the checker's select the look of a capsule.
+func checkSelectLook(c *ui.Context, sel ui.Element) {
+	t := c.Theme()
+	fill, line := ui.RGBA(255, 255, 255, 0.72), ui.RGBA(60, 40, 20, 0.10)
+	if t.Dark {
+		fill, line = ui.RGBA(255, 255, 255, 0.07), ui.RGBA(255, 255, 255, 0.10)
+	}
+	if sel.Hovered() {
+		fill = fill.Mix(t.Text, 0.04)
+	}
+	sel.Padding(7, 14, 7, 16).Radius(999).Background(fill).Border(1, line).MinWidth(170)
+}
+
+// checkResult shows what the check found in a pane tinted by it: the
+// outcome first, then how each rule compared, in rows.
 func (a *App) checkResult(c *ui.Context, k *checker) {
 	t := c.Theme()
 	res := k.result
 	sc := a.scene(k.sceneID)
 	stale := k.checked != k.key()
-	box := ui.Column(c).Margin(16, 0, 0).Padding(14).Gap(10).Radius(12).Background(subtle(t, 0.04))
+	col, ic := running(t), icArrow
+	switch {
+	case res.Outcome == api.Blocked:
+		col, ic = t.Danger, icBlock
+	case res.Interface == "":
+		col, ic = t.Warning, icAlert
+	}
+	fill := col.Alpha(0.08)
+	if t.Dark {
+		fill = col.Alpha(0.11)
+	}
+	box := ui.Column(c).Margin(20, 0, 0).Radius(16).Background(fill).Border(1, col.Alpha(0.16)).Dividers(1, hairline(t)).Clip()
 	if stale {
 		box.Opacity(0.5)
 	}
 	box.Children(func() {
-		ui.Row(c).Gap(8).Wrap().Children(func() {
-			idx := -1
-			if sc != nil {
-				idx = ruleIndex(sc, res.RuleID)
-			}
-			switch {
-			case res.Outcome == api.Blocked:
-				tagChip(c, icBlock, tr("Blocked", "会被拦截"), t.Danger)
-			case res.Interface != "":
-				ui.Text(c, tr("Goes out through", "会从这里出去：")).FontWeight(600)
-				a.ifaceNameChip(c, res.Interface)
-			default:
-				tagChip(c, icAlert, tr("Can't connect: no interface of its rule is up", "无法连接：规则里的网卡都没有连接"), t.Warning)
-			}
-			if idx >= 0 {
-				muted(c, trf("by rule %d", "依据第 %d 条规则", idx+1))
-			} else {
-				muted(c, tr("no rule matches: the system's routing", "没有规则命中，按系统默认网络"))
-			}
+		ui.Row(c).Gap(12).Padding(14, 16).Children(func() {
+			disc := ui.Box(c).Size(34, 34).Radius(17).Background(col.Alpha(0.16)).Center().Shrink(0)
+			disc.Children(func() { ui.Icon(c, ic).FontSize(17).TextColor(col) })
+			ui.Column(c).Grow(1).Gap(4).MinWidth(0).Children(func() {
+				ui.Row(c).Gap(8).Wrap().AlignItems(ui.Center).Children(func() {
+					idx := -1
+					if sc != nil {
+						idx = ruleIndex(sc, res.RuleID)
+					}
+					switch {
+					case res.Outcome == api.Blocked:
+						ui.Text(c, locales.CheckBlocked()).FontWeight(600).TextColor(col)
+					case res.Interface != "":
+						ui.Text(c, locales.GoesOutThrough()).FontWeight(600)
+						a.ifaceNameChip(c, res.Interface)
+					default:
+						ui.Text(c, locales.CanTConnectNoInterfaceOf()).FontWeight(600).TextColor(col)
+					}
+					if idx >= 0 {
+						muted(c, locales.ByRuleNumber(idx+1))
+					} else {
+						muted(c, locales.NoRuleMatchesTheSystemS())
+					}
+				})
+				if len(res.Addresses) > 0 {
+					ui.Text(c, locales.ResolvedTo(joinMax(res.Addresses, 3))).FontSize(12).TextColor(t.TextMuted)
+				}
+			})
 		})
-		if len(res.Addresses) > 0 {
-			ui.Text(c, tr("Resolved to ", "解析为 ")+joinMax(res.Addresses, 3)).FontSize(12).TextColor(t.TextMuted)
-		}
 		if sc == nil || len(res.Rules) == 0 {
 			return
 		}
-		ui.Divider(c)
 		for i, rc := range res.Rules {
 			k := ruleIndex(sc, rc.RuleID)
 			if k < 0 {
 				continue
 			}
 			r := &sc.Rules[k]
-			ui.Row(c).Gap(10).Children(func() {
-				ui.Text(c, strconv.Itoa(i+1)).FontSize(12).TextColor(t.TextMuted).Width(14)
-				ui.Text(c, a.ruleTitle(r)).SingleLine().Grow(1).Shrink(1)
-				col, text := t.TextMuted, ""
+			ui.Row(c).Gap(10).Padding(9, 16).Children(func() {
+				ui.Text(c, strconv.Itoa(i+1)).FontSize(12).FontWeight(600).TextColor(t.TextMuted).Width(16)
+				title := ui.Text(c, a.ruleTitle(r)).SingleLine().Grow(1).Shrink(1).MinWidth(0)
+				tone, text := t.TextMuted, ""
 				switch rc.Result {
 				case api.CheckMatched:
-					col, text = running(t), tr("Matches — decides", "命中，生效")
+					tone, text = running(t), locales.MatchesDecides()
+					title.FontWeight(600)
 				case api.CheckShadowed:
-					col, text = t.Warning, tr("Matches, but another rule decides", "也匹配，但被优先的规则覆盖")
+					tone, text = t.Warning, locales.MatchesButAnotherRuleDecides()
 				case api.CheckDisabled:
-					text = tr("Off", "已停用")
+					text = locales.RuleOff()
 				case api.CheckApp:
-					text = tr("Other apps", "应用不同")
+					text = locales.OtherApps()
 				case api.CheckTarget:
-					text = tr("Other destinations", "目标不同")
+					text = locales.OtherDestinations()
 				case api.CheckProtocol:
-					text = tr("Other protocol", "协议不同")
+					text = locales.OtherProtocol()
 				}
-				ui.Text(c, text).FontSize(12).TextColor(col).SingleLine()
+				ui.Text(c, text).FontSize(12).TextColor(tone).SingleLine()
 			})
 		}
 	})
