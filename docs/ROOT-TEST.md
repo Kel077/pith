@@ -74,12 +74,14 @@ mode-0600 files include:
 
 | File | Review purpose |
 | --- | --- |
-| `session.json` | User ID, immutable target selection, interface references including MAC, helper checksum, and completed phases |
-| `original.json` | Pre-privilege interface inventory, route snapshot, launchd result, and the five managed paths |
+| `session.json` | User ID, immutable target selection, reviewed adapter references, helper checksum and installation identity, active baseline label/file, current smoke result, and a checksum-bound cleanup proof |
+| `original.json` | Permanent initial pre-privilege interface inventory, route snapshot, launchd result, and the five managed paths |
 | `preflight.json` | Bound/unbound HTTPS status and public-IP echo, when the endpoint provides one |
 | `install-plan.json`, `install.sh` | Exact scoped launchd arguments, fixed destinations, helper SHA-256 check, rollback, and authorization prompt |
 | `uninstall.sh` | Exact bootout, ownership-checked route cleanup, and managed-path removal |
 | `emergency-command.txt` | A standalone, single command that can be pasted into Terminal without IPC or the test executable |
+| `cleanup-*.json`, `check-*.json` | Immutable cleanup observations and separate test results, tied to the current baseline and installation |
+| `rebaseline-*.json` | Immutable mode-change candidates, before/after snapshots, and system/A/B preflights; failed attempts remain archived |
 
 Set `PITH_SESSION` to the **exact canonical directory printed by prepare**.
 Do not use a path inside the repository or the normal application config
@@ -88,6 +90,20 @@ review; `cancel` and `install` recheck the SHA-256 and reviewed script before
 authorization. The root installation stage independently verifies the copied
 binary checksum after the password dialog.
 
+The installation plan also lists two shared parent directories under
+`CreatesIfMissing`. `/Library/PrivilegedHelperTools` is created as root:wheel
+mode `1755` only if missing, and `/Library/LaunchDaemons` as root:wheel mode
+`0755` only if missing. Existing directory ownership and permissions remain
+unchanged; symlinks, non-directories, non-root owners, and group/other-writable
+existing parents are refused instead of repaired. Uninstall retains these
+shared parents and removes only Pith's five owned paths.
+
+Use a freshly prepared session with this harness version. Older session files
+without the recorded installation identity cannot acquire cleanup proof or
+rebaseline; do not edit JSON to upgrade them. The initial snapshot file is never
+rewritten. For compatibility, `session.json.original` holds the **active**
+rollback snapshot, selected by `baselineLabel` and `baselineFile`.
+
 The coordinator should review these concrete artifacts and obtain the user's
 go-ahead now. Keep a second Terminal window open with the emergency command
 already copied. Do not start the application or another helper installer
@@ -95,23 +111,33 @@ during the session.
 
 ## Ordered execution
 
-Stop after the first failed case. Every test failure runs `Stop`; inspect the
-private report and original snapshots before deciding on another test. If
-cleanup fails, use the emergency command and do not retry capture. Concurrent
-commands on the same session are refused by an advisory lock.
+Stop after the first failed case. Once a check enters its active test phase,
+every outcome invokes bounded cleanup; inspect the private report and current
+baseline before deciding on another test. Cleanup rechecks installation identity
+before sending `Stop`, and refuses to stop a replacement helper. If cleanup fails,
+use the emergency command after reviewing ownership and do not retry capture.
+Concurrent commands on the same session are refused by an advisory lock.
+
+The complete session requests **one cancellation dialog and two password
+authorizations**, for installation and final uninstall. There is no additional
+authorization for any `check`, `stop`, or `rebaseline`, regardless of the number
+of approved Tailscale modes. One optional deliberate crash test adds exactly
+one separately approved administrator dialog. Emergency recovery is an
+alternative removal authorization, not an automatic extra step.
 
 | Step | Command after the root-session go-ahead | Dialog and changes | Pass condition and undo |
 | --- | --- | --- | --- |
 | 1. Cancellation | `"$PITH_TEST_BIN/rootcheck" cancel --session "$PITH_SESSION"` | Administrator dialog requests `Pith needs your password to install its routing helper.` Click **Cancel**; do not enter a password. | Returns `ErrCanceled`; no managed path, service, route, or utun changes. If a password was entered or cached authorization installs the helper, this case fails; uninstall it before preparing a new session. |
-| 2. Installation | `"$PITH_TEST_BIN/rootcheck" install --session "$PITH_SESSION"` | Same install prompt; enter the administrator password. Creates the root-owned helper and launchd plist/data directory; the daemon creates its authenticated socket. It starts idle. | Version and executable checksum match; plist arguments contain only the reviewed host captures; engine is stopped; routes and utun inventory match the original snapshot. Undo is step 9 or emergency cleanup. |
+| 2. Installation | `"$PITH_TEST_BIN/rootcheck" install --session "$PITH_SESSION"` | Same install prompt; enter the administrator password. Creates the root-owned helper and launchd plist/data directory, plus a listed shared parent only if absent; the daemon creates its authenticated socket. It starts idle. | Version and executable checksum match; plist arguments contain only the reviewed host captures; plist inode/mtime identify this installation; engine is stopped; routes and utun inventory match the initial snapshot. Undo is step 9 or emergency cleanup. |
 | 3. One smoke check | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION"` | No dialog. Saves only a temporary config, starts the scoped utun with SafeStart, requests HTTPS through ordinary system routing, then hot-applies an IP rule for interface A. | SafeStart succeeds; both logged flows belong to this test process; outcome, rule, interface, bidirectional byte counts, and live traffic are correct. `Stop` restores routes and utun inventory before the command returns. Only a successful smoke check unlocks later cases. |
 | 4. Rule batch | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --batch` | No dialog. Starts a fresh bounded capture and changes only the test scene. | Verifies interface B, TLS SNI domain matching, the second target of one rule, block priority over an earlier route, missing-interface fallback, explicit system fallback, and strict unreachable. Opens TLS on A, changes the rule to B, completes the same connection on A, then verifies a new connection on B. The capture start timestamp stays unchanged during hot reload. Ends stopped. |
 | 4a. Optional app-specific routing | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --app-bypass` | No dialog. Requires a passed smoke check and public-IP preflight evidence. Uses the current standalone `rootcheck` executable path as the app/tool identity, and creates a checksum-verified copy at a different path inside the private session directory. Each controlled child makes exactly one ordinary TLS request to the same frozen target. No helper installation, capture expansion, or VPN setting change occurs. | The parent matches app+IP and then app+domain rules through physical interface A. Under each rule, the different executable remains unmatched and uses the saved system route. A final app block after the route rule wins. Every case checks PID, executable/app path, destination, rule, outcome, interface, and byte counts; successful requests must match the physical or system public-IP preflight. Children are acknowledged and waited for on every outcome, their copy is removed, and routing ends stopped. Identical public exits do not prove a distinct exit-node bypass. |
 | 5. Native TCP preservation | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --preserve` | No dialog. Establishes an ordinary TLS connection **before** capture, starts capture, then sends HTTP over that same native connection. | The pre-existing kernel connection survives route activation and receives a verified HTTPS response. This flow is not claimed as a new proxied/logged connection. Ends stopped. A server that closes idle TLS before the request makes this case inconclusive; do not count it as a pass. |
 | 6. SafeStart rollback | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --safe-failure` | No dialog. Starts with a block rule for the exact SafeStart destination and SafeStart enabled. | `Start` returns `ErrNetworkLost`; status reports the same failure; routes/utun are restored. Cleanup calls `Stop` so the next command sees an idle helper. |
 | 7. Optional observation | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --observe 90s` | No dialog. Runs the smoke checks, then holds the reviewed host capture for at most 90 seconds. See the manual cases below. | The harness records an observation window, not a pass for an unimplemented manual assertion. It polls helper status and stops on interruption, failure, or expiry. |
-| 8. Explicit stop | `"$PITH_TEST_BIN/rootcheck" stop --session "$PITH_SESSION"` | No dialog; authenticated IPC only. Safe to repeat while the helper is installed. | Status is stopped; route snapshot and utun inventory match preparation. If IPC is broken, use emergency cleanup instead. |
-| 9. Uninstall | `"$PITH_TEST_BIN/rootcheck" uninstall --session "$PITH_SESSION"` | Administrator dialog requests `Pith needs your password to remove its routing helper.` Enter the password. Attempts `Stop`, then independently boots out launchd, checks stale capture ownership, and removes managed files. | Helper, service, socket, journal, and data directory are absent; original routes and utun inventory are restored. Private session artifacts remain for review only. |
+| 8. Explicit stop | `"$PITH_TEST_BIN/rootcheck" stop --session "$PITH_SESSION"` | No dialog; authenticated IPC only after verifying the installation belongs to this session. Safe to repeat while this helper is installed. | Status is stopped at the reviewed version; route snapshot and utun inventory match the latest active baseline. A successful comparison is persisted as cleanup proof. If IPC is broken, use emergency cleanup instead. |
+| 8a. Optional next mode | While stopped, the user selects the approved Tailscale mode; then `"$PITH_TEST_BIN/rootcheck" rebaseline --session "$PITH_SESSION" --label tailnet` (or `vpn-off` / `exit-node`) | No dialog. Verifies the same idle installation and the preceding cleanup proof; takes new snapshots and makes three bounded HTTPS requests to the frozen target through system/A/B. Writes private review files only; it does not change VPN settings, capture scope, or routing. | Both reviewed adapters resolve and are up; helper identity/version remain unchanged; snapshots are stable across preflight. Only then does the new baseline become active, with smoke/pass state cleared. Repeat step 3 before any further case. A failed rebaseline leaves the previous active baseline and all history intact. |
+| 9. Final uninstall, once | `"$PITH_TEST_BIN/rootcheck" uninstall --session "$PITH_SESSION"` | Administrator dialog requests `Pith needs your password to remove its routing helper.` Enter the password. Attempts `Stop` on the verified installation, then independently boots out launchd, checks stale capture ownership, and removes managed files. It does not require working IPC or a matching IPC version. | Helper, service, socket, journal, and data directory are absent; the latest baseline's routes and utun inventory are restored. Shared parent directories and private session artifacts remain. A clearly different installation is refused before authorization; review ownership and the standalone emergency command instead. |
 
 macOS supplies the surrounding dialog title, buttons, and any cached
 authorization behavior. The quoted prompt strings are the harness's exact
@@ -121,11 +147,23 @@ testing helper updates needs its own reviewed case.
 
 All snapshots and detailed reports, including real addresses and MACs, stay
 under `PITH_SESSION`. Do not attach or commit them without redaction. The
-harness compares route and utun snapshots strictly. Another VPN, interface
-change, or unrelated route-cache change can make the result inconclusive; it
+harness compares route and utun snapshots strictly against the active baseline.
+Another VPN, interface change, or unrelated route-cache change can make the result inconclusive; it
 never removes an unrelated route to force a pass. It also checks public-IP
 echoes against preflight when available. A rotating public exit can make this
 evidence inconclusive and requires review rather than an automatic retry.
+
+Every capture start first clears and saves the previous cleanup proof. Failed
+Stop, non-stopped status, identity/version mismatch during cleanup, a missing
+snapshot, or unequal routes/tunnels cannot produce valid proof. A test assertion
+failure still fails the check, even when independent cleanup succeeds and records
+proof; review that failed test before continuing. A read-only check rejection
+before capture or cleanup begins preserves the preceding proof, so accidentally
+running `check` after an approved VPN switch does not prevent `rebaseline`.
+The proof is bound to the session directory/UID, reviewed binary/plan/targets,
+installation identity, and current baseline. An older or copied proof is refused.
+File identity is rechecked immediately before Start/Stop, but it is not an atomic
+IPC installation token: keep the app and all other installers closed throughout.
 
 ## Manual cases and remaining acceptance limits
 
@@ -156,8 +194,8 @@ observation automatically and treats an unexpected helper stop as a failure.
   dialog running `/bin/launchctl kill SIGKILL system/io.github.kel077.pith.helper`.
   Kernel utun ownership must remove capture when the process dies. Launchd may
   restart the daemon, but it must come back idle. The observation command is
-  expected to report failure rather than claim a normal pass. Verify original
-  routes and no extra utun, then uninstall. Do not use `killall`, a guessed PID,
+  expected to report failure rather than claim a normal pass. Verify the latest
+  baseline's routes and no extra utun, then uninstall. Do not use `killall`, a guessed PID,
   or commands that act on other VPN processes. This adds one explicitly
   approved crash-test dialog; it is not part of the automatic smoke sequence.
   Its exact optional command and prompt are:
@@ -198,14 +236,41 @@ probe additional peers. Real names, exit-node identifiers, addresses, route
 snapshots, and public-IP echoes stay outside the repository.
 
 A changed Tailscale mode requires a fresh reviewed route/interface baseline;
-the original snapshot for another mode is not a valid rollback reference.
-With the unchanged `rootcheck` harness, finish and uninstall the current
-phase's helper **before** the user changes modes, then run `prepare`, review
-the new artifacts, and follow `cancel` and `install` for that mode. The harness
-refuses an existing installation and intentionally refuses a changed route
-baseline. Do not edit `original.json` or bypass those checks. These are several
-explicitly approved phases of one coordinated window, not permission to leave
-the helper installed for a later unattended session.
+a different mode's snapshot is not a valid rollback reference. Keep the same
+installed, idle scoped helper throughout this coordinated session. After the
+initial smoke check, use the following sequence for each approved mode:
+
+```sh
+"$PITH_TEST_BIN/rootcheck" stop --session "$PITH_SESSION"
+# The user now selects the approved mode in Tailscale while Pith is stopped.
+"$PITH_TEST_BIN/rootcheck" rebaseline --session "$PITH_SESSION" --label tailnet
+"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION"
+```
+
+Use `--label exit-node` for the approved exit-node phase, or `--label vpn-off`
+for an explicitly approved disconnected phase. Labels are generic bookkeeping,
+not commands to Tailscale. `rebaseline` never switches VPN modes or prompts for
+authorization. It requires a recorded successful stop/check cleanup **under the
+previous active baseline**, the same binary/plist installation, a responding
+version-matched helper in `Stopped`, and both reviewed adapters still up. Do not
+call `stop` after switching modes merely to establish proof against the old
+baseline: establish that proof before the switch, then call `rebaseline`.
+
+The command permits the expected route changes between approved modes. It
+compares only its new before/after route and complete interface snapshots for
+stability, and rechecks helper identity and stopped status after the probes.
+Success requires three sequential TLS preflights (system, A, B), each bounded
+to eight seconds, with a forty-second command deadline. A unique candidate
+file is archived first; only a fully successful operation atomically selects
+it in `session.json`. Earlier snapshots, cleanup proofs, reports, and preflights
+remain untouched. Failure leaves the previous active baseline in place; inspect
+the archived failure and do not run capture against an unaccepted mode.
+
+Adopting a baseline clears `SmokePassed` and the previous cleanup proof. Run a
+fresh ordinary smoke check before `--batch`, `--app-bypass`, or any other case.
+Do not edit JSON or rerun prepare/cancel/install between modes. All approved
+phases share the original frozen targets and the same installation; remove it
+once at the end of this attended window.
 
 The smoke and batch checks can be repeated within each mode. After the smoke
 check passes, the app-specific caller is built into the same harness:
@@ -235,8 +300,9 @@ the bounded manual control requests described above.
 
 | Phase | Additional dialogs and changes | Pass, fail, or inconclusive | Undo |
 | --- | --- | --- | --- |
-| No exit node | The user selects no exit node in the existing Tailscale UI, only if this was explicitly approved. No new Pith dialog is required for this selection. Any Tailscale/macOS dialog is version-dependent: record its actual wording and obtain approval before accepting it. A fresh helper phase repeats the exact cancel/install/remove prompts listed above. | The chosen tailnet service and MagicDNS lookup work before capture, during a Pith route/block case for the separate public test host, and after Stop. Unmatched public traffic retains the saved system route for this mode. Existing Tailscale routes and its tunnel are unchanged by Pith; Pith selects an unused tunnel address without conflicting with existing interface addresses or tunnel/subnet routes. A failed preflight makes the connectivity case inconclusive. | Stop and uninstall Pith against this phase's baseline. The user restores the original Tailscale mode, or explicitly selects the next approved mode. Pith does not disconnect Tailscale. |
-| Approved exit node | The user selects the already authorized exit node while Pith is stopped. This changes Tailscale's routing behavior; record a new baseline, including its public exit and tailnet/MagicDNS results. Extra VPN/OS prompts need their actual wording reviewed. A fresh helper phase adds the same cancel/install/remove dialogs as above; `--app-bypass` itself adds no dialog. | First verify unmatched traffic to the captured public test host still uses the exit node. Run `--app-bypass`: the main test executable must use the chosen physical interface under app+IP and app+domain rules, while its different-path child remains unmatched and uses the exit node. The final matching block must prevent the parent's new connection even when a route rule also matches. Require captured-flow evidence and the expected physical versus system public-IP echoes; if the echoes cannot distinguish exits, record bypass as inconclusive. Tailnet and MagicDNS behavior remain consistent with the preflight throughout. | Stop and uninstall Pith, verifying that the exit-node routes/tunnel and tailnet service still work. The user restores the initial exit-node choice and DNS preferences recorded before the window. Never remove Tailscale routes as cleanup. |
+| Initial approved mode | Keep the mode recorded by preparation, including a disconnected mode if selected. Run cancellation and installation once, then the initial smoke and approved cases. | Public-target flows match the initial system/A/B preflight. When Tailscale is disconnected, do not claim tailnet or MagicDNS connectivity checks passed; those apply to the connected phases below. | Finish with verified Stop and retain the idle helper for the next approved mode. Uninstall once after the last phase. |
+| No exit node | The user selects no exit node in the existing Tailscale UI while Pith is stopped, only if explicitly approved. Any Tailscale/macOS dialog is version-dependent: record its actual wording and obtain approval before accepting it. `rebaseline --label tailnet` and the fresh smoke check add zero Pith dialogs and retain the same installation. | The chosen tailnet service and MagicDNS lookup work before capture, during a Pith route/block case for the separate public test host, and after Stop. Unmatched public traffic retains the saved system route for this mode. Existing Tailscale routes and its tunnel are unchanged by Pith; Pith selects an unused tunnel address without conflicting with existing interface addresses or tunnel/subnet routes. A failed preflight makes the connectivity case inconclusive. | Stop against this phase's baseline. Only then may the user select the next approved mode and rebaseline. If finished, uninstall once before restoring the initial Tailscale settings. Pith does not disconnect Tailscale. |
+| Approved exit node | The user selects the already authorized exit node while Pith is stopped, then runs `rebaseline --label exit-node` and a fresh smoke check. This records the new system and physical public exits without reinstalling. Extra VPN/OS prompts need their actual wording reviewed; rebaseline and `--app-bypass` add zero Pith dialogs. | First verify unmatched traffic to the captured public test host still uses the exit node. Run `--app-bypass`: the main test executable must use the chosen physical interface under app+IP and app+domain rules, while its different-path child remains unmatched and uses the exit node. The final matching block must prevent the parent's new connection even when a route rule also matches. Require captured-flow evidence and the expected physical versus system public-IP echoes; if the echoes cannot distinguish exits, record bypass as inconclusive. Tailnet and MagicDNS behavior remain consistent with the preflight throughout. | Stop against the exit-node baseline, verifying that its routes/tunnel and tailnet service still work. At the end, uninstall once in this mode, then the user restores the initial exit-node choice and DNS preferences. Never remove Tailscale routes as cleanup. |
 | Stop and optional deliberate helper crash in either mode | Normal Stop adds no dialog. A crash test is optional and uses exactly the separate crash authorization command and prompt documented above; it must be explicitly included in that mode's approval. | Pith's capture routes and utun disappear, the pre-existing Tailscale tunnel and route ownership remain intact, and the selected tailnet service, MagicDNS lookup, and public-route behavior still match that mode's baseline. A launchd restart of Pith must be idle. An observation failure caused by the intentional crash is expected; record the crash assertions separately rather than calling the normal smoke check a pass. | Use the reviewed Pith-only emergency command if necessary, then uninstall. Do not restart, kill, or reconfigure Tailscale to hide a cleanup failure. |
 
 Every `--app-bypass` request connects directly to the **already reviewed
@@ -263,8 +329,10 @@ delete the competing route, enlarge the capture, or toggle the VPN
 automatically. Tailnet control traffic is intentionally outside these public
 host captures and does not need a Pith connection record.
 
-After the last phase, verify Pith's managed paths/service are absent and the
-user has restored the original Tailscale settings. Compare each Pith cleanup
+After the last phase, stop and uninstall against the latest baseline **before**
+the user restores the initial Tailscale settings. Verify Pith's managed
+paths/service are absent, then have the user restore the recorded settings.
+Compare each Pith cleanup
 with its own phase baseline; a user-approved Tailscale mode switch can itself
 recreate its interface, so do not invent route repairs to force identity with
 an earlier mode's interface index.
@@ -296,6 +364,6 @@ cleanup fails and preserves the remaining journal for review; do not replace
 it with broad route deletion.
 
 Finally verify that the managed launchd service and all five paths are gone,
-and compare the original route and utun snapshots. Remove the private session
+and compare the latest accepted route and utun baseline. Remove the private session
 and build directories only after that review. No helper, watcher, test socket,
 or test process should remain running when the session is complete.

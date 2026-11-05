@@ -55,6 +55,8 @@ type checkReport struct {
 	Started     time.Time   `json:"started"`
 	Finished    time.Time   `json:"finished"`
 	Mode        string      `json:"mode"`
+	Baseline    string      `json:"baselineLabel"`
+	BaselineSHA string      `json:"baselineSHA256"`
 	Cases       []checkCase `json:"cases"`
 	Traffic     api.Traffic `json:"traffic"`
 	Events      []api.Event `json:"events"`
@@ -68,6 +70,10 @@ type checkReport struct {
 }
 
 func check(parent context.Context, s *session, c api.Service, opts checkOptions) (resultErr error) {
+	return checkWithOps(parent, s, c, opts, liveOps())
+}
+
+func checkWithOps(parent context.Context, s *session, c api.Service, opts checkOptions, ops rootcheckOps) (resultErr error) {
 	if !s.Installed || !s.CancelPassed {
 		return errors.New("check requires this session's successful cancellation and scoped installation")
 	}
@@ -88,16 +94,19 @@ func check(parent context.Context, s *session, c api.Service, opts checkOptions)
 			return err
 		}
 	}
-	if err := s.verifyInstalled(); err != nil {
+	if err := ops.verifyInstalled(s); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(parent, 3*time.Minute)
 	defer cancel()
 	status, err := c.Status(ctx)
-	if err != nil || !status.Helper.Running || status.Helper.Outdated || status.State != api.Stopped {
-		return fmt.Errorf("check requires an idle, responding helper of the reviewed version: state=%s error=%v", status.State, err)
+	if err != nil {
+		return err
 	}
-	report := checkReport{Started: time.Now(), Mode: "smoke"}
+	if err := idleReviewedStatus(s, status); err != nil {
+		return err
+	}
+	report := checkReport{Started: time.Now(), Mode: "smoke", Baseline: s.BaselineLabel, BaselineSHA: s.baselineDigest()}
 	if opts.batch {
 		report.Mode = "batch"
 	} else if opts.safeFailure {
@@ -109,17 +118,26 @@ func check(parent context.Context, s *session, c api.Service, opts checkOptions)
 	} else if opts.observe > 0 {
 		report.Mode, report.Observation = "observe", true
 	}
-	report.Before, err = takeSnapshot(ctx)
+	report.Before, err = ops.snapshot(ctx)
 	if err != nil {
 		return err
 	}
 	if !sameRoutes(s.Original.Routes, report.Before.Routes) || !sameTunnels(s.Original.Interfaces, report.Before.Interfaces) {
-		return errors.New("routing or tunnel inventory changed since preparation; do not start capture until the snapshots are reviewed")
+		return errors.New("routing or tunnel inventory changed since the current baseline; use rebaseline only after a verified stop and an approved mode change")
 	}
 	for _, ref := range s.Interfaces {
 		if iface := ref.Resolve(report.Before.Interfaces); iface == nil || !iface.Up {
 			return errors.New("a reviewed interface is missing or down")
 		}
+	}
+	if choices == 0 {
+		s.SmokePassed = false
+	}
+	// Read-only admission failures preserve the last cleanup proof, so an
+	// approved mode switch followed by an accidental check can still rebaseline.
+	// From this point cleanup may issue Stop, so invalidate and persist first.
+	if err := s.invalidateCleanup(ops); err != nil {
+		return err
 	}
 	// The cleanup context is independent of signal cancellation and test timeout.
 	// The helper's scoped five-minute lease is the final bound if this process
@@ -127,30 +145,27 @@ func check(parent context.Context, s *session, c api.Service, opts checkOptions)
 	defer func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cleanupCancel()
-		if err := c.Stop(cleanupCtx); err != nil {
-			report.StopError = err.Error()
-			resultErr = errors.Join(resultErr, fmt.Errorf("Stop failed: %w; use the reviewed emergency command", err))
+		record, cleanupErr := collectCleanup(cleanupCtx, s, c, ops, "check")
+		report.After, report.Restored = record.After, record.Restored
+		if cleanupErr != nil {
+			report.StopError = cleanupErr.Error()
 		}
-		report.After, err = takeSnapshot(cleanupCtx)
-		if err != nil {
-			resultErr = errors.Join(resultErr, err)
-		} else {
-			report.Restored = sameRoutes(report.Before.Routes, report.After.Routes) && sameTunnels(report.Before.Interfaces, report.After.Interfaces)
-			if !report.Restored {
-				resultErr = errors.Join(resultErr, errors.New("routes or tunnel inventory were not restored exactly; inspect the private snapshots"))
-			}
-		}
+		resultErr = errors.Join(resultErr, cleanupErr)
 		report.Finished = time.Now()
 		if resultErr != nil {
 			report.Error = resultErr.Error()
 		}
-		path := filepath.Join(s.Dir, "check-"+report.Mode+"-"+report.Started.Format("20060102T150405.000000000")+".json")
-		resultErr = errors.Join(resultErr, writeJSON(path, report))
-		fmt.Println("Private check report:", path)
+		name, archiveErr := ops.archive(s, "check-"+report.Mode, report)
+		resultErr = errors.Join(resultErr, archiveErr)
+		if archiveErr == nil {
+			fmt.Println("Private check report:", filepath.Join(s.Dir, name))
+		}
 		if resultErr == nil && choices == 0 {
 			s.SmokePassed = true
-			resultErr = s.save()
 		}
+		// A test assertion and cleanup are separate results. A failed case must
+		// stay failed, but verified rollback remains valid evidence for rebaseline.
+		resultErr = errors.Join(resultErr, s.recordCleanup(record, cleanupErr, ops))
 		if resultErr == nil {
 			fmt.Println("PASS: this command completed and routing is stopped; uninstall the idle helper when the session is finished.")
 		}
@@ -168,7 +183,7 @@ func check(parent context.Context, s *session, c api.Service, opts checkOptions)
 		return err
 	}
 	if opts.safeFailure {
-		if err := c.Start(ctx, cfg.Selected); api.Code(err) != api.ErrNetworkLost {
+		if err := s.startCapture(ctx, c, cfg.Selected, ops); api.Code(err) != api.ErrNetworkLost {
 			return fmt.Errorf("blocked SafeStart returned %v, expected ErrNetworkLost", err)
 		}
 		status, err := c.Status(ctx)
@@ -207,7 +222,7 @@ func check(parent context.Context, s *session, c api.Service, opts checkOptions)
 		}
 		defer native.Close()
 	}
-	if err := c.Start(ctx, cfg.Selected); err != nil {
+	if err := s.startCapture(ctx, c, cfg.Selected, ops); err != nil {
 		return err
 	}
 	status, err = c.Status(ctx)

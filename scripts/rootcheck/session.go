@@ -28,22 +28,27 @@ import (
 )
 
 type session struct {
-	Dir                    string              `json:"directory"`
-	UID                    int                 `json:"uid"`
-	Helper                 string              `json:"helper"`
-	HelperSHA256           string              `json:"helperSHA256"`
-	Version                string              `json:"version"`
-	Target                 string              `json:"target"`
-	ServerName             string              `json:"serverName"`
-	DNSTarget              string              `json:"dnsTarget,omitempty"`
-	Interfaces             [2]api.InterfaceRef `json:"interfaces"`
-	Preflight              []preflight         `json:"preflight"`
-	Original               snapshot            `json:"original"`
-	InstallScriptSHA256    string              `json:"installScriptSHA256"`
-	AuthorizationAttempted bool                `json:"authorizationAttempted"`
-	CancelPassed           bool                `json:"cancelPassed"`
-	Installed              bool                `json:"installed"`
-	SmokePassed            bool                `json:"smokePassed"`
+	Dir          string              `json:"directory"`
+	UID          int                 `json:"uid"`
+	Helper       string              `json:"helper"`
+	HelperSHA256 string              `json:"helperSHA256"`
+	Version      string              `json:"version"`
+	Target       string              `json:"target"`
+	ServerName   string              `json:"serverName"`
+	DNSTarget    string              `json:"dnsTarget,omitempty"`
+	Interfaces   [2]api.InterfaceRef `json:"interfaces"`
+	Preflight    []preflight         `json:"preflight"`
+	// Original is the active rollback baseline; original.json is never replaced.
+	Original               snapshot        `json:"original"`
+	BaselineLabel          string          `json:"baselineLabel"`
+	BaselineFile           string          `json:"baselineFile"`
+	Installation           *installationID `json:"installation,omitempty"`
+	Cleanup                *cleanupProof   `json:"cleanup,omitempty"`
+	InstallScriptSHA256    string          `json:"installScriptSHA256"`
+	AuthorizationAttempted bool            `json:"authorizationAttempted"`
+	CancelPassed           bool            `json:"cancelPassed"`
+	Installed              bool            `json:"installed"`
+	SmokePassed            bool            `json:"smokePassed"`
 }
 
 type pathState struct {
@@ -64,7 +69,7 @@ type snapshot struct {
 
 func prepare(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("prepare", flag.ContinueOnError)
-	s := &session{UID: os.Getuid()}
+	s := &session{UID: os.Getuid(), BaselineLabel: "initial", BaselineFile: "original.json"}
 	var names [2]string
 	fs.StringVar(&s.Helper, "helper", "", "absolute path to the reviewed helper executable")
 	fs.StringVar(&s.Version, "version", "dev", "expected helper build version")
@@ -302,7 +307,11 @@ func (s *session) verifyInstalled() error {
 	if err != nil || checksum != s.HelperSHA256 {
 		return errors.New("installed helper is not the reviewed executable")
 	}
-	data, err := os.ReadFile(helper.PlistPath)
+	return s.verifyInstalledPlist(helper.PlistPath)
+}
+
+func (s *session) verifyInstalledPlist(path string) error {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
@@ -382,18 +391,22 @@ func (s snapshot) requireAbsent() error {
 }
 
 func (s *session) expectOriginal(ctx context.Context, phase string) error {
-	after, err := takeSnapshot(ctx)
+	return s.expectOriginalWithOps(ctx, phase, liveOps())
+}
+
+func (s *session) expectOriginalWithOps(ctx context.Context, phase string, ops rootcheckOps) error {
+	after, err := ops.snapshot(ctx)
 	if err != nil {
 		return err
 	}
-	if err := writeJSON(filepath.Join(s.Dir, phase+".json"), after); err != nil {
+	if _, err := ops.archive(s, phase, after); err != nil {
 		return err
 	}
 	if err := after.requireAbsent(); err != nil {
 		return err
 	}
 	if !sameRoutes(s.Original.Routes, after.Routes) || !sameTunnels(s.Original.Interfaces, after.Interfaces) {
-		return errors.New("routes or tunnel inventory differ from preparation; inspect the private snapshots before continuing")
+		return errors.New("routes or tunnel inventory differ from the current baseline; inspect the private snapshots before continuing")
 	}
 	return nil
 }
@@ -440,6 +453,10 @@ func writePrivate(path string, data []byte) error {
 	}
 	defer os.Remove(f.Name())
 	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
 		f.Close()
 		return err
 	}

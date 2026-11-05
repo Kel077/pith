@@ -28,6 +28,7 @@ const usage = `rootcheck prepares a private, scoped acceptance session.
   install   --session DIRECTORY
   check     --session DIRECTORY [--batch | --safe-failure | --preserve | --app-bypass | --observe 90s]
   stop      --session DIRECTORY
+  rebaseline --session DIRECTORY --label MODE
   uninstall --session DIRECTORY
 
 prepare writes review material only to a fresh directory in TMPDIR. It reads
@@ -37,6 +38,8 @@ authorization dialog. All other commands need that session directory.
 cancel expects the user to cancel the install dialog. install and uninstall
 request administrator authorization. check starts routing only to the reviewed
 IPv4 test host(s), always stops it on return, and never installs the helper.
+rebaseline records an approved mode change only while stopped, after verified
+cleanup, without an authorization dialog. It requires a new smoke check.
 Read docs/ROOT-TEST.md before use. Do not run from an unattended agent.
 `
 
@@ -68,6 +71,10 @@ func run(args []string) error {
 	}
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	dir := fs.String("session", "", "private directory printed by prepare")
+	var label string
+	if args[0] == "rebaseline" {
+		fs.StringVar(&label, "label", "", "generic phase label, such as vpn-off, tailnet, or exit-node")
+	}
 	var opts checkOptions
 	if args[0] == "check" {
 		fs.BoolVar(&opts.batch, "batch", false, "run the remaining automatic cases after the smoke check")
@@ -111,6 +118,8 @@ func run(args []string) error {
 		return check(ctx, s, c, opts)
 	case "stop":
 		return stop(ctx, s, c)
+	case "rebaseline":
+		return rebaseline(ctx, s, c, label)
 	case "uninstall":
 		return uninstall(ctx, s, c)
 	default:
@@ -181,6 +190,14 @@ func install(ctx context.Context, s *session, c api.Service) error {
 	if err := s.verifyInstalled(); err != nil {
 		return err
 	}
+	identity, err := readInstallationID(helper.PlistPath)
+	if err != nil {
+		return err
+	}
+	s.Installation = &identity
+	if err := s.save(); err != nil {
+		return err
+	}
 	readyCtx, readyCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer readyCancel()
 	if err := waitUntil(readyCtx, func() (bool, error) {
@@ -188,8 +205,8 @@ func install(ctx context.Context, s *session, c api.Service) error {
 		if err != nil || !st.Helper.Running {
 			return false, nil
 		}
-		if st.Helper.Outdated || st.State != api.Stopped {
-			return false, errors.New("installed helper has the wrong version or is not idle")
+		if err := idleReviewedStatus(s, st); err != nil {
+			return false, err
 		}
 		return true, nil
 	}); err != nil {
@@ -199,7 +216,7 @@ func install(ctx context.Context, s *session, c api.Service) error {
 	if err != nil {
 		return err
 	}
-	if err := writeJSON(filepath.Join(s.Dir, "after-install.json"), after); err != nil {
+	if _, err := archiveJSON(s, "after-install", after); err != nil {
 		return err
 	}
 	if !sameRoutes(s.Original.Routes, after.Routes) || !sameTunnels(s.Original.Interfaces, after.Interfaces) {
@@ -210,26 +227,26 @@ func install(ctx context.Context, s *session, c api.Service) error {
 }
 
 func stop(ctx context.Context, s *session, c api.Service) error {
+	return stopWithOps(ctx, s, c, liveOps())
+}
+
+func stopWithOps(ctx context.Context, s *session, c api.Service, ops rootcheckOps) error {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	if err := c.Stop(ctx); err != nil {
-		return fmt.Errorf("Stop failed: %w; use the reviewed emergency command", err)
+	if err := s.invalidateCleanup(ops); err != nil {
+		return fmt.Errorf("persist invalidated cleanup evidence before Stop: %w", err)
 	}
-	st, err := c.Status(ctx)
-	if err != nil || st.State != api.Stopped {
-		return fmt.Errorf("helper did not report stopped: status=%s error=%v", st.State, err)
-	}
-	after, err := takeSnapshot(ctx)
-	if err != nil {
+	if err := ops.verifyInstalled(s); err != nil {
 		return err
 	}
-	if err := writeJSON(filepath.Join(s.Dir, "after-stop.json"), after); err != nil {
-		return err
+	record, resultErr := collectCleanup(ctx, s, c, ops, "stop")
+	if err := s.recordCleanup(record, resultErr, ops); err != nil {
+		resultErr = errors.Join(resultErr, err)
 	}
-	if !sameRoutes(s.Original.Routes, after.Routes) || !sameTunnels(s.Original.Interfaces, after.Interfaces) {
-		return errors.New("Stop returned but routing or tunnel inventory differs; inspect snapshots before proceeding")
+	if resultErr != nil {
+		return resultErr
 	}
-	fmt.Println("PASS: routing is stopped and the original routes and tunnel inventory are restored.")
+	fmt.Println("PASS: routing is stopped and the current baseline's routes and tunnel inventory are restored.")
 	return nil
 }
 
@@ -237,11 +254,21 @@ func uninstall(ctx context.Context, s *session, c api.Service) error {
 	if !s.AuthorizationAttempted {
 		return errors.New("this session has never attempted installation; there is nothing it is authorized to remove")
 	}
+	// A known replacement installation is not this session's cleanup target.
+	// Missing files after a partial uninstall remain recoverable, without IPC.
+	if err := s.verifyRemovalOwnership(helper.BinaryPath, helper.PlistPath); err != nil {
+		return fmt.Errorf("refuse to remove another installation: %w; review the standalone emergency command", err)
+	}
+	if err := s.invalidateCleanup(liveOps()); err != nil {
+		return err
+	}
 	// Uninstall remains usable when IPC, its version check, or Stop has failed.
 	// PlanUninstall boots out launchd before ownership-checked journal cleanup.
-	stopCtx, stopCancel := context.WithTimeout(ctx, 10*time.Second)
-	_ = c.Stop(stopCtx)
-	stopCancel()
+	if s.verifyOwnedInstallation() == nil {
+		stopCtx, stopCancel := context.WithTimeout(ctx, 10*time.Second)
+		_ = c.Stop(stopCtx)
+		stopCancel()
+	}
 	authCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	fmt.Println("Authorize removal of the reviewed helper, its service, socket, and test data.")
@@ -252,10 +279,11 @@ func uninstall(ctx context.Context, s *session, c api.Service) error {
 		return err
 	}
 	s.Installed = false
+	s.SmokePassed = false
 	if err := s.save(); err != nil {
 		return err
 	}
-	fmt.Println("PASS: helper, launchd registration, socket, capture journal, and helper data are absent; original routes and tunnels are restored.")
+	fmt.Println("PASS: helper, launchd registration, socket, capture journal, and helper data are absent; current baseline routes and tunnels are restored.")
 	fmt.Println("Private review artifacts remain in the session directory for inspection; remove that directory when finished.")
 	return nil
 }
