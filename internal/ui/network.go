@@ -150,7 +150,7 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 		}
 		h, isHotspot := a.hotspot.info[i.Name]
 		if isHotspot {
-			a.hotspotStrip(c, h, col)
+			a.hotspotDevice(c, h, col)
 		}
 		// The details, as rows of their own inside the pane.
 		ui.Column(c).Radius(12).Background(subtle(t, 0.03)).Dividers(1, hairline(t)).Children(func() {

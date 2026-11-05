@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"strconv"
 	"strings"
@@ -142,43 +143,87 @@ func (a *App) renewHotspot(name string) {
 	}, func(error) { delete(a.hotspot.renewing, name) })
 }
 
-// hotspotStrip shows a hotspot's signal and cell on its interface's card:
-// the bars, the technology and the band, the carrier, and how strong and
-// clean the signal is. A lock asks for its admin password when Pith has
-// none.
-func (a *App) hotspotStrip(c *ui.Context, h api.Hotspot, col ui.Color) {
-	t := c.Theme()
-	ui.Row(c.Key("hotspot-"+h.Interface)).Gap(10).Padding(10, 12).Radius(12).Background(subtle(t, 0.03)).AlignItems(ui.Center).Children(func() {
-		signalBars(c, h.Bars, col, h.Connected)
-		if h.Technology != "" {
-			ui.Text(c, h.Technology).FontSize(14).FontWeight(650).SingleLine().Shrink(0)
-		}
-		if cell := h.Cell; cell != nil {
-			if cell.Band != "" {
-				chip := tagChip(c, nil, cell.Band, col)
-				if f := bandFrequency(cell.Band); f != "" {
-					chip.Tooltip(f)
+// The picture of a hotspot: its enclosure and a blank screen, without
+// marks, on which hotspotDevice draws what the hotspot reports.
+//
+//go:embed assets/m2000.svg
+var hotspotSVG []byte
+
+var hotspotPicture = ui.MustParseSVG(hotspotSVG)
+
+// Where the screen is in the picture, in percent of it, and the picture's
+// width over its height.
+const (
+	screenLeft, screenTop, screenWidth, screenHeight = 33.89, 25.0, 32.22, 49.43
+	hotspotAspect                                    = 1440.0 / 704
+)
+
+// The colors of the screen, which stays white in the dark as it does on the
+// device.
+var (
+	screenInk   = ui.Hex("#15171a")
+	screenFaint = ui.Hex("#7b7f86")
+	screenRule  = ui.RGBA(20, 22, 26, 0.12)
+)
+
+// hotspotDevice shows a hotspot as itself, whose screen tells what it
+// reports: the bars and 5G or LTE, the carrier, the band large with its
+// frequency, and the signal's strength and SNR. Locked, the screen shows a
+// lock that asks for its admin password.
+func (a *App) hotspotDevice(c *ui.Context, h api.Hotspot, col ui.Color) {
+	ui.Row(c.Key("hotspot-" + h.Interface)).Justify(ui.Center).Children(func() {
+		ui.Box(c).WidthPercent(100).MaxWidth(400).AspectRatio(hotspotAspect).Children(func() {
+			ui.Image(c, hotspotPicture).Absolute().Left(0).Top(0).WidthPercent(100).HeightPercent(100).Label(h.Model)
+			screen := ui.Column(c).Absolute().LeftPercent(screenLeft).TopPercent(screenTop).WidthPercent(screenWidth).HeightPercent(screenHeight).
+				Padding(6, 8, 7).Clip()
+			if h.Locked {
+				screen.Cursor(ui.CursorPointer).Label(locales.HotspotPassword()).Tooltip(locales.HotspotPassword())
+				if screen.Clicked() {
+					a.hotspot.unlock = unlockDialog{open: true, iface: h.Interface}
 				}
 			}
-			if cell.Operator != "" {
-				ui.Text(c, cell.Operator).FontSize(12).TextColor(t.TextMuted).SingleLine().Shrink(1)
-			}
-			if cell.Roaming {
-				tagChip(c, nil, locales.Roaming(), t.Warning)
-			}
+			screen.Children(func() { hotspotScreen(c, h, col) })
+		})
+	})
+}
+
+func hotspotScreen(c *ui.Context, h api.Hotspot, col ui.Color) {
+	cell := h.Cell
+	// The status bar, as the device has it.
+	ui.Row(c).Gap(5).AlignItems(ui.Center).Padding(0, 0, 4).Children(func() {
+		signalBars(c, h.Bars, col, h.Connected, 11)
+		if h.Technology != "" {
+			ui.Text(c, h.Technology).FontSize(10.5).FontWeight(700).TextColor(screenInk).SingleLine().Shrink(0)
 		}
 		ui.Spacer(c)
-		switch {
-		case h.Locked:
-			lock := glassCapsuleButton(c, "unlock", icLock, "").Label(locales.HotspotPassword()).Shrink(0).Tooltip(locales.HotspotPassword())
-			if lock.Clicked() {
-				a.hotspot.unlock = unlockDialog{open: true, iface: h.Interface}
-			}
-		case h.Cell != nil:
-			ui.Text(c, fmt.Sprintf("%d dBm · %d dB", h.Cell.Signal, h.Cell.SNR)).FontSize(12).FontFeatures("tnum").
-				TextColor(t.TextMuted).SingleLine().Shrink(0).Tooltip(locales.SignalAndSnr())
+		if cell != nil && cell.Operator != "" {
+			ui.Text(c, cell.Operator).FontSize(9).FontWeight(500).TextColor(screenFaint).SingleLine().Shrink(1)
 		}
 	})
+	ui.Box(c).Height(1).Background(screenRule)
+	ui.Column(c).Grow(1).Justify(ui.Center).AlignItems(ui.Center).Gap(1).Children(func() {
+		switch {
+		case h.Locked:
+			ui.Icon(c, icLock).FontSize(20).TextColor(screenFaint)
+		case !h.Connected:
+			ui.Text(c, locales.NotConnected()).FontSize(11).TextColor(screenFaint).SingleLine()
+		case cell != nil && cell.Band != "":
+			ui.Text(c, cell.Band).FontSize(25).FontWeight(700).LetterSpacing(-0.6).TextColor(screenInk).SingleLine()
+			if f := bandFrequency(cell.Band); f != "" {
+				ui.Text(c, f).FontSize(9).TextColor(screenFaint).SingleLine()
+			}
+			if cell.Roaming {
+				ui.Text(c, locales.Roaming()).FontSize(9).FontWeight(600).TextColor(ui.Hex("#c77700")).SingleLine()
+			}
+		}
+	})
+	if cell != nil && !h.Locked {
+		ui.Row(c).Children(func() {
+			ui.Text(c, fmt.Sprintf("%d dBm", cell.Signal)).FontSize(9).FontFeatures("tnum").TextColor(screenFaint).SingleLine()
+			ui.Spacer(c)
+			ui.Text(c, fmt.Sprintf("SNR %d dB", cell.SNR)).FontSize(9).FontFeatures("tnum").TextColor(screenFaint).SingleLine()
+		}).Tooltip(locales.SignalAndSnr())
+	}
 }
 
 // renewalText tells what changing a hotspot's IP did: its public IP before
@@ -197,17 +242,18 @@ func renewalText(r api.HotspotRenewal) string {
 	return before + " → " + after
 }
 
-// signalBars draws a signal of 0 to 5 bars, rising left to right, in col;
-// the bars not lit, and all of them when not connected, faint.
-func signalBars(c *ui.Context, bars int, col ui.Color, connected bool) {
-	t := c.Theme()
-	ui.Row(c).Gap(2).AlignItems(ui.End).Height(16).Shrink(0).Label(strconv.Itoa(bars) + "/5").Children(func() {
+// signalBars draws a signal of 0 to 5 bars, rising left to right to
+// height, in col; the bars not lit, and all of them when not connected,
+// faint.
+func signalBars(c *ui.Context, bars int, col ui.Color, connected bool, height float32) {
+	unit := height / 16
+	ui.Row(c).Gap(2 * unit).AlignItems(ui.End).Height(height).Shrink(0).Label(strconv.Itoa(bars) + "/5").Children(func() {
 		for i := range 5 {
-			fill := subtle(t, 0.14)
+			fill := screenRule
 			if connected && i < bars {
 				fill = col
 			}
-			ui.Box(c).Size(3.5, 5+float32(i)*2.75).Radius(1.25).Background(fill)
+			ui.Box(c).Size(3.5*unit, (5+float32(i)*2.75)*unit).Radius(1.25 * unit).Background(fill)
 		}
 	})
 }

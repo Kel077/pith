@@ -1,0 +1,71 @@
+<?xml version='1.0' encoding='utf-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="704" viewBox="0 0 1440 704" version="1.1" role="img" aria-labelledby="title desc">
+  <title id="title">A mobile hotspot, front view</title>
+  <desc id="desc">Its enclosure and a blank screen, on which Pith draws what the hotspot reports. No marks.</desc>
+  <defs>
+    <linearGradient id="frame" x1="680" y1="27" x2="760" y2="677" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#414244" />
+      <stop offset=".10" stop-color="#36373a" />
+      <stop offset=".44" stop-color="#2e3033" />
+      <stop offset=".85" stop-color="#2a2c2f" />
+      <stop offset="1" stop-color="#353639" />
+    </linearGradient>
+    <linearGradient id="outer-edge" x1="450" y1="27" x2="980" y2="677" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8d9093" />
+      <stop offset=".12" stop-color="#56595c" />
+      <stop offset=".48" stop-color="#292b2e" />
+      <stop offset=".86" stop-color="#43464a" />
+      <stop offset="1" stop-color="#63666a" />
+    </linearGradient>
+    <linearGradient id="well" x1="700" y1="65" x2="700" y2="640" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0b0c0d" />
+      <stop offset=".42" stop-color="#111214" />
+      <stop offset="1" stop-color="#060708" />
+    </linearGradient>
+    <linearGradient id="glass-edge" x1="700" y1="72" x2="700" y2="634" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#696c70" />
+      <stop offset=".04" stop-color="#383a3d" />
+      <stop offset=".46" stop-color="#25272a" />
+      <stop offset=".91" stop-color="#393b3e" />
+      <stop offset="1" stop-color="#5e6064" />
+    </linearGradient>
+    <linearGradient id="glass" x1="140" y1="100" x2="1300" y2="670" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0b0d0f" />
+      <stop offset=".37" stop-color="#080a0b" />
+      <stop offset=".72" stop-color="#050607" />
+      <stop offset="1" stop-color="#0b0d0f" />
+    </linearGradient>
+    <linearGradient id="frame-bottom" x1="700" y1="637" x2="700" y2="674" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6a6d70" stop-opacity=".15" />
+      <stop offset=".45" stop-color="#45484b" stop-opacity=".09" />
+      <stop offset="1" stop-color="#0c0e11" stop-opacity=".15" />
+    </linearGradient>
+    <linearGradient id="led" x1="1090" y1="641" x2="1101" y2="641" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#16181b" />
+      <stop offset=".35" stop-color="#55585d" />
+      <stop offset=".63" stop-color="#292c30" />
+      <stop offset="1" stop-color="#111316" />
+    </linearGradient>
+    <linearGradient id="lcd" x1="0" y1="0" x2="0" y2="240" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f8f9fa" />
+      <stop offset=".48" stop-color="#ffffff" />
+      <stop offset="1" stop-color="#f8f9fa" />
+    </linearGradient>
+  </defs>
+  <g id="enclosure">
+    <rect x="24" y="27" width="1392" height="650" rx="91" fill="url(#frame)" stroke="#121416" stroke-width="2" />
+    <rect x="25.5" y="28.5" width="1389" height="647" rx="89.5" fill="none" stroke="url(#outer-edge)" stroke-width="1.6" />
+    <rect x="42" y="67" width="1356" height="571" rx="79" fill="url(#well)" stroke="#141618" stroke-width="2.6" />
+    <rect x="46.5" y="72" width="1347" height="561" rx="76" fill="#101214" stroke="url(#glass-edge)" stroke-width="2.8" />
+    <rect x="50" y="76" width="1340" height="553" rx="72" fill="url(#glass)" />
+    <path d="M116 30 H1324 C1371 30 1412 69 1412 119" fill="none" stroke="#c5c8ca" stroke-width=".9" stroke-opacity=".20" />
+    <path d="M32 125 V580 C32 631 67 669 118 669 H1321 C1372 669 1408 630 1408 581" fill="none" stroke="#141619" stroke-width="1.2" stroke-opacity=".8" />
+    <path d="M71 637 C84 652 100 658 121 658 H1319 C1342 658 1361 650 1372 637" fill="none" stroke="url(#frame-bottom)" stroke-width="11" />
+    <rect x="1090" y="640" width="10" height="24" rx="1.7" fill="url(#led)" />
+    <path d="M1092 642 V661" fill="none" stroke="#8f949b" stroke-width=".7" stroke-opacity=".40" />
+    </g>
+  <g id="touchscreen" transform="translate(488 176) scale(1.45)">
+    <rect x="-.8" y="-.8" width="321.6" height="241.6" rx="10.5" fill="#050607" stroke="#181b1e" stroke-width="1.1" />
+    <rect x="0" y="0" width="320" height="240" rx="9.5" fill="url(#lcd)" stroke="#dfe2e4" stroke-width="1" />
+    </g>
+</svg>
