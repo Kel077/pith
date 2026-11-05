@@ -93,6 +93,21 @@ func (nativeDriver) BootSession() (string, error) {
 }
 
 func (nativeDriver) Snapshot() ([]Route, error) { return Snapshot() }
+func (nativeDriver) InterfacePrefixes() ([]netip.Prefix, error) {
+	addresses, err := net.InterfaceAddrs()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]netip.Prefix, 0, len(addresses))
+	for _, a := range addresses {
+		p, err := netip.ParsePrefix(a.String())
+		if err != nil {
+			return nil, fmt.Errorf("invalid assigned interface prefix: %w", err)
+		}
+		result = append(result, p.Masked())
+	}
+	return result, nil
+}
 func (nativeDriver) Index(name string) (int, error) {
 	iface, err := net.InterfaceByName(name)
 	if err != nil {
@@ -111,12 +126,18 @@ func (nativeDriver) Create(mtu int) (tun.Device, error) {
 	}
 	return tun.CreateTUN("utun", mtu)
 }
-func (nativeDriver) Configure(ctx context.Context, name string, ipv6 bool) error {
-	if err := command(ctx, "/sbin/ifconfig", name, "inet", "198.18.0.1", "198.18.0.1", "netmask", "255.255.255.255", "up"); err != nil {
+func (nativeDriver) Configure(ctx context.Context, name string, addresses TunnelAddresses) error {
+	if !addresses.IPv4.Addr().Is4() || addresses.IPv4.Bits() != 30 || addresses.IPv4 != addresses.IPv4.Masked() ||
+		addresses.IPv6.IsValid() && (!addresses.IPv6.Addr().Is6() || addresses.IPv6.Addr().Is4In6() || addresses.IPv6.Bits() != 126 || addresses.IPv6 != addresses.IPv6.Masked()) {
+		return fmt.Errorf("invalid tunnel address plan")
+	}
+	local := addresses.IPv4.Addr().Next()
+	peer := local.Next()
+	if err := command(ctx, "/sbin/ifconfig", name, "inet", local.String(), peer.String(), "netmask", "255.255.255.252", "up"); err != nil {
 		return err
 	}
-	if ipv6 {
-		return command(ctx, "/sbin/ifconfig", name, "inet6", "fd7a:7069:7468::1", "prefixlen", "128", "alias")
+	if addresses.IPv6.IsValid() {
+		return command(ctx, "/sbin/ifconfig", name, "inet6", addresses.IPv6.Addr().Next().String(), "prefixlen", "126", "alias")
 	}
 	return nil
 }

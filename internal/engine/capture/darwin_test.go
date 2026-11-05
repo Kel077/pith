@@ -42,5 +42,14 @@ func TestLiveSnapshotIsReadOnly(t *testing.T) {
 			t.Fatal("invalid route prefix")
 		}
 	}
+	prefixes, err := driver.InterfacePrefixes()
+	if err != nil || len(prefixes) == 0 {
+		t.Fatal("cannot read assigned interface prefixes", err)
+	}
+	for _, p := range prefixes {
+		if !p.IsValid() {
+			t.Fatal("invalid assigned interface prefix")
+		}
+	}
 	// Do not print this Mac's addresses, gateways or network inventory.
 }

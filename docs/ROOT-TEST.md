@@ -174,6 +174,81 @@ observation automatically and treats an unexpected helper stop as a failure.
   `/128`. Testing `/1` capture requires another explicit go-ahead after scoped
   capture and cleanup have passed.
 
+## Optional Tailscale compatibility phases
+
+These phases belong to the same coordinated acceptance window, but they are
+opt-in. They do not authorize installing, updating, reconnecting, or changing
+Tailscale automatically. Test only an already available Tailscale configuration
+and an exit node the user is permitted to use. The user selects **no exit node**
+or the approved **exit node** in Tailscale after the coordinator has explicitly
+included that change in the session approval. Keep Pith stopped while changing
+the mode. Do not change routes, DNS preferences, or Tailscale settings to make
+a failing Pith test pass.
+
+Before the first mode change, record the original Tailscale connection state,
+exit-node selection, and DNS preferences in the private temporary session
+notes. Also select one already authorized tailnet TCP/TLS service and its
+MagicDNS name. Use the same bounded service request and one system-resolver
+lookup before, during, and after each Pith run. Do not enumerate the tailnet or
+probe additional peers. Real names, exit-node identifiers, addresses, route
+snapshots, and public-IP echoes stay outside the repository.
+
+A changed Tailscale mode requires a fresh reviewed route/interface baseline;
+the original snapshot for another mode is not a valid rollback reference.
+With the unchanged `rootcheck` harness, finish and uninstall the current
+phase's helper **before** the user changes modes, then run `prepare`, review
+the new artifacts, and follow `cancel` and `install` for that mode. The harness
+refuses an existing installation and intentionally refuses a changed route
+baseline. Do not edit `original.json` or bypass those checks. These are several
+explicitly approved phases of one coordinated window, not permission to leave
+the helper installed for a later unattended session.
+
+The stock smoke and batch checks can be repeated within each mode. They do
+not set an app filter, assert tailnet reachability, or operate Tailscale. The
+additional app-specific checks below require a reviewed temporary authenticated
+caller that uses `api.Service`, the same temporary config location, bounded
+requests, and unconditional `Stop` cleanup. Prepare its exact rules and actions
+before requesting approval for that phase. Until that caller is ready, record
+these checks as **pending**, even if the stock batch passes. Do not use the
+normal application config as a shortcut.
+
+| Phase | Additional dialogs and changes | Pass, fail, or inconclusive | Undo |
+| --- | --- | --- | --- |
+| No exit node | The user selects no exit node in the existing Tailscale UI, only if this was explicitly approved. No new Pith dialog is required for this selection. Any Tailscale/macOS dialog is version-dependent: record its actual wording and obtain approval before accepting it. A fresh helper phase repeats the exact cancel/install/remove prompts listed above. | The chosen tailnet service and MagicDNS lookup work before capture, during a Pith route/block case for the separate public test host, and after Stop. Unmatched public traffic retains the saved system route for this mode. Existing Tailscale routes and its tunnel are unchanged by Pith; Pith selects an unused tunnel address without conflicting with existing interface addresses or tunnel/subnet routes. A failed preflight makes the connectivity case inconclusive. | Stop and uninstall Pith against this phase's baseline. The user restores the original Tailscale mode, or explicitly selects the next approved mode. Pith does not disconnect Tailscale. |
+| Approved exit node | The user selects the already authorized exit node while Pith is stopped. This changes Tailscale's routing behavior; record a new baseline, including its public exit and tailnet/MagicDNS results. Extra VPN/OS prompts need their actual wording reviewed. A fresh helper phase adds the same cancel/install/remove dialogs as above. | First verify unmatched traffic to the captured public test host still uses the exit node. Then verify one selected test app bypasses it through the chosen physical interface under an app-and-IP rule and, separately, an app-and-domain rule. A second controlled app that does not match the app filter must still use the exit node. A matching block rule must prevent the new test connection even when a route rule also matches. Tailnet and MagicDNS behavior remain consistent with the preflight throughout. | Stop and uninstall Pith, verifying that the exit-node routes/tunnel and tailnet service still work. The user restores the initial exit-node choice and DNS preferences recorded before the window. Never remove Tailscale routes as cleanup. |
+| Stop and optional deliberate helper crash in either mode | Normal Stop adds no dialog. A crash test is optional and uses exactly the separate crash authorization command and prompt documented above; it must be explicitly included in that mode's approval. | Pith's capture routes and utun disappear, the pre-existing Tailscale tunnel and route ownership remain intact, and the selected tailnet service, MagicDNS lookup, and public-route behavior still match that mode's baseline. A launchd restart of Pith must be idle. An observation failure caused by the intentional crash is expected; record the crash assertions separately rather than calling the normal smoke check a pass. | Use the reviewed Pith-only emergency command if necessary, then uninstall. Do not restart, kill, or reconfigure Tailscale to hide a cleanup failure. |
+
+For the app-bypass case, keep every request pinned to the **already reviewed
+captured IPv4 host** while preserving the TLS name, using a per-request mapping
+supported by the selected test app. Do not edit `/etc/hosts`, disable system
+DNS, or expand capture. Save one temporary app-specific IP rule, make one new
+connection, then hot-apply the corresponding domain rule and make one new
+connection. Record the matched app/process, rule, outcome, and actual interface
+for each. Compare the endpoint's public-IP echo with both the physical-interface
+preflight and the exit-node preflight. If those echoes are identical or rotate,
+the echo alone cannot prove a bypass; record the evidence limitation. Test the
+unmatched control with the same captured destination and a different reviewed
+app/process so an uncaptured destination cannot masquerade as successful
+system fallback. Finish with a matching block rule after the route rule in
+the list and require a blocked log entry and failed new connection.
+
+For every public-target assertion, first establish that the request actually
+entered Pith: its new connection record must identify the intended process,
+literal destination, and protocol. A VPN's more-specific or scoped route can
+keep a request out of the Pith capture. An exact route conflict must be refused
+without changing that VPN route. Missing capture evidence makes the per-app
+route, fallback, or block result **inconclusive**, not a compatibility pass or
+proof that the matcher failed. Stop and review the route snapshot; do not
+delete the competing route, enlarge the capture, or toggle the VPN
+automatically. Tailnet control traffic is intentionally outside these public
+host captures and does not need a Pith connection record.
+
+After the last phase, verify Pith's managed paths/service are absent and the
+user has restored the original Tailscale settings. Compare each Pith cleanup
+with its own phase baseline; a user-approved Tailscale mode switch can itself
+recreate its interface, so do not invent route repairs to force identity with
+an earlier mode's interface index.
+
 ## Emergency undo
 
 During preparation, `emergency-command.txt` contains the exact standalone

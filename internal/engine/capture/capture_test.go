@@ -189,6 +189,9 @@ func TestLegacyJournalCannotAuthorizeEmergencyRouteDeletion(t *testing.T) {
 type fakeDriver struct {
 	boot                      string
 	routes                    []Route
+	assigned                  []netip.Prefix
+	configured                TunnelAddresses
+	prefixError               error
 	device                    *fakeDevice
 	operations                []string
 	failConfigure, failDelete bool
@@ -225,14 +228,18 @@ func (d *fakeDevice) Close() error {
 	return nil
 }
 func (d *fakeDriver) Snapshot() ([]Route, error) { return slices.Clone(d.routes), nil }
-func (d *fakeDriver) Index(string) (int, error)  { return 42, nil }
+func (d *fakeDriver) InterfacePrefixes() ([]netip.Prefix, error) {
+	return slices.Clone(d.assigned), d.prefixError
+}
+func (d *fakeDriver) Index(string) (int, error) { return 42, nil }
 func (d *fakeDriver) Create(int) (tun.Device, error) {
 	d.operations = append(d.operations, "create")
 	d.device = &fakeDevice{owner: d, events: make(chan tun.Event, 8)}
 	return d.device, nil
 }
-func (d *fakeDriver) Configure(context.Context, string, bool) error {
+func (d *fakeDriver) Configure(_ context.Context, _ string, addresses TunnelAddresses) error {
 	d.operations = append(d.operations, "configure")
+	d.configured = addresses
 	if d.failConfigure {
 		return fmt.Errorf("configure failed")
 	}
@@ -298,26 +305,6 @@ func TestPrepareActivateAndStopAreReversible(t *testing.T) {
 	want := []string{"create", "configure", "add 0.0.0.0/1", "add 128.0.0.0/1", "delete 128.0.0.0/1", "delete 0.0.0.0/1", "close"}
 	if !reflect.DeepEqual(d.operations, want) {
 		t.Fatal(d.operations)
-	}
-}
-
-func TestScopedCaptureCannotClaimAddressFromExistingNetwork(t *testing.T) {
-	for _, r := range []Route{
-		{Prefix: prefix("198.18.0.0/15"), Interface: "en0"},
-		{Prefix: prefix("198.18.0.1/32"), Interface: "en5", Scoped: true},
-		{Prefix: prefix("198.18.0.0/24"), Interface: "lo0", Reject: true},
-		{Prefix: prefix("fd7a:7069:7468::/64"), Interface: "utun7"},
-	} {
-		d := &fakeDriver{routes: append(baseRoutes(), r)}
-		opts := fakeOptions(t, d)
-		opts.Scopes = []netip.Prefix{prefix("192.0.2.10/32")}
-		opts.IPv6 = true
-		if _, err := Prepare(context.Background(), opts); api.Code(err) != api.ErrRouteConflict {
-			t.Fatal("claimed a tunnel address from another network", r.Prefix, err)
-		}
-		if d.device != nil {
-			t.Fatal("created utun before checking address conflicts")
-		}
 	}
 }
 

@@ -27,6 +27,16 @@ func problem(err error) string {
 	return err.Error()
 }
 
+func joinProblem(note, detail string) string {
+	if note == "" {
+		return detail
+	}
+	if detail == "" {
+		return note
+	}
+	return note + "; " + detail
+}
+
 func (f *Forwarder) tcp(req *tcp.ForwarderRequest) {
 	local, remote := tuple(req.ID())
 	if f.opts.InterceptTCP != nil {
@@ -77,10 +87,10 @@ func (f *Forwarder) tcp(req *tcp.ForwarderRequest) {
 	}
 	d = policy.Match(a, api.TCP, remote, c.Domain)
 	c.RuleID = d.RuleID
-	result, dialErr := f.opts.Router.Dial(f.ctx, d, api.TCP, remote)
-	c.Outcome, c.Interface = result.Outcome, result.Interface
+	result, dialErr := f.opts.Router.DialDomain(f.ctx, d, api.TCP, remote, c.Domain)
+	c.Outcome, c.Interface, c.Problem = result.Outcome, result.Interface, result.Problem
 	if dialErr != nil {
-		c.Problem = dialErr.Error()
+		c.Problem = joinProblem(c.Problem, dialErr.Error())
 		c.Ended = time.Now()
 		f.opts.Store.Add(c)
 		ep.Abort()
@@ -102,7 +112,7 @@ func (f *Forwarder) tcp(req *tcp.ForwarderRequest) {
 			dns.Query(prefix[:n], time.Now())
 		}
 		if err != nil || n != len(prefix) {
-			f.opts.Store.End(id, problem(err))
+			f.opts.Store.End(id, joinProblem(c.Problem, problem(err)))
 			ep.Abort()
 			return
 		}
@@ -124,7 +134,7 @@ func (f *Forwarder) tcp(req *tcp.ForwarderRequest) {
 	go copyHalf(out, app, true)
 	copyHalf(app, out, false)
 	e1, e2 := <-errs, <-errs
-	f.opts.Store.End(id, problem(errors.Join(e1, e2)))
+	f.opts.Store.End(id, joinProblem(c.Problem, problem(errors.Join(e1, e2))))
 }
 
 var relayBuffers = sync.Pool{New: func() any { return new([32 << 10]byte) }}
@@ -203,10 +213,10 @@ func (f *Forwarder) udp(req *udp.ForwarderRequest) bool {
 		}
 		d := policy.Match(a, api.UDP, remote, c.Domain)
 		c.RuleID = d.RuleID
-		result, dialErr := f.opts.Router.Dial(f.ctx, d, api.UDP, remote)
-		c.Outcome, c.Interface = result.Outcome, result.Interface
+		result, dialErr := f.opts.Router.DialDomain(f.ctx, d, api.UDP, remote, c.Domain)
+		c.Outcome, c.Interface, c.Problem = result.Outcome, result.Interface, result.Problem
 		if dialErr != nil {
-			c.Problem = dialErr.Error()
+			c.Problem = joinProblem(c.Problem, dialErr.Error())
 			c.Ended = time.Now()
 			f.opts.Store.Add(c)
 			return
@@ -228,7 +238,7 @@ func (f *Forwarder) udp(req *udp.ForwarderRequest) bool {
 			dns.Query(data[:written], time.Now())
 		}
 		if err != nil {
-			f.opts.Store.End(id, problem(err))
+			f.opts.Store.End(id, joinProblem(c.Problem, problem(err)))
 			return
 		}
 		errs := make(chan error, 2)
@@ -267,7 +277,7 @@ func (f *Forwarder) udp(req *udp.ForwarderRequest) bool {
 		go copyDatagrams(out, app, true)
 		copyDatagrams(app, out, false)
 		e1, e2 := <-errs, <-errs
-		f.opts.Store.End(id, problem(errors.Join(e1, e2)))
+		f.opts.Store.End(id, joinProblem(c.Problem, problem(errors.Join(e1, e2))))
 	}()
 	return true
 }

@@ -7,6 +7,13 @@ capture routes exist yet. The caller starts the packet stack, then `Activate`
 rechecks conflicts and adds the planned routes. It never replaces a default or
 an existing route. Failure at any point calls the same rollback as `Close`.
 
+Before creating the utun, `SelectAddresses` reserves the first unused IPv4 `/30`
+and, when enabled, IPv6 ULA `/126` from small candidate lists. It checks both the
+routing table and assigned interface prefixes, including scoped/local/reject
+routes and the requested test destinations. No candidate overlaps the standard
+fake-IP or Tailscale pools. Exhausting either enabled family returns
+`ErrRouteConflict` before any network change; the selected subnets are journaled.
+
 Full capture uses `0.0.0.0/1`, `128.0.0.0/1` and optionally `::/1`, `8000::/1`.
 LAN DNS servers receive host routes so their answers can be observed. Existing
 more specific routes stay effective; Tailscale's range and DNS inside a tunnel

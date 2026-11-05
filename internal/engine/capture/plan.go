@@ -21,10 +21,11 @@ type Route struct {
 }
 
 type Plan struct {
-	Prefixes []netip.Prefix `json:"prefixes"`
-	Before   []Route        `json:"before"`
-	Warnings []api.Warning  `json:"warnings,omitempty"`
-	Scoped   bool           `json:"scoped"`
+	Addresses TunnelAddresses `json:"addresses"`
+	Prefixes  []netip.Prefix  `json:"prefixes"`
+	Before    []Route         `json:"before"`
+	Warnings  []api.Warning   `json:"warnings,omitempty"`
+	Scoped    bool            `json:"scoped"`
 }
 
 // SystemInterface preserves the effective pre-capture route, including a VPN

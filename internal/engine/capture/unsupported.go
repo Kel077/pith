@@ -18,9 +18,12 @@ func (nativeDriver) BootSession() (string, error) { return "", fmt.Errorf("captu
 
 func (nativeDriver) Index(string) (int, error) { return 0, fmt.Errorf("capture requires macOS") }
 
-func (nativeDriver) Snapshot() ([]Route, error)     { return Snapshot() }
+func (nativeDriver) Snapshot() ([]Route, error) { return Snapshot() }
+func (nativeDriver) InterfacePrefixes() ([]netip.Prefix, error) {
+	return nil, fmt.Errorf("capture requires macOS")
+}
 func (nativeDriver) Create(int) (tun.Device, error) { return nil, fmt.Errorf("capture requires macOS") }
-func (nativeDriver) Configure(context.Context, string, bool) error {
+func (nativeDriver) Configure(context.Context, string, TunnelAddresses) error {
 	return fmt.Errorf("capture requires macOS")
 }
 func (nativeDriver) Add(context.Context, netip.Prefix, string) error {

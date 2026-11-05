@@ -60,8 +60,9 @@ func (d *testDriver) Snapshot() ([]capture.Route, error) {
 	defer d.mu.Unlock()
 	return slices.Clone(d.routes), nil
 }
-func (d *testDriver) BootSession() (string, error) { return "test-boot-one", nil }
-func (d *testDriver) Index(string) (int, error)    { return 42, nil }
+func (d *testDriver) BootSession() (string, error)               { return "test-boot-one", nil }
+func (d *testDriver) InterfacePrefixes() ([]netip.Prefix, error) { return nil, nil }
+func (d *testDriver) Index(string) (int, error)                  { return 42, nil }
 func (d *testDriver) Create(int) (tun.Device, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -69,7 +70,7 @@ func (d *testDriver) Create(int) (tun.Device, error) {
 	d.devices = append(d.devices, device)
 	return device, nil
 }
-func (d *testDriver) Configure(context.Context, string, bool) error { return nil }
+func (d *testDriver) Configure(context.Context, string, capture.TunnelAddresses) error { return nil }
 func (d *testDriver) Add(_ context.Context, p netip.Prefix, name string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()

@@ -27,9 +27,10 @@ const MTU = 1500
 type Driver interface {
 	BootSession() (string, error)
 	Snapshot() ([]Route, error)
+	InterfacePrefixes() ([]netip.Prefix, error)
 	Create(int) (tun.Device, error)
 	Index(string) (int, error)
-	Configure(context.Context, string, bool) error
+	Configure(context.Context, string, TunnelAddresses) error
 	Add(context.Context, netip.Prefix, string) error
 	Delete(context.Context, netip.Prefix, string) error
 }
@@ -92,15 +93,16 @@ func Prepare(ctx context.Context, opts Options) (*Capture, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, r := range before {
-		// Assigning a tunnel address makes it local, even in a scoped test. Do
-		// not take an address already covered by a specific physical/VPN route.
-		// Defaults and global split routes do not identify an occupied subnet.
-		if (r.Local || r.Prefix.Bits() > 1) && (r.Prefix.Contains(netip.MustParseAddr("198.18.0.1")) || opts.IPv6 && r.Prefix.Contains(netip.MustParseAddr("fd7a:7069:7468::1"))) {
-			return nil, &api.Error{Code: api.ErrRouteConflict, Detail: "Pith tunnel address is already in use"}
-		}
-	}
 	plan, err := Build(before, opts.DNS, opts.IPv6, opts.Scopes)
+	if err != nil {
+		return nil, err
+	}
+	assigned, err := opts.Driver.InterfacePrefixes()
+	if err != nil {
+		return nil, fmt.Errorf("read assigned interface prefixes: %w", err)
+	}
+	// A scoped test destination must not become part of the tunnel's own subnet.
+	plan.Addresses, err = SelectAddresses(before, append(assigned, opts.Scopes...), opts.IPv6)
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +138,7 @@ func Prepare(ctx context.Context, opts Options) (*Capture, error) {
 	if err := c.writeState(); err != nil {
 		return nil, errors.Join(err, c.Close())
 	}
-	if err := opts.Driver.Configure(ctx, name, opts.IPv6); err != nil {
+	if err := opts.Driver.Configure(ctx, name, plan.Addresses); err != nil {
 		return nil, errors.Join(err, c.Close())
 	}
 	return c, nil
