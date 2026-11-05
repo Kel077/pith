@@ -395,8 +395,8 @@ type TrafficQuery struct {
 	// samples are aligned to Since: At = Since + k*Step, summing stored buckets
 	// whose timestamps fall in [At, At+Step). The backend keeps sub-hour buckets
 	// for at least eight days, so week queries never rely on UTC daily totals.
-	// Older coarse history may widen Traffic.Since; stored buckets cannot be
-	// divided at arbitrary boundaries. Missing samples represent zero traffic.
+	// Stored buckets before Since are excluded; they cannot be divided at
+	// arbitrary boundaries. Missing samples represent zero traffic.
 	Step time.Duration `json:"step"`
 }
 
