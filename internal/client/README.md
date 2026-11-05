@@ -1,4 +1,4 @@
-# Backend integration (M1)
+# Backend integration (M1 and M2)
 
 Construct `client.New(client.Options{ResourcesDir: resourcesDir, ConfigDir:
 configDir, Version: version})`. `ConfigDir` can be empty to use
@@ -30,9 +30,31 @@ Available without a helper:
   connect. A MAC-bearing interface reference never falls back to a different
   adapter that happens to reuse its BSD name.
 
-Helper operations currently return `ErrHelperMissing`; `Status` reports
-`Stopped` and no installed helper. IPC, installation and running-scene hot
-application are the next milestone. Do not show these stubs as working routing.
+Helper operations use authenticated HTTP/JSON over a Unix socket. Missing
+helpers return `ErrHelperMissing`; mismatched build/protocol versions return
+`ErrHelperOutdated`. `Status` reports a missing helper as `Stopped` without an
+error. The client requires the server's kernel peer UID to be root. The server
+accepts only root and the installing user's kernel peer UID.
+
+`SaveConfig` pushes a running scene's saved rules/settings to the helper. If
+the running scene was removed, it stops routing. If saving succeeds but hot
+application fails, the error explicitly says the configuration was saved.
+`Subscribe` delivers Status, Interfaces, then updates; cancellation closes
+the stream. The UI may reconnect after EOF/error. Event interfaces include
+user aliases. `Connections`, `ClearConnections`, and `Traffic` use helper IPC.
+
+`InstallHelper` prepares the bundled executable at `ResourcesDir/bin/pithd`
+and invokes the macOS administrator dialog. It verifies the staged executable
+against a pre-authorization SHA-256 and restores the previous helper/plist and
+launchd registration on a failed update. Canceling the dialog maps to
+`ErrCanceled`. `UninstallHelper` stops the service and removes its installation
+and helper data. See `internal/helper/README.md` for the changed paths and test
+plan. These privileged scripts have not yet been run on the development Mac.
+
+The M2 daemon uses `IdleBackend`: it opens authenticated IPC, reports Stopped,
+and refuses Start with an explicit engine-unavailable error. M3 will link in
+the actual routing backend. Only tests inject a fake engine that reports
+Running; the installed binary never simulates successful routing.
 
 `internal/engine/attribution` reads the TCP/UDP `pcblist_n` sysctls and uses
 `proc_info` for executable paths and unique identities. It preserves the

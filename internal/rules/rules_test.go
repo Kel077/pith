@@ -99,7 +99,7 @@ func TestImmutableAndAddressTargets(t *testing.T) {
 
 func TestInterfaceFallback(t *testing.T) {
 	interfaces := []api.Interface{{Name: "en0", HardwareAddr: "02:00:00:00:00:01", Up: true, Primary: true}, {Name: "en2", HardwareAddr: "02:00:00:00:00:02", Up: true}, {Name: "en3"}}
-	d := Decision{RuleID: "r", Action: api.Route, Via: []api.InterfaceRef{{Name: "en3"}, {Name: "old", HardwareAddr: "02-00-00-00-00-02"}}}
+	d := Decision{RuleID: "r", Action: api.Route, Via: []api.InterfaceRef{{Name: "en3"}, {Name: "old", HardwareAddr: "02:00:00:00:00:02"}}}
 	if outcome, iface := d.Predict(interfaces); outcome != api.Fallback || iface != "en2" {
 		t.Fatal(outcome, iface)
 	}
@@ -114,5 +114,14 @@ func TestInterfaceFallback(t *testing.T) {
 	d.Action = api.Block
 	if outcome, iface := d.Predict(interfaces); outcome != api.Blocked || iface != "" {
 		t.Fatal(outcome, iface)
+	}
+	shared := []api.Interface{{Name: "bridge0", HardwareAddr: "02:00:00:00:00:01", Up: true}, {Name: "en0", HardwareAddr: "02:00:00:00:00:01", Up: true}}
+	d = Decision{RuleID: "shared", Action: api.Route, Via: []api.InterfaceRef{{Name: "en0", HardwareAddr: "02:00:00:00:00:01"}}}
+	if outcome, iface := d.Predict(shared); outcome != api.Routed || iface != "en0" {
+		t.Fatal("shared MAC chose a different port", outcome, iface)
+	}
+	d.Via[0].Name = "missing"
+	if outcome, _ := d.Predict(shared); outcome != api.Unreachable {
+		t.Fatal("ambiguous shared MAC was guessed", outcome)
 	}
 }

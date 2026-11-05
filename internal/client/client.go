@@ -5,6 +5,7 @@ package client
 import (
 	"context"
 	"net"
+	"net/http"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -34,6 +35,8 @@ type Client struct {
 	lookup     func(context.Context, string, string) ([]netip.Addr, error)
 	dialer     func(string, time.Duration, []string) (*net.Dialer, error)
 	probeURLs  [2]string
+	http       *http.Client
+	peerUID    uint32
 }
 
 var _ api.Service = (*Client)(nil)
@@ -50,8 +53,10 @@ func New(opts Options) (*Client, error) {
 	if opts.Version == "" {
 		opts.Version = "dev"
 	}
-	return &Client{opts: opts, configPath: filepath.Join(opts.ConfigDir, "config.json"), interfaces: netif.List, lookup: net.DefaultResolver.LookupNetIP, dialer: netif.Dialer,
-		probeURLs: [2]string{"https://api.ipify.org", "https://api6.ipify.org"}}, nil
+	c := &Client{opts: opts, configPath: filepath.Join(opts.ConfigDir, "config.json"), interfaces: netif.List, lookup: net.DefaultResolver.LookupNetIP, dialer: netif.Dialer,
+		probeURLs: [2]string{"https://api.ipify.org", "https://api6.ipify.org"}}
+	c.initIPC()
+	return c, nil
 }
 
 func (c *Client) Interfaces(ctx context.Context) ([]api.Interface, error) {
@@ -71,60 +76,4 @@ func (c *Client) Interfaces(ctx context.Context) ([]api.Interface, error) {
 		}
 	}
 	return interfaces, nil
-}
-
-func helperMissing() error { return &api.Error{Code: api.ErrHelperMissing} }
-
-// Helper-backed operations are wired in the IPC milestone. Missing-helper
-// errors are deliberate: the app must never mistake a local mock for routing.
-func (c *Client) Status(ctx context.Context) (api.Status, error) {
-	return api.Status{State: api.Stopped}, ctx.Err()
-}
-func (c *Client) InstallHelper(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return helperMissing()
-}
-func (c *Client) UninstallHelper(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return helperMissing()
-}
-func (c *Client) Start(ctx context.Context, sceneID string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return helperMissing()
-}
-func (c *Client) Stop(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return helperMissing()
-}
-func (c *Client) Subscribe(ctx context.Context) (<-chan api.Event, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	return nil, helperMissing()
-}
-func (c *Client) Connections(ctx context.Context, q api.ConnectionQuery) ([]api.Connection, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	return nil, helperMissing()
-}
-func (c *Client) ClearConnections(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return helperMissing()
-}
-func (c *Client) Traffic(ctx context.Context, q api.TrafficQuery) (api.Traffic, error) {
-	if err := ctx.Err(); err != nil {
-		return api.Traffic{}, err
-	}
-	return api.Traffic{}, helperMissing()
 }
