@@ -15,7 +15,7 @@ func (s *session) checkEcho(entry *checkCase, iface string) error {
 	}
 	actual, err := netip.ParseAddr(entry.TLS.PublicIP)
 	expected, expectedErr := netip.ParseAddr(entry.ExpectedIP)
-	if err != nil || expectedErr != nil || !actual.IsGlobalUnicast() || actual.IsPrivate() || actual.BitLen() != expected.BitLen() {
+	if err != nil || expectedErr != nil || !actual.IsGlobalUnicast() || actual.IsPrivate() || actual.Is4In6() || actual.Zone() != "" || actual.Is6() != s.ipv6() || actual.BitLen() != expected.BitLen() {
 		return errors.New("public-IP echo is missing, invalid, or from a different address family")
 	}
 	if actual == expected {

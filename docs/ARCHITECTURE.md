@@ -252,6 +252,17 @@ hot Reload cannot extend it or bypass the profile settings. Explicit Stop/crash
 cleanup still removes only journal-owned routes. This is test support verified
 with fake drivers, not evidence that full capture has passed on hardware.
 
+The separate `host-ipv6` acceptance profile freezes exactly one public IPv6
+`/128`, a literal bracketed TLS endpoint, and a lease of at most 60 seconds.
+It uses the same independent deadline and teardown as the full IPv4 test profile,
+but supplies only that host prefix to scoped capture planning: no `/1`, IPv4 or
+DNS capture routes are added. IPv6 and SafeStart must stay enabled. The native
+SafeStart socket targets that exact IPv6 literal and must appear in the tunnel;
+IPv4 fallback cannot satisfy it. Controller preflights and cases also force
+`tcp6`, require global IPv6 on each reviewed adapter, and match the exact IPv6
+tuple in the connection record. IPv4 policy is compared before and after; this
+alone is not an independent IPv4 connectivity test or full dual-stack acceptance.
+
 See [building and packaging](BUILDING.md) and the consolidated
 [authorized root-test procedure](ROOT-TEST.md).
 Scoped TCP acceptance does not establish full `/1` capture, IPv6, UDP/QUIC,

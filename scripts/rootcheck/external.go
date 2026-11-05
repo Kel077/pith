@@ -260,7 +260,7 @@ func routeDifference(a, b []capture.Route) []capture.Route {
 }
 
 func stableSnapshots(a, b snapshot) bool {
-	return a.BootSession == b.BootSession && reflect.DeepEqual(a.InterfaceIndices, b.InterfaceIndices) && sameRoutes(a.Routes, b.Routes) && sameInterfaces(a.Interfaces, b.Interfaces)
+	return a.BootSession == b.BootSession && reflect.DeepEqual(a.InterfaceIndices, b.InterfaceIndices) && sameRoutes(a.Routes, b.Routes) && sameInterfaces(a.Interfaces, b.Interfaces) && sameAddressNetworks(a, b)
 }
 
 func sameCleanupBaseline(a, b snapshot) bool {

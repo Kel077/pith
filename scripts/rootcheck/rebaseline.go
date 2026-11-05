@@ -357,7 +357,7 @@ func rebaselineWithOps(parent context.Context, s *session, c api.Service, label 
 		return errors.New("label must start with a lowercase letter and contain 1-40 lowercase letters, digits, hyphens, or underscores")
 	}
 	if !s.Installed || !s.cancellationRecorded() || s.Installation == nil {
-		return errors.New("rebaseline requires recorded cancellation or a managed skip, and the recorded scoped installation")
+		return errors.New("rebaseline requires recorded cancellation or a managed skip, and the recorded installation")
 	}
 	ctx, cancel := context.WithTimeout(parent, 40*time.Second)
 	defer cancel()
@@ -399,6 +399,9 @@ func rebaselineWithOps(parent context.Context, s *session, c api.Service, label 
 		iface := ref.Resolve(report.Before.Interfaces)
 		if iface == nil || !iface.Up {
 			return errors.New("a reviewed interface is missing or down; rebaseline cannot replace the reviewed adapters")
+		}
+		if s.ipv6() && !s.usableInterface(iface) {
+			return errors.New("a reviewed interface has no global IPv6 address; rebaseline cannot substitute IPv4")
 		}
 		resolved[i] = api.InterfaceRef{Name: iface.Name, HardwareAddr: iface.HardwareAddr, Label: iface.Label}
 	}
@@ -474,11 +477,12 @@ func rebaselineWithOps(parent context.Context, s *session, c api.Service, label 
 	return nil
 }
 
-// sameInterfaces compares topology for this IPv4-only harness. Interface has
+// sameInterfaces compares projected interface metadata. Interface has
 // no IPv6 prefix, lifetime, or temporary-address metadata, so it cannot classify
 // an address as stable or temporary. Preserve IPv6 availability and Router6,
 // but ignore individual IPv6 address values and counts. sameRoutes separately
 // remains strict, including any non-cache IPv6 host or prefix route changes.
+// Complete prefix inventories are also checked by sameAddressNetworks.
 func sameInterfaces(a, b []api.Interface) bool {
 	keys := func(ifaces []api.Interface) []string {
 		result := make([]string, 0, len(ifaces))

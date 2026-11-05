@@ -34,8 +34,7 @@ Do not use a production host whose existing connections must remain entirely
 untouched. Select a dedicated test destination. Do not select a LAN, loopback,
 link-local, private, multicast, or shared-address-space address. The default
 host-scoped mode deliberately refuses IPv6 and subnet capture. The separately
-reviewed full IPv4 installation is described below; IPv6 remains a subsequent
-extension.
+reviewed full IPv4 and IPv6 host installations are described below.
 
 Build both binaries into a private temporary directory, without changing the
 application's configuration or packaged resources:
@@ -172,8 +171,60 @@ other apps' new IPv4 traffic, which keeps system routing unless a test rule
 matches; reviewing only the test endpoint is therefore insufficient approval.
 DNS responses, tailnet controls, VPN self-restart, UDP/QUIC, app bundles and
 throughput require the additional evidence in [next acceptance](NEXT-ACCEPTANCE.md).
-The automated hotspot-renewal flag currently remains restricted to host-scoped
+The automated hotspot-renewal flag currently remains restricted to `host-ipv4`
 sessions. No full-mode hardware acceptance is claimed by these unit tests.
+
+## Separate IPv6 host installation
+
+IPv6 `/128` acceptance is another new installation and private session, selected
+explicitly by `--capture-mode host-ipv6`. Both reviewed adapters must be up and
+have a global, non-private IPv6 address. A missing IPv6 path is a prerequisite
+failure, never permission to use IPv4. Choose one public IPv6 test endpoint that
+supports the same certificate-verified HTTP/1.1 request as the IPv4 endpoint:
+
+```sh
+PITH_TLS6_TARGET='<reviewed [IPv6]:port>'
+PITH_TLS6_NAME='<reviewed TLS certificate DNS name>'
+"$PITH_TEST_BIN/rootcheck" prepare --helper "$PITH_TEST_BIN/pithd" --version acceptance --interface-a "$PITH_IF_A" --interface-b "$PITH_IF_B" --target "$PITH_TLS6_TARGET" --server-name "$PITH_TLS6_NAME" --capture-mode host-ipv6 --test-lease 60s
+```
+
+Preparation performs exactly three IPv6 TLS requests to that frozen literal:
+ordinary system routing, bound A, and bound B. It first normalizes the literal's
+spelling to match connection logs. The helper receives the distinct
+`host-ipv6` profile and a lease of at most 60 seconds (the harness accepts 30 to
+60 seconds). No additional DNS target, LAN-DNS capture, IPv4 capture or IPv6 `/1`
+is permitted. Mapped IPv4 addresses, scoped literals, private/link-local addresses
+and domain-name endpoints are rejected. The tunnel still has its own selected
+local addresses; closing it removes those along with the single owned `/128`.
+
+The exact install/cancellation prompt is:
+`Pith needs your password to install its IPv6 host test helper (at most 60 seconds per capture).`
+Use the same separately reviewed cancel/install/check/stop/uninstall sequence and
+ownership-checked emergency command as above. Dialog counts are one cancellation
+and two password authorizations, plus one only for an approved crash; managed
+authorization remains a separate explicit choice. The helper starts idle and
+the controller leaves ten seconds of margin before the helper deadline.
+
+SafeStart is mandatory and proves the exact IPv6 socket crossed the tunnel.
+Every preflight and ordinary test request uses `tcp6`, with no name resolution
+or IPv4 connection fallback. Smoke verifies system and A; after smoke, the TCP
+batch includes B, domain rules, block, missing-interface fallback, strict failure,
+and new versus established connections across hot reload. Every positive case
+must have the exact IPv6 destination, process, rule, outcome, actual interface
+and bidirectional bytes in the connection log. Public echoes use the same
+family-checked drift policy; an IPv4 echo cannot satisfy an IPv6 preflight.
+
+The short outer deadline may end a slow batch; retain that failure rather than
+extending the lease or claiming all cases passed. Run observation only with a
+duration that fits its remaining budget. Hotspot renewal remains unavailable in
+this profile. Stop or SafeStart failure must restore the complete IPv4/IPv6 route
+and tunnel baseline. Rebaseline cannot change the frozen IPv6 host or family.
+Privacy addresses within one IPv6 prefix may rotate; a changed assigned prefix
+during preflight must be reviewed rather than silently accepted as stable.
+
+This establishes IPv6 host-capture support, not IPv6 `/1`, UDP/QUIC, or full
+dual-stack acceptance. IPv4 policy equality is recorded, but an independent IPv4
+connectivity control requires its own reviewed endpoint and observation.
 
 ## Ordered execution
 
@@ -519,16 +570,18 @@ Do not edit JSON or rerun prepare/cancel/install between modes. All approved
 phases share the original frozen targets and the same installation; remove it
 once at the end of this attended window.
 
-For this IPv4-only harness, interface comparison normalizes interface and IPv4
-address ordering. It preserves interface identity, kind, up/down state, IPv4
+Interface comparison normalizes interface and IPv4 address ordering. It
+preserves interface identity, kind, up/down state, IPv4
 address values, both routers, DNS values and priority order, and primary status.
 `api.Interface` exposes neither IPv6 prefix lengths nor address lifetimes or
 temporary flags, so the harness does not guess which address is temporary.
 It compares whether global IPv6 addresses are available, while tolerating changes
 to their individual values or count; full addresses remain in the private
-snapshots. This does not establish IPv6 address stability or replace a future
-reviewed `/128` acceptance plan. Route comparison stays strict: if IPv6 address
-rotation also changes a non-cache local `/128` or another semantic route, the
+snapshots. Separate complete prefix inventories permit privacy-address rotation
+within one prefix, but reject a changed assigned IPv6 prefix during preflight
+and classify it as external evidence during cleanup. These checks apply to all
+capture modes; they do not prove IPv6 connectivity. Route comparison stays
+strict: if IPv6 address rotation also changes a non-cache local `/128` or another semantic route, the
 command conservatively refuses the new baseline. Thus this normalization does
 not eliminate every possible IPv6 churn failure or weaken route ownership checks.
 
@@ -551,7 +604,9 @@ child at most 30 seconds, verifies its actual spawned PID and reported target,
 keeps it alive while checking attribution, then closes its input and waits for
 exit on success or failure. The copied executable is removed after use.
 
-The whole check retains the three-minute limit and unconditional Stop cleanup.
+The whole check retains its mode's deadline and unconditional Stop cleanup
+(three minutes for `host-ipv4`, ten seconds less than the helper lease for the
+explicit test profiles).
 No normal application config is used, no target or capture scope is added,
 and no Tailscale setting is changed. It proves command-line tool identity;
 bundle/helper/delegated-process attribution remains a separate manual case.
@@ -566,8 +621,8 @@ the bounded manual control requests described above.
 | Stop and optional deliberate helper crash in either mode | Normal Stop adds no dialog. A crash test is optional and uses exactly the separate crash authorization command and prompt documented above; it must be explicitly included in that mode's approval. | Pith's capture routes and utun disappear, the pre-existing Tailscale tunnel and route ownership remain intact, and the selected tailnet service, MagicDNS lookup, and public-route behavior still match that mode's baseline. A launchd restart of Pith must be idle. An observation failure caused by the intentional crash is expected; record the crash assertions separately rather than calling the normal smoke check a pass. | Use the reviewed Pith-only emergency command if necessary, then uninstall. Do not restart, kill, or reconfigure Tailscale to hide a cleanup failure. |
 
 Every `--app-bypass` request connects directly to the **already reviewed
-captured IPv4 host**, while preserving the TLS server name. It does not edit
-`/etc/hosts`, change DNS, follow redirects, or add another destination. The
+captured literal host**, while preserving the TLS server name and address
+family. It does not edit `/etc/hosts`, change DNS, follow redirects, or add another destination. The
 temporary app-specific IP rule is tested first with the parent and then its
 unmatched child; the corresponding domain rule is hot-applied and tested with
 both identities. The final rule set contains the domain route followed by a

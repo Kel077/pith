@@ -37,8 +37,8 @@ func run() error {
 	socket := flag.String("socket", helper.SocketPath, "authenticated Unix socket path")
 	probe := flag.String("safe-target", "", "SafeStart TLS host:port, resolved before capture")
 	serverName := flag.String("safe-server-name", "", "TLS server name when safe-target is an IP address")
-	testMode := flag.String("test-profile", "", "explicit acceptance installation: full-ipv4")
-	testLease := flag.Duration("test-lease", 0, "test-profile lease from 1s through 120s; never extended by reload")
+	testMode := flag.String("test-profile", "", "explicit acceptance installation: full-ipv4 or host-ipv6")
+	testLease := flag.Duration("test-lease", 0, "test-profile lease: at most 120s for full-ipv4, 60s for host-ipv6; never extended by reload")
 	var testDNS []netip.Addr
 	flag.Func("test-dns-host", "reviewed test-profile LAN DNS capture host (repeatable)", func(raw string) error {
 		addr, err := netip.ParseAddr(raw)

@@ -11,7 +11,10 @@ import (
 	"github.com/Kel077/pith/internal/api"
 )
 
-const FullIPv4 = "full-ipv4"
+const (
+	FullIPv4 = "full-ipv4"
+	HostIPv6 = "host-ipv6"
+)
 
 type Profile struct {
 	Mode       string        `json:"mode"`
@@ -22,12 +25,19 @@ type Profile struct {
 }
 
 func (p Profile) Validate() error {
-	if p.Mode != FullIPv4 || p.Lease < time.Second || p.Lease > 120*time.Second {
-		return errors.New("full-ipv4 test profile requires a lease from 1s through 120s")
+	if p.Mode != FullIPv4 && p.Mode != HostIPv6 {
+		return errors.New("test profile must be full-ipv4 or host-ipv6")
+	}
+	maximum := 120 * time.Second
+	if p.Mode == HostIPv6 {
+		maximum = 60 * time.Second
+	}
+	if p.Lease < time.Second || p.Lease > maximum {
+		return errors.New("test profile lease exceeds its mode's limits (full-ipv4: 120s, host-ipv6: 60s)")
 	}
 	target, err := netip.ParseAddrPort(p.Target)
-	if err != nil || target.Port() == 0 || !target.Addr().Is4() || !target.Addr().IsGlobalUnicast() || target.Addr().IsPrivate() || netip.MustParsePrefix("100.64.0.0/10").Contains(target.Addr()) {
-		return errors.New("full-ipv4 test profile requires a literal public IPv4 TLS endpoint")
+	if err != nil || target.String() != p.Target || target.Port() == 0 || target.Addr().Is4In6() || target.Addr().Zone() != "" || !target.Addr().IsGlobalUnicast() || target.Addr().IsPrivate() || netip.MustParsePrefix("100.64.0.0/10").Contains(target.Addr()) || target.Addr().Is6() != (p.Mode == HostIPv6) {
+		return errors.New("test profile requires a canonical literal public TLS endpoint in its selected address family")
 	}
 	name, err := api.ParseTarget(p.ServerName)
 	if err != nil || !name.IsDomain() || name.Subdomains || name.String() != p.ServerName {
@@ -35,6 +45,9 @@ func (p Profile) Validate() error {
 	}
 	if len(p.DNSHosts) > 16 {
 		return errors.New("test profile allows at most sixteen reviewed LAN DNS hosts")
+	}
+	if p.Mode == HostIPv6 && len(p.DNSHosts) != 0 {
+		return errors.New("host-ipv6 cannot add DNS capture routes")
 	}
 	for i, addr := range p.DNSHosts {
 		if !addr.Is4() || !addr.IsGlobalUnicast() || netip.MustParsePrefix("100.64.0.0/10").Contains(addr) || slices.Contains(p.DNSHosts[:i], addr) {
@@ -45,6 +58,13 @@ func (p Profile) Validate() error {
 }
 
 func (p Profile) Prefixes() []netip.Prefix {
+	if p.Mode == HostIPv6 {
+		target, err := netip.ParseAddrPort(p.Target)
+		if err != nil {
+			return nil
+		}
+		return []netip.Prefix{netip.PrefixFrom(target.Addr(), 128)}
+	}
 	result := []netip.Prefix{netip.MustParsePrefix("0.0.0.0/1"), netip.MustParsePrefix("128.0.0.0/1")}
 	for _, addr := range p.DNSHosts {
 		result = append(result, netip.PrefixFrom(addr, 32))
@@ -64,8 +84,8 @@ func (p Profile) Arguments() ([]string, error) {
 }
 
 func (p Profile) ValidateSettings(settings api.Settings) error {
-	if settings.IPv6 || !settings.SafeStart {
-		return &api.Error{Code: api.ErrInvalidConfig, Detail: "full-ipv4 test helper requires IPv6 disabled and SafeStart enabled"}
+	if settings.IPv6 != (p.Mode == HostIPv6) || !settings.SafeStart {
+		return &api.Error{Code: api.ErrInvalidConfig, Detail: "test helper requires SafeStart and the capture profile's fixed IP family"}
 	}
 	return nil
 }

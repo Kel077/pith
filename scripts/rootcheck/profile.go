@@ -6,7 +6,9 @@ import (
 	"slices"
 	"time"
 
+	"github.com/Kel077/pith/internal/api"
 	"github.com/Kel077/pith/internal/engine/capture"
+	"github.com/Kel077/pith/internal/testprofile"
 )
 
 func (s *session) captureMode() string {
@@ -14,6 +16,32 @@ func (s *session) captureMode() string {
 		return "host-ipv4"
 	}
 	return s.TestProfile.Mode
+}
+
+func (s *session) ipv6() bool {
+	return s.TestProfile != nil && s.TestProfile.Mode == testprofile.HostIPv6
+}
+
+func (s *session) tcpNetwork() string {
+	if s.ipv6() {
+		return "tcp6"
+	}
+	return "tcp4"
+}
+
+func (s *session) usableInterface(iface *api.Interface) bool {
+	if iface == nil || !iface.Up {
+		return false
+	}
+	if !s.ipv6() {
+		return len(iface.IPv4) > 0
+	}
+	for _, raw := range iface.IPv6 {
+		if addr, err := netip.ParseAddr(raw); err == nil && addr.Is6() && !addr.Is4In6() && addr.Zone() == "" && addr.IsGlobalUnicast() && !addr.IsPrivate() {
+			return true
+		}
+	}
+	return false
 }
 
 func snapshotDNS(before snapshot) []netip.Addr {
@@ -50,8 +78,8 @@ func (s *session) validateSnapshotScope(before snapshot) error {
 	if err != nil {
 		return err
 	}
-	if s.TestProfile == nil {
-		_, err := capture.Build(before.Routes, nil, false, scopes)
+	if s.TestProfile == nil || s.ipv6() {
+		_, err := capture.Build(before.Routes, nil, s.ipv6(), scopes)
 		return err
 	}
 	plan, err := capture.Build(before.Routes, snapshotDNS(before), false, nil)

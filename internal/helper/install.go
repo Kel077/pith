@@ -95,7 +95,10 @@ func PlanTestInstall(source string, uid uint32, profile testprofile.Profile) (In
 		return InstallPlan{}, err
 	}
 	plan.Prompt = "Pith needs your password to install its full IPv4 test helper (at most 120 seconds per capture)."
-	plan.Undo += " Full IPv4 test capture has a helper-enforced " + profile.Lease.String() + " lease; Stop removes both /1 routes and only the reviewed DNS host routes."
+	plan.Undo += " Test capture has a helper-enforced " + profile.Lease.String() + " lease; Stop removes only the profile's owned capture routes and utun."
+	if profile.Mode == testprofile.HostIPv6 {
+		plan.Prompt = "Pith needs your password to install its IPv6 host test helper (at most 60 seconds per capture)."
+	}
 	return plan, nil
 }
 

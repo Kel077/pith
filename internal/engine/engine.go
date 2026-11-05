@@ -66,6 +66,9 @@ func New(opts Options) (*Engine, error) {
 			return nil, errors.New("test profile cannot mix with scoped capture or a different SafeStart endpoint")
 		}
 		opts.TestProfile = &profile
+		if profile.Mode == testprofile.HostIPv6 {
+			opts.Scopes = profile.Prefixes()
+		}
 	}
 	if !filepath.IsAbs(opts.DataDir) {
 		return nil, fmt.Errorf("engine data directory must be absolute")

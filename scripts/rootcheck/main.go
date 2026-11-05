@@ -25,6 +25,7 @@ const usage = `rootcheck prepares a private, bounded acceptance session.
             --target IP:PORT --server-name TLS_NAME [--version dev]
             [--dns-target IP:53]
             [--capture-mode full-ipv4 --test-lease 120s]
+            [--capture-mode host-ipv6 --test-lease 60s]
   cancel    --session DIRECTORY [--auth keychain:SERVICE]
   install   --session DIRECTORY [--auth keychain:SERVICE]
   check     --session DIRECTORY [--batch | --safe-failure | --preserve | --app-bypass | --observe 90s]
@@ -43,6 +44,8 @@ request administrator authorization. check uses the reviewed installation mode
 (host-ipv4 by default), always stops on return, and never installs the helper.
 full-ipv4 is a distinct installation: both /1 routes plus frozen LAN DNS hosts,
 IPv6 disabled, mandatory SafeStart, and a helper-enforced lease at most 120s.
+host-ipv6 is another distinct installation: one public IPv6 /128, mandatory
+IPv6 SafeStart and tcp6 requests, with a helper-enforced lease at most 60s.
 Explicit --auth keychain:SERVICE uses a delegated password via stdin for that
 invocation only. It skips the manual cancel case and reports it as skipped.
 check --crash requires prior smoke, kills only the reviewed running helper, and

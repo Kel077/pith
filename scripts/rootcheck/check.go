@@ -97,7 +97,7 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		return errors.New("--renew-hotspot requires an explicit --observe duration")
 	}
 	if opts.renewHotspot && s.TestProfile != nil {
-		return errors.New("hotspot renewal is currently accepted only in the host-scoped harness")
+		return errors.New("hotspot renewal is currently accepted only in the host-ipv4 harness")
 	}
 	if choices != 0 && !s.SmokePassed {
 		return errors.New("run the default smoke check successfully before additional checks")
@@ -153,6 +153,9 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		if iface := ref.Resolve(report.Before.Interfaces); iface == nil || !iface.Up {
 			return errors.New("a reviewed interface is missing or down")
 		}
+		if s.ipv6() && !s.usableInterface(ref.Resolve(report.Before.Interfaces)) {
+			return errors.New("a reviewed interface has no global IPv6 address; IPv4 cannot satisfy this check")
+		}
 	}
 	if choices == 0 {
 		s.SmokePassed = false
@@ -196,7 +199,7 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 	}()
 	settings := api.DefaultSettings()
 	settings.KeepRouting, settings.ResumeOnLaunch, settings.OpenAtLogin = false, false, false
-	settings.IPv6, settings.SafeStart, settings.SniffDomains, settings.LogDays = false, true, true, 1
+	settings.IPv6, settings.SafeStart, settings.SniffDomains, settings.LogDays = s.ipv6(), true, true, 1
 	cfg := api.Config{Version: api.ConfigVersion, Selected: "rootcheck", Scenes: []api.Scene{{ID: "rootcheck", Name: "Acceptance: " + s.captureMode()}}, Settings: settings}
 	address, _ := netip.ParseAddrPort(s.Target)
 	block := api.Rule{ID: "block", Enabled: true, Targets: []string{address.Addr().String()}, Protocol: api.TCP, Action: api.Block}
@@ -487,7 +490,7 @@ func connectTLS(ctx context.Context, s *session, iface string) (*tls.Conn, error
 	if err != nil {
 		return nil, err
 	}
-	conn, err := dialer.DialContext(probeCtx, "tcp4", s.Target)
+	conn, err := dialer.DialContext(probeCtx, s.tcpNetwork(), s.Target)
 	if err != nil {
 		return nil, err
 	}
@@ -537,6 +540,9 @@ func exchangeTLS(ctx context.Context, s *session, iface string, conn *tls.Conn) 
 		return result, fmt.Errorf("test endpoint returned HTTP %d; choose a working HTTP/1.1 endpoint", res.StatusCode)
 	}
 	if addr, err := netip.ParseAddr(strings.TrimSpace(string(body))); err == nil && addr.IsGlobalUnicast() && !addr.IsPrivate() {
+		if addr.Is4In6() || addr.Zone() != "" || addr.Is6() != s.ipv6() {
+			return result, errors.New("public-IP echo differs from the frozen endpoint's address family")
+		}
 		result.PublicIP = addr.String()
 	}
 	return result, nil

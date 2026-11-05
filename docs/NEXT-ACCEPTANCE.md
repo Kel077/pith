@@ -4,10 +4,13 @@ This document plans future attended tests. It authorizes no administrator
 operation, network change, benchmark, VPN restart, or application launch. The
 current `rootcheck` defaults to frozen public IPv4 host captures. It also has a
 separate `prepare --capture-mode full-ipv4 --test-lease 120s` installation with
-an engine-enforced deadline and frozen LAN-DNS routes. Both have synthetic
-coverage; this document does not claim hardware acceptance. Its external-change
-flag cannot widen either installation. IPv6, UDP/QUIC, app-bundle fixtures and
-throughput still need their described harness extensions before approval.
+an engine-enforced deadline and frozen LAN-DNS routes. A separate
+`prepare --capture-mode host-ipv6 --test-lease 60s` freezes one public IPv6
+`/128`, requires global IPv6 on both adapters, and uses IPv6-only preflights and
+SafeStart. All modes have synthetic coverage; this document does not claim
+hardware acceptance. Its external-change flag cannot widen an installation.
+UDP/QUIC, app-bundle fixtures and throughput still need their described harness
+extensions before approval.
 
 ## Review and boundaries
 
@@ -34,10 +37,11 @@ do not reuse a host-scoped installation for full capture.
 
 Every privileged test needs a helper-enforced deadline, independent Stop cleanup,
 and a copied Pith-only emergency undo command that works without IPC or network.
-The existing five-minute lease applies to scoped capture only. **Do not remove
-`--capture` to start an unbounded full-capture helper.** Use the distinct
-`full-ipv4` profile, whose maximum lease is 120 seconds. Leave no helper, fixture,
-server, child process, socket, watcher, or benchmark running afterward.
+The existing five-minute lease applies to legacy `host-ipv4` capture only.
+**Do not remove `--capture` to start an unbounded full-capture helper.** Use the distinct
+`full-ipv4` profile, whose maximum lease is 120 seconds; `host-ipv6` is limited to
+60 seconds. Leave no helper, fixture, server, child process, socket, watcher,
+or benchmark running afterward.
 
 ## Stages
 
@@ -46,7 +50,7 @@ existing smoke, rule batch, preservation, app/tool attribution and SafeStart
 failure cases. Its observation window checks uninterrupted capture identity,
 but does not implement the manual DNS, VPN-control or mixed-protocol assertions
 below. Passing that TCP subset is not a pass for the entire full-capture stage.
-The dedicated hotspot renewal flag remains host-scoped pending review of its
+The dedicated hotspot renewal flag remains `host-ipv4` only pending review of its
 full-capture/device timing. New modes are implemented separately and reviewed
 before use; their implementation order does not change the attended test order.
 
@@ -56,7 +60,7 @@ to obtain a pass. Preserve failures and independent cleanup evidence separately.
 
 | Stage | Scope and execution budget | Required observations | Pass and cleanup |
 | --- | --- | --- | --- |
-| IPv6 first | One explicitly selected global IPv6 `/128`, at most 60 seconds of capture; one system and one bound TLS request per adapter with an 8-second deadline. Use a reviewed dual-stack SafeStart design that proves the intended IPv6 flow crossed capture. | Before capture, verify both the ordinary and selected adapter paths can actually reach the endpoint. During capture, verify process, IPv6 destination, rule/outcome, actual interface and bytes. Test block, a missing-interface fallback, and a new connection after hot reload. | A verified remote response and exact captured tuple are required; a working IPv4 fallback cannot count as IPv6 success. No public IPv6 on an adapter is a prerequisite failure/inconclusive case. Stop removes only the `/128` and owned tunnel; IPv4 routing and existing VPN routes stay unchanged. |
+| IPv6 first | Use `host-ipv6`: one explicitly selected global IPv6 `/128`, at most 60 seconds of capture; one system and one bound TLS request per adapter with an 8-second deadline. Its mandatory SafeStart proves the exact native IPv6 socket crossed capture. | Before capture, verify both the ordinary and selected adapter paths can actually reach the endpoint. During capture, verify process, IPv6 destination, rule/outcome, actual interface and bytes. Test block, a missing-interface fallback, and a new connection after hot reload. | A verified remote response and exact captured tuple are required; a working IPv4 fallback cannot count as IPv6 success. No public IPv6 on an adapter is a prerequisite failure/inconclusive case. Stop removes only the `/128` and owned tunnel; IPv4 routing and existing VPN routes stay unchanged. Any dual-stack connectivity claim also needs a separately reviewed IPv4 control endpoint and observation. |
 | UDP and DNS | Reviewed public host routes only, one controlled UDP exchange first, then at most 10 datagrams per case; 2-second response deadlines. Include a separately approved DNS host only if required. | Match replies to nonces, check source/destination tuples, route selection, logs and counters. Exercise DNS query/answer matching and TTL/domain-cache behavior with controlled names. Observe reuse before and replacement after the 10-second DNS idle timeout; ordinary UDP idle expiry may use one bounded 130-second stage. | Verify real replies through A/B, block/drop without fabricated success, and source-port stability. Test connected pre-existing UDP and an unconnected UDP listener separately; the latter is a known limitation, not covered by a TCP pass. Silent-peer timeout does not prove automatic interface failover. |
 | QUIC | One reviewed QUIC endpoint on frozen host routes; one handshake/request before at most 3 sequential cases, each with a 10-second deadline. | Require a server-confirmed QUIC exchange, UDP flow attribution, expected interface, rule and bytes. Compare an ordinary Initial carrying recoverable SNI with a fixture whose name cannot be sniffed. Verify IP rules in both cases. | Domain routing requires actual observed SNI or a valid DNS mapping; encrypted/ECH or unsupported fragmented Initials must not be described as successful sniffing. No TLS interception or logging application plaintext. Stop and verify routes/tunnel. |
 | App bundle and helpers | One test bundle with a main executable, a nested helper/XPC service, and a separate control executable; each makes one bounded request to the frozen host. Then a separately reviewed WebKit and background URL-session fixture. | Correlate spawned PID, executable, outer bundle path/identifier, socket-owner PID and effective/delegated app with connection records. Apply one parent-app rule through A, then a block; repeat a control request outside the bundle. Ensure no preexisting pooled socket is mistaken for a new flow. | Main and nested helpers match the parent automatically. WebKit/URL-session traffic is attributed to the requesting app only when the kernel delegation evidence supports it. The control remains unmatched. End/wait for every fixture process and remove only the temporary fixtures. |

@@ -87,21 +87,40 @@ func prepare(ctx context.Context, args []string) error {
 	fs.StringVar(&s.Version, "version", "dev", "expected helper build version")
 	fs.StringVar(&names[0], "interface-a", "", "first interface BSD name, chosen by the user")
 	fs.StringVar(&names[1], "interface-b", "", "second interface BSD name, chosen by the user")
-	fs.StringVar(&s.Target, "target", "", "public TLS test IPv4:port, chosen by the user")
+	fs.StringVar(&s.Target, "target", "", "public literal TLS IP:port in the selected capture mode")
 	fs.StringVar(&s.ServerName, "server-name", "", "DNS name on the test endpoint's TLS certificate")
 	fs.StringVar(&s.DNSTarget, "dns-target", "", "optional public DNS test IPv4:53, for manual checks")
-	mode := fs.String("capture-mode", "host-ipv4", "reviewed installation mode: host-ipv4 or full-ipv4")
-	lease := fs.Duration("test-lease", 120*time.Second, "full-ipv4 helper lease, from 30s through 120s")
+	mode := fs.String("capture-mode", "host-ipv4", "reviewed installation mode: host-ipv4, full-ipv4 or host-ipv6")
+	lease := fs.Duration("test-lease", 0, "profile lease: default/max 120s for full-ipv4, 60s for host-ipv6; minimum 30s")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 || !filepath.IsAbs(s.Helper) || names[0] == "" || names[0] == names[1] || names[1] == "" || s.Version == "" {
 		return errors.New("supply an absolute helper path, two distinct interface names, a target, a TLS name, and the helper version")
 	}
-	if *mode == testprofile.FullIPv4 {
+	// Connection logs use netip's canonical address and port spelling. Freeze
+	// that spelling so equivalent IPv6 inputs cannot fail exact flow matching.
+	if target, err := netip.ParseAddrPort(s.Target); err == nil {
+		s.Target = target.String()
+	}
+	leaseSpecified := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "test-lease" {
+			leaseSpecified = true
+		}
+	})
+	if *mode == testprofile.FullIPv4 || *mode == testprofile.HostIPv6 {
+		if !leaseSpecified {
+			*lease = 120 * time.Second
+			if *mode == testprofile.HostIPv6 {
+				*lease = 60 * time.Second
+			}
+		}
 		s.TestProfile = &testprofile.Profile{Mode: *mode, Lease: *lease, Target: s.Target, ServerName: s.ServerName}
 	} else if *mode != "host-ipv4" {
-		return errors.New("capture-mode must be host-ipv4 or full-ipv4")
+		return errors.New("capture-mode must be host-ipv4, full-ipv4 or host-ipv6")
+	} else if leaseSpecified {
+		return errors.New("test-lease requires an explicit full-ipv4 or host-ipv6 installation")
 	}
 	if _, err := s.scopes(); err != nil {
 		return err
@@ -117,8 +136,8 @@ func prepare(ctx context.Context, args []string) error {
 	}
 	for i, name := range names {
 		iface := (api.InterfaceRef{Name: name}).Resolve(before.Interfaces)
-		if iface == nil || !iface.Up || len(iface.IPv4) == 0 {
-			return fmt.Errorf("interface %q is absent, down, or has no IPv4 address", name)
+		if !s.usableInterface(iface) {
+			return fmt.Errorf("interface %q is absent, down, or has no usable address for %s", name, s.captureMode())
 		}
 		s.Interfaces[i] = api.InterfaceRef{Name: iface.Name, HardwareAddr: iface.HardwareAddr, Label: iface.Label}
 	}
@@ -132,7 +151,9 @@ func prepare(ctx context.Context, args []string) error {
 	// Ordinary, interface-bound sockets are a preflight only. The check command
 	// uses unbound app sockets, which must actually pass through the new utun.
 	for _, iface := range []string{"", names[0], names[1]} {
-		evidence, err := exchangeTLS(ctx, s, iface, nil)
+		probeCtx, probeCancel := context.WithTimeout(ctx, 8*time.Second)
+		evidence, err := exchangeTLS(probeCtx, s, iface, nil)
+		probeCancel()
 		if err != nil {
 			return fmt.Errorf("unprivileged TLS preflight through %q: %w", iface, err)
 		}
@@ -145,7 +166,10 @@ func prepare(ctx context.Context, args []string) error {
 	if err := s.Original.requireAbsent(); err != nil {
 		return err
 	}
-	if s.TestProfile != nil {
+	if !stableSnapshots(before, s.Original) {
+		return errors.New("routes or interfaces changed during preparation preflight; review the change before preparing again")
+	}
+	if s.TestProfile != nil && s.TestProfile.Mode == testprofile.FullIPv4 {
 		if err := s.freezeFullScope(s.Original); err != nil {
 			return err
 		}
@@ -209,22 +233,22 @@ func prepare(ctx context.Context, args []string) error {
 }
 
 func (s *session) scopes() ([]netip.Prefix, error) {
-	target, err := testAddress(s.Target)
-	if err != nil {
-		return nil, err
-	}
 	parsed, err := api.ParseTarget(s.ServerName)
 	if err != nil || !parsed.IsDomain() || parsed.Subdomains || parsed.String() != s.ServerName {
 		return nil, errors.New("server-name must be a plain, lowercase ASCII DNS name")
 	}
 	if s.TestProfile != nil {
 		if s.DNSTarget != "" || s.TestProfile.Target != s.Target || s.TestProfile.ServerName != s.ServerName || s.TestProfile.Lease < 30*time.Second {
-			return nil, errors.New("full-ipv4 session needs the same frozen TLS endpoint, no dns-target, and a lease from 30s through 120s")
+			return nil, errors.New("profile session needs the same frozen TLS endpoint, no dns-target, and a lease of at least 30s within its mode's maximum")
 		}
 		if err := s.TestProfile.Validate(); err != nil {
 			return nil, err
 		}
 		return s.TestProfile.Prefixes(), nil
+	}
+	target, err := testAddress(s.Target)
+	if err != nil {
+		return nil, err
 	}
 	prefixes := []netip.Prefix{netip.PrefixFrom(target.Addr(), 32)}
 	if s.DNSTarget != "" {
