@@ -108,6 +108,7 @@ func PlanUninstall() InstallPlan {
 		"for path in " + shellQuote(BinaryPath) + " " + shellQuote(PlistPath) + " " + shellQuote(DataDir) + "; do [ ! -L \"$path\" ] || { echo 'refusing symlink installation path' >&2; exit 1; }; done\n" +
 		"if /bin/launchctl print \"$service\" >/dev/null 2>&1; then /bin/launchctl bootout \"$service\"; fi\n" +
 		waitForSocket() +
+		"if [ -f " + shellQuote(DataDir+"/capture.json") + " ]; then " + shellQuote(BinaryPath) + " --cleanup; fi\n" +
 		"/bin/rm -f " + shellQuote(BinaryPath) + " " + shellQuote(PlistPath) + "\n" +
 		"if [ -S " + shellQuote(SocketPath) + " ]; then /bin/rm -f " + shellQuote(SocketPath) + "; fi\n" +
 		"/bin/rm -rf " + shellQuote(DataDir) + "\n"

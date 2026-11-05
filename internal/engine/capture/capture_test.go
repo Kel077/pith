@@ -75,6 +75,37 @@ func TestRouteConflictsAndVPNDefault(t *testing.T) {
 	}
 }
 
+func TestEmergencyRecoveryRefusesLiveOwnerAndPreservesReusedName(t *testing.T) {
+	driver := &fakeDriver{routes: baseRoutes()}
+	path := filepath.Join(t.TempDir(), "capture.json")
+	c, err := Prepare(context.Background(), Options{StatePath: path, Driver: driver, Scopes: []netip.Prefix{prefix("198.51.100.10/32")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err := c.Activate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := cleanupStale(context.Background(), path, driver, func(int) bool { return true }); err == nil {
+		t.Fatal("removed a live owner's routes")
+	}
+	// Simulate a route still referring to the dead owner's index, plus a route
+	// using the same BSD name with a new index that must remain untouched.
+	driver.routes = append(driver.routes, Route{Prefix: prefix("203.0.113.1/32"), Interface: "utun42", Index: 99})
+	if err := cleanupStale(context.Background(), path, driver, func(int) bool { return false }); err != nil {
+		t.Fatal(err)
+	}
+	if ownsRoutes(c.state, driver.routes) {
+		t.Fatal("left journaled route")
+	}
+	if !slices.ContainsFunc(driver.routes, func(r Route) bool { return r.Index == 99 }) {
+		t.Fatal("changed reused interface")
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+}
+
 type fakeDriver struct {
 	routes                    []Route
 	device                    *fakeDevice

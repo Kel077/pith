@@ -262,6 +262,61 @@ func Recover(path string, driver Driver) error {
 	return os.Remove(path)
 }
 
+// CleanupStale is for explicit emergency recovery after launchd bootout. It
+// refuses to touch a live owner and deletes only journaled routes with the same
+// utun name AND index. Normal startup uses the more conservative Recover.
+func CleanupStale(ctx context.Context, path string, driver Driver) error {
+	return cleanupStale(ctx, path, driver, func(pid int) bool {
+		err := syscall.Kill(pid, 0)
+		return !errors.Is(err, syscall.ESRCH)
+	})
+}
+
+func cleanupStale(ctx context.Context, path string, driver Driver, alive func(int) bool) error {
+	state, err := readState(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if alive(state.PID) {
+		return fmt.Errorf("capture owner %d is still running; stop it before recovery", state.PID)
+	}
+	if driver == nil {
+		driver = nativeDriver{}
+	}
+	routes, err := driver.Snapshot()
+	if err != nil {
+		return err
+	}
+	for i := len(state.Plan.Prefixes) - 1; i >= 0; i-- {
+		prefix := state.Plan.Prefixes[i]
+		if slices.ContainsFunc(routes, func(r Route) bool {
+			return !r.Scoped && r.Interface == state.Interface && r.Index == state.Index && r.Prefix == prefix
+		}) {
+			if err := driver.Delete(ctx, prefix, state.Interface); err != nil {
+				return err
+			}
+		}
+	}
+	routes, err = driver.Snapshot()
+	if err != nil {
+		return err
+	}
+	if ownsRoutes(state, routes) {
+		return errors.New("journaled capture routes remain after recovery")
+	}
+	current, err := readState(path)
+	if err != nil {
+		return err
+	}
+	if current.Token != state.Token {
+		return errors.New("capture owner changed during recovery")
+	}
+	return os.Remove(path)
+}
+
 func readState(path string) (journal, error) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
@@ -283,7 +338,7 @@ func readState(path string) (journal, error) {
 	if err := d.Decode(&state); err != nil {
 		return journal{}, err
 	}
-	if state.Version != 1 || state.Token == "" || !validName(state.Interface) || state.Index <= 0 {
+	if state.Version != 1 || state.Token == "" || !validName(state.Interface) || state.Index <= 0 || state.PID <= 0 {
 		return journal{}, fmt.Errorf("invalid capture journal")
 	}
 	for _, prefix := range state.Plan.Prefixes {
