@@ -167,6 +167,17 @@ TCP rule sends RST. UDP has no handshake: route/socket errors can fail over, but
 a silent peer expires its session. DNS sessions idle for ten seconds; other UDP
 sessions for two minutes. The bridge limits active flows and pending handshakes.
 
+An ICMP port-unreachable is a per-datagram error, not a UDP close. Consuming it
+does not expire the session or refresh idle. The application endpoint and native
+outbound socket keep the original rule, attribution and binding, including final
+QUIC datagrams queued before the client closes. A write affected by that error
+may drop its datagram; the relay never retries it or switches interfaces. Other
+terminal transport errors still end the session and are retained separately from
+the paired relay's resulting close error. This avoids hiding the actual failure
+when the other direction reports EOF or a closed socket. The adapter handling
+follows gVisor's [UDP error consumption](https://github.com/google/gvisor/blob/ee81581eb45f/pkg/tcpip/transport/udp/endpoint.go)
+and [gonet error conversion](https://github.com/google/gvisor/blob/ee81581eb45f/pkg/tcpip/adapters/gonet/gonet.go).
+
 Native sockets already open before capture keep their existing connection. A PCB
 snapshot identifies their outgoing segments, which use a bounded pool of raw,
 interface-bound sockets without changing the transport addresses or payload.

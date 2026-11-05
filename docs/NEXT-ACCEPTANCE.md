@@ -15,6 +15,17 @@ is implemented with synthetic and loopback tests, pending hardware acceptance.
 App-bundle fixtures and throughput still need their described harness extensions
 before approval.
 
+The first QUIC hardware smoke passed. Its batch stopped after the first verified
+HTTP/3 response because the same UDP tuple was split into a second unattributed
+system flow. A synthetic IPv4/IPv6 regression reproduces premature teardown on
+client ICMP port-unreachable after socket close; the original binding now lasts
+until normal idle, preserving queued tail datagrams. The failed run's triggering
+error was not retained, so that packet-level cause still needs hardware
+confirmation. Evidence failures now distinguish early closure, duplicate tuples
+(including missing owners) and pending byte counts from HTTP/3 request failure.
+The coordinator verified clean uninstall. Repeat smoke and the complete QUIC
+batch before proceeding; do not count that failed batch as acceptance.
+
 ## Recorded full IPv4 hardware acceptance
 
 The coordinator reported a successful hardware run of `9ceff5c`, with Tailscale

@@ -422,8 +422,20 @@ dialog is needed for the DNS checks themselves.
 
 ## Bounded QUIC/HTTP/3 stage
 
-The QUIC harness has synthetic and real loopback HTTP/3 coverage; hardware
-acceptance remains pending. Add an explicit `--quic-target '<reviewed IPv4:443>'`
+The QUIC harness has synthetic and real loopback HTTP/3 coverage. The first
+hardware attempt passed TCP and QUIC smoke, but failed the domain-rule batch
+case's post-response evidence check despite a verified HTTP/3 response. One UDP
+tuple had ended early and been recreated without owner/name on the system path.
+Cleanup restored the baseline. A synthetic IPv4/IPv6 reproduction identified the
+UDP ICMP teardown path: late server replies after client close must not release
+the original binding before its queued tail is forwarded. The relay now consumes
+port-unreachable as a datagram error and keeps the session until normal idle;
+other terminal errors remain visible instead of being hidden by paired close.
+The old hardware report did not retain the triggering ICMP/error, so that exact
+packet is unconfirmed. Re-run smoke and batch after rebuilding; hardware batch
+acceptance remains pending.
+
+Add an explicit `--quic-target '<reviewed IPv4:443>'`
 and `--quic-server-name '<reviewed certificate name>'` when preparing a new
 `host-ipv4` session. It freezes one additional `/32` if that IP differs from the
 TLS/DNS targets. No name resolution or QUIC request occurs during preparation;

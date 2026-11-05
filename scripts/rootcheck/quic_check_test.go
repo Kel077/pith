@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Kel077/pith/internal/api"
 	"github.com/Kel077/pith/internal/testprofile"
@@ -181,5 +182,26 @@ func TestQUICPlanFreezesEndpointAndRequiresFreshSmoke(t *testing.T) {
 	s.TestProfile = &testprofile.Profile{Mode: testprofile.FullIPv4}
 	if _, err := s.scopes(); err == nil {
 		t.Fatal("enabled QUIC stage in unreviewed mode")
+	}
+}
+
+func TestQUICRecordDetectsUnattributedTailAndEarlyClosure(t *testing.T) {
+	e := quicEvidenceFixture(false)
+	row := api.Connection{ID: 11, Process: api.Process{PID: os.Getpid(), Path: "/example/rootcheck"}, Protocol: api.UDP, Local: e.Local, Remote: e.Remote, OutboundLocal: "198.51.100.10:50001", Domain: e.FirstDatagramSNI, RuleID: "quic", Interface: "example0", Outcome: api.Routed, Sent: e.Sent, Received: e.Received}
+	tail := row
+	tail.ID, tail.Process, tail.Domain, tail.RuleID, tail.Interface, tail.Outcome = 12, api.Process{}, "", "", "example1", api.System
+	for _, rows := range [][]api.Connection{{row, tail}, {tail, row}} {
+		_, ok, err := checkQUICRecord(rows, 10, row.Process.Path, "quic", "example0", e)
+		if ok || err == nil || !strings.Contains(err.Error(), "split") {
+			t.Fatal("unattributed second session was ignored", ok, err)
+		}
+	}
+	row.Sent--
+	if _, ok, err := checkQUICRecord([]api.Connection{row}, 10, row.Process.Path, "quic", "example0", e); ok || err != nil {
+		t.Fatal("live session was not allowed to finish accounting", ok, err)
+	}
+	row.Ended, row.Problem = time.Now(), "synthetic transport failure"
+	if _, ok, err := checkQUICRecord([]api.Connection{row}, 10, row.Process.Path, "quic", "example0", e); ok || err == nil || !strings.Contains(err.Error(), row.Problem) {
+		t.Fatal("ended session became an unexplained timeout", ok, err)
 	}
 }

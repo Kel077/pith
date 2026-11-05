@@ -86,7 +86,7 @@ type fixtureStack struct {
 	device *memoryTUN
 }
 
-func newFixture(t *testing.T, dial egress.DialFunc, scene api.Scene) *fixtureStack {
+func newFixture(t *testing.T, dial egress.DialFunc, scene api.Scene, configure ...func(*Options)) *fixtureStack {
 	t.Helper()
 	app := stack.New(stack.Options{NetworkProtocols: []stack.NetworkProtocolFactory{ipv4.NewProtocol, ipv6.NewProtocol}, TransportProtocols: []stack.TransportProtocolFactory{tcp.NewProtocol, udp.NewProtocol}})
 	link := channel.New(1024, 1500, "")
@@ -133,9 +133,13 @@ func newFixture(t *testing.T, dial egress.DialFunc, scene api.Scene) *fixtureSta
 	if err := router.Reload(scene, api.DefaultSettings()); err != nil {
 		t.Fatal(err)
 	}
-	f, err := New(Options{Device: device, Router: router, Store: store, IPv6: true, UDPIdle: 500 * time.Millisecond, DNSIdle: 100 * time.Millisecond, Lookup: func(context.Context, api.Protocol, netip.AddrPort, netip.AddrPort) (attribution.Attribution, error) {
+	opts := Options{Device: device, Router: router, Store: store, IPv6: true, UDPIdle: 500 * time.Millisecond, DNSIdle: 100 * time.Millisecond, Lookup: func(context.Context, api.Protocol, netip.AddrPort, netip.AddrPort) (attribution.Attribution, error) {
 		return attribution.Attribution{App: api.AppRef{Path: "/Applications/Example.app"}, Process: api.Process{PID: 42, Path: "/Applications/Example.app/Contents/MacOS/App"}}, nil
-	}})
+	}}
+	for _, fn := range configure {
+		fn(&opts)
+	}
+	f, err := New(opts)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -62,6 +62,9 @@ func runQUICChecks(ctx context.Context, s *session, c api.Service, cfg api.Confi
 				return ok, err
 			})
 			cancel()
+			if err != nil {
+				err = fmt.Errorf("verified HTTP/3 response completed, but UDP flow evidence failed (helper sent/read %d/%d; client sent/read %d/%d): %w", entry.Connection.Sent, entry.Connection.Received, evidence.Sent, evidence.Received, err)
+			}
 		}
 		if err == nil {
 			err = sameRunningCapture(ctx, c, running)
@@ -98,18 +101,18 @@ func validateQUICEvidence(e quicEvidence, target, name string, fragmented bool) 
 func checkQUICRecord(rows []api.Connection, maxID uint64, path, rule, iface string, e quicEvidence) (api.Connection, bool, error) {
 	var row api.Connection
 	for _, candidate := range rows {
-		if candidate.ID <= maxID || candidate.Process.PID != os.Getpid() || candidate.Protocol != api.UDP || candidate.Local != e.Local || candidate.Remote != e.Remote {
+		if candidate.ID <= maxID || candidate.Protocol != api.UDP || candidate.Local != e.Local || candidate.Remote != e.Remote {
 			continue
 		}
 		if row.ID != 0 {
-			return candidate, false, errors.New("more than one engine UDP session matches one QUIC exchange")
+			return candidate, false, fmt.Errorf("QUIC application tuple was split across engine UDP sessions %d and %d; a missing owner on a tail packet is not a new connection", row.ID, candidate.ID)
 		}
 		row = candidate
 	}
 	if row.ID == 0 {
 		return row, false, nil
 	}
-	if row.Process.Path != path || row.RuleID != rule || row.Interface != iface || row.Outcome != api.Routed || row.Domain != e.FirstDatagramSNI {
+	if row.Process.PID != os.Getpid() || row.Process.Path != path || row.RuleID != rule || row.Interface != iface || row.Outcome != api.Routed || row.Domain != e.FirstDatagramSNI {
 		return row, false, errors.New("QUIC process, rule, interface, outcome or observed name differs from the intended control")
 	}
 	local, err := netip.ParseAddrPort(row.OutboundLocal)
@@ -117,6 +120,9 @@ func checkQUICRecord(rows []api.Connection, maxID uint64, path, rule, iface stri
 		return row, false, errors.New("QUIC has no outbound pre-NAT socket tuple")
 	}
 	if row.Sent < e.Sent || row.Received < e.Received {
+		if !row.Ended.IsZero() {
+			return row, false, fmt.Errorf("QUIC UDP session ended before its observed traffic was accounted for: %s", row.Problem)
+		}
 		return row, false, nil
 	}
 	// A peer may send datagrams after the client closes. The helper can count

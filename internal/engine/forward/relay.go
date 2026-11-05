@@ -6,10 +6,12 @@ import (
 	"io"
 	"net"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/Kel077/pith/internal/api"
 	"github.com/Kel077/pith/internal/engine/domains"
+	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
 	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp"
 	"gvisor.dev/gvisor/pkg/tcpip/transport/udp"
@@ -134,10 +136,28 @@ func (f *Forwarder) tcp(req *tcp.ForwarderRequest) {
 	go copyHalf(out, app, true)
 	copyHalf(app, out, false)
 	e1, e2 := <-errs, <-errs
-	f.opts.Store.End(id, joinProblem(c.Problem, problem(errors.Join(e1, e2))))
+	f.opts.Store.End(id, joinProblem(c.Problem, joinProblem(problem(e1), problem(e2))))
 }
 
 var relayBuffers = sync.Pool{New: func() any { return new([32 << 10]byte) }}
+
+// ICMP port-unreachable describes a datagram, not the end of a UDP socket's
+// lifetime. In particular, a client can close while its final QUIC packets are
+// still queued, then reject a late server reply. Keep the registered tuple and
+// original outbound socket until the ordinary idle deadline; never re-match the
+// tail of that flow without its initial name or now-exited owner.
+func udpPacketError(err error, conn net.Conn) bool {
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return true
+	}
+	if _, ok := conn.(*gonet.UDPConn); !ok {
+		return false
+	}
+	// gonet converts tcpip.Error to an untyped error string inside net.OpError.
+	// Match that exact typed-adapter result, not arbitrary message substrings.
+	var op *net.OpError
+	return errors.As(err, &op) && op.Net == "udp" && op.Err != nil && op.Err.Error() == (&tcpip.ErrConnectionRefused{}).String()
+}
 
 func (f *Forwarder) copyTCP(dst, src net.Conn, id uint64, sending bool, dns *domains.DNS) error {
 	buffer := relayBuffers.Get().(*[32 << 10]byte)
@@ -248,6 +268,11 @@ func (f *Forwarder) udp(req *udp.ForwarderRequest) bool {
 			for {
 				n, err := src.Read(buf)
 				if err != nil {
+					if udpPacketError(err, src) {
+						// Consuming an asynchronous error does not refresh idle or
+						// replay a packet. The next read still sees queued datagrams.
+						continue
+					}
 					result = err
 					break
 				}
@@ -266,6 +291,11 @@ func (f *Forwarder) udp(req *udp.ForwarderRequest) bool {
 					}
 				}
 				if err != nil {
+					if udpPacketError(err, dst) {
+						// UDP may drop this datagram. Do not retry it or create a
+						// new socket, route, or application attribution.
+						continue
+					}
 					result = err
 					break
 				}
@@ -277,7 +307,7 @@ func (f *Forwarder) udp(req *udp.ForwarderRequest) bool {
 		go copyDatagrams(out, app, true)
 		copyDatagrams(app, out, false)
 		e1, e2 := <-errs, <-errs
-		f.opts.Store.End(id, joinProblem(c.Problem, problem(errors.Join(e1, e2))))
+		f.opts.Store.End(id, joinProblem(c.Problem, joinProblem(problem(e1), problem(e2))))
 	}()
 	return true
 }
