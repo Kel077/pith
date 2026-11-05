@@ -83,13 +83,13 @@ func TestSetAndGet(t *testing.T) {
 func TestGetDecodesSecretsPrintedInHex(t *testing.T) {
 	oldRun, oldHex := run, printedAsHex
 	t.Cleanup(func() { run, printedAsHex = oldRun, oldHex })
-	run = func(context.Context, []byte, ...string) ([]byte, int, error) { return []byte("e7a9bae6a0bc\n"), 0, nil }
+	run = func(context.Context, []byte, ...string) ([]byte, int, error) { return []byte("636166c3a9\n"), 0, nil }
 	printedAsHex = func(context.Context, string, string) bool { return true }
-	if got, err := Get(context.Background(), "example.service", "example"); err != nil || got != "空格" {
+	if got, err := Get(context.Background(), "example.service", "example"); err != nil || got != "café" {
 		t.Fatalf("hex secret: %q, %v", got, err)
 	}
 	printedAsHex = func(context.Context, string, string) bool { return false }
-	if got, err := Get(context.Background(), "example.service", "example"); err != nil || got != "e7a9bae6a0bc" {
+	if got, err := Get(context.Background(), "example.service", "example"); err != nil || got != "636166c3a9" {
 		t.Fatalf("a secret of hex digits: %q, %v", got, err)
 	}
 }
