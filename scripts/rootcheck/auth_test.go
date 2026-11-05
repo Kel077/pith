@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -112,6 +113,75 @@ func TestManagedAuthorizationRejectsBadValuesBeforeSudo(t *testing.T) {
 	cancel()
 	if !errors.Is(a.execute(ctx, crashPlan()), context.Canceled) {
 		t.Fatal("cancellation lost")
+	}
+}
+
+func TestManagedAuthorizationDistinguishesEncodedAndLiteralHex(t *testing.T) {
+	const unicodePassword = "\u00e9 \u7a7a\u683c \"\\$"
+	encoded := hex.EncodeToString([]byte(unicodePassword))
+	for _, tt := range []struct {
+		name, raw, metadata, want string
+		readError, cancel, fail   bool
+	}{
+		{name: "unicode", raw: encoded, metadata: "password: 0x" + encoded + "  \"representation\"\n", want: unicodePassword},
+		{name: "literal-hex", raw: "deadbeef", metadata: "password: \"deadbeef\"\n", want: "deadbeef"},
+		{name: "uppercase", raw: "C3A9", metadata: "password: 0xc3a9\n", want: "\u00e9"},
+		{name: "changed", raw: encoded, metadata: "password: 0x010203\n", fail: true},
+		{name: "changed-literal", raw: "deadbeef", metadata: "password: \"abcdefab\"\n", fail: true},
+		{name: "ambiguous", raw: encoded, metadata: "unrecognized output\n", fail: true},
+		{name: "read-error", raw: encoded, readError: true, fail: true},
+		{name: "cancellation", raw: encoded, cancel: true, fail: true},
+		{name: "decoded-newline", raw: "61620a63", metadata: "password: 0x61620a63\n", fail: true},
+		{name: "decoded-nul", raw: "61620063", metadata: "password: 0x61620063\n", fail: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			a, _ := parseAuthorization("keychain:example-admin")
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var buffers []*secretBuffer
+			sudo := false
+			a.run = func(_ context.Context, path string, args []string, in io.Reader, out io.Writer) error {
+				if path == "/usr/bin/security" {
+					buffers = append(buffers, out.(*secretBuffer))
+					if args[len(args)-1] == "-w" {
+						_, err := io.WriteString(out, tt.raw+"\n")
+						return err
+					}
+					if !slices.Equal(args, []string{"find-generic-password", "-s", "example-admin", "-g"}) {
+						t.Fatal(args)
+					}
+					if tt.cancel {
+						cancel()
+					}
+					if tt.readError {
+						return errors.New(unicodePassword)
+					}
+					_, err := io.WriteString(out, tt.metadata)
+					return err
+				}
+				if path != "/usr/bin/sudo" || tt.fail {
+					t.Fatal("unexpected privileged execution")
+				}
+				sudo = true
+				data, err := io.ReadAll(in)
+				if err != nil || string(data) != tt.want+"\n" {
+					t.Fatal("incorrect password bytes")
+				}
+				return nil
+			}
+			err := a.execute(ctx, crashPlan())
+			if (err != nil) != tt.fail || sudo == tt.fail || len(buffers) != 2 {
+				t.Fatal("incorrect authorization outcome")
+			}
+			if err != nil && (strings.Contains(err.Error(), unicodePassword) || strings.Contains(err.Error(), encoded)) {
+				t.Fatal("secret leaked in error")
+			}
+			for _, b := range buffers {
+				if bytes.Count(b.data[:cap(b.data)], []byte{0}) != cap(b.data) {
+					t.Fatal("private buffer not cleared")
+				}
+			}
+		})
 	}
 }
 

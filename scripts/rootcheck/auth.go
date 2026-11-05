@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -44,6 +45,11 @@ func (a authorization) mode() string {
 func runAuthCommand(ctx context.Context, path string, args []string, input io.Reader, output io.Writer) error {
 	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = input, output, io.Discard
+	// security writes the -g password representation to stderr. Keep it in the
+	// same bounded, private buffer as -w; never forward it to a terminal.
+	if path == "/usr/bin/security" && len(args) > 0 && args[len(args)-1] == "-g" {
+		cmd.Stdout, cmd.Stderr = io.Discard, output
+	}
 	return cmd.Run()
 }
 
@@ -79,6 +85,33 @@ func (a authorization) execute(ctx context.Context, plan helper.InstallPlan) err
 		return errors.New("managed authorization: keychain read failed")
 	}
 	secret := bytes.TrimSuffix(b.data, []byte{'\n'})
+	decoded := make([]byte, hex.DecodedLen(len(secret)))
+	defer clear(decoded)
+	if n, err := hex.Decode(decoded, secret); err == nil && len(secret) > 0 {
+		// An ASCII password can itself consist entirely of hex digits. Ask for
+		// the representation, and require both reads to describe the same value.
+		metadata := secretBuffer{data: make([]byte, 0, 4096)}
+		defer func() { clear(metadata.data[:cap(metadata.data)]) }()
+		if err := run(ctx, "/usr/bin/security", []string{"find-generic-password", "-s", a.service, "-g"}, nil, &metadata); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return errors.New("managed authorization: keychain representation read failed")
+		}
+		line := bytes.TrimSuffix(metadata.data, []byte{'\n'})
+		if value, ok := bytes.CutPrefix(line, []byte("password: 0x")); ok {
+			printed, _, _ := bytes.Cut(value, []byte{' '})
+			if !bytes.EqualFold(printed, secret) {
+				return errors.New("managed authorization: keychain value changed between reads")
+			}
+			secret = decoded[:n]
+		} else if value, ok := bytes.CutPrefix(line, []byte("password: \"")); !ok || len(value) != len(secret)+1 || value[len(value)-1] != '"' || !bytes.Equal(value[:len(value)-1], secret) {
+			return errors.New("managed authorization: ambiguous keychain representation")
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if len(secret) == 0 || bytes.ContainsAny(secret, "\x00\r\n") {
 		return errors.New("managed authorization requires a nonempty single-line password")
 	}
