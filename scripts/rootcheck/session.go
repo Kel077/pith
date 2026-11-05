@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -24,6 +25,7 @@ import (
 	"github.com/Kel077/pith/internal/engine/capture"
 	"github.com/Kel077/pith/internal/helper"
 	"github.com/Kel077/pith/internal/netif"
+	"golang.org/x/sys/unix"
 	"howett.net/plist"
 )
 
@@ -49,6 +51,7 @@ type session struct {
 	CancelPassed           bool            `json:"cancelPassed"`
 	Installed              bool            `json:"installed"`
 	SmokePassed            bool            `json:"smokePassed"`
+	Ownership              captureHistory  `json:"captureOwnership"`
 }
 
 type pathState struct {
@@ -59,17 +62,19 @@ type pathState struct {
 }
 
 type snapshot struct {
-	At         time.Time       `json:"at"`
-	Interfaces []api.Interface `json:"interfaces"`
-	Routes     []capture.Route `json:"routes"`
-	Paths      []pathState     `json:"paths"`
-	Launchd    string          `json:"launchdOutput"`
-	LaunchExit int             `json:"launchdExit"`
+	At               time.Time       `json:"at"`
+	Interfaces       []api.Interface `json:"interfaces"`
+	Routes           []capture.Route `json:"routes"`
+	Paths            []pathState     `json:"paths"`
+	Launchd          string          `json:"launchdOutput"`
+	LaunchExit       int             `json:"launchdExit"`
+	BootSession      string          `json:"bootSession,omitempty"`
+	InterfaceIndices map[string]int  `json:"interfaceIndices,omitempty"`
 }
 
 func prepare(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("prepare", flag.ContinueOnError)
-	s := &session{UID: os.Getuid(), BaselineLabel: "initial", BaselineFile: "original.json"}
+	s := &session{UID: os.Getuid(), BaselineLabel: "initial", BaselineFile: "original.json", Ownership: captureHistory{Complete: true}}
 	var names [2]string
 	fs.StringVar(&s.Helper, "helper", "", "absolute path to the reviewed helper executable")
 	fs.StringVar(&s.Version, "version", "dev", "expected helper build version")
@@ -339,9 +344,21 @@ func (s *session) verifyInstalledPlist(path string) error {
 func takeSnapshot(ctx context.Context) (snapshot, error) {
 	s := snapshot{At: time.Now()}
 	var err error
+	s.BootSession, err = unix.Sysctl("kern.bootsessionuuid")
+	if err != nil {
+		return s, err
+	}
 	s.Interfaces, err = netif.List(ctx)
 	if err != nil {
 		return s, err
+	}
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return s, err
+	}
+	s.InterfaceIndices = make(map[string]int, len(ifaces))
+	for _, iface := range ifaces {
+		s.InterfaceIndices[iface.Name] = iface.Index
 	}
 	s.Routes, err = capture.Snapshot()
 	if err != nil {
@@ -420,7 +437,7 @@ func (s *session) expectOriginalWithOps(ctx context.Context, phase string, ops r
 	if err := after.requireAbsent(); err != nil {
 		return err
 	}
-	if !sameRoutes(s.Original.Routes, after.Routes) || !sameTunnels(s.Original.Interfaces, after.Interfaces) {
+	if !sameCleanupBaseline(s.Original, after) {
 		return errors.New("routes or tunnel inventory differ from the current baseline; inspect the private snapshots before continuing")
 	}
 	return nil

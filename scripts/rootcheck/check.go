@@ -122,7 +122,7 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 	if err != nil {
 		return err
 	}
-	if !sameRoutes(s.Original.Routes, report.Before.Routes) || !sameTunnels(s.Original.Interfaces, report.Before.Interfaces) {
+	if !sameCleanupBaseline(s.Original, report.Before) {
 		return errors.New("routing or tunnel inventory changed since the current baseline; use rebaseline only after a verified stop and an approved mode change")
 	}
 	for _, ref := range s.Interfaces {

@@ -74,13 +74,13 @@ mode-0600 files include:
 
 | File | Review purpose |
 | --- | --- |
-| `session.json` | User ID, immutable target selection, reviewed adapter references, helper checksum and installation identity, active baseline label/file, current smoke result, and a checksum-bound cleanup proof |
+| `session.json` | User ID, immutable target selection, reviewed adapter references, helper checksum and installation identity, capture ownership history, active baseline label/file, current smoke result, and a checksum-bound cleanup proof |
 | `original.json` | Permanent initial pre-privilege interface inventory, route snapshot, launchd result, and the five managed paths |
 | `preflight.json` | Bound/unbound HTTPS status and public-IP echo, when the endpoint provides one |
 | `install-plan.json`, `install.sh` | Exact scoped launchd arguments, fixed destinations, helper SHA-256 check, rollback, and authorization prompt |
 | `uninstall.sh` | Exact bootout, ownership-checked route cleanup, and managed-path removal |
 | `emergency-command.txt` | A standalone, single command that can be pasted into Terminal without IPC or the test executable |
-| `cleanup-*.json`, `check-*.json` | Immutable cleanup observations and separate test results, tied to the current baseline and installation |
+| `cleanup-*.json`, `check-*.json` | Immutable cleanup observations and separate test results, tied to the current baseline, installation, and ownership history; external-only differences have a separate classification |
 | `rebaseline-*.json` | Immutable mode-change candidates, before/after snapshots, and system/A/B preflights; failed attempts remain archived |
 
 Set `PITH_SESSION` to the **exact canonical directory printed by prepare**.
@@ -106,6 +106,9 @@ rollback snapshot, selected by `baselineLabel` and `baselineFile`.
 Sessions prepared by an older snapshot decoder may contain kernel route-cache
 entries without their original flags. Prepare a new session rather than deleting
 host routes from saved JSON or comparing that old baseline with filtered data.
+External-change acceptance also requires complete capture identities and boot/
+interface-index observations from this version. An old session cannot infer
+that history from utun names or be upgraded by editing its JSON.
 
 The coordinator should review these concrete artifacts and obtain the user's
 go-ahead now. Keep a second Terminal window open with the emergency command
@@ -117,8 +120,10 @@ during the session.
 Stop after the first failed case. Once a check enters its active test phase,
 every outcome invokes bounded cleanup; inspect the private report and current
 baseline before deciding on another test. Cleanup rechecks installation identity
-before sending `Stop`, and refuses to stop a replacement helper. If cleanup fails,
-use the emergency command after reviewing ownership and do not retry capture.
+before sending `Stop`, and refuses to stop a replacement helper. If Pith cleanup
+fails or its ownership cannot be established, use the reviewed removal procedure
+and do not retry capture. A separately proven external-only change can instead
+use the explicit acceptance procedure below; it is not a successful check.
 Concurrent commands on the same session are refused by an advisory lock.
 
 The complete session requests **one cancellation dialog and two password
@@ -140,6 +145,7 @@ alternative removal authorization, not an automatic extra step.
 | 7. Optional observation | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --observe 90s` | No dialog. Runs the smoke checks, then holds the reviewed host capture for at most 90 seconds. See the manual cases below. | The harness records an observation window, not a pass for an unimplemented manual assertion. It polls helper status and stops on interruption, failure, or expiry. |
 | 8. Explicit stop | `"$PITH_TEST_BIN/rootcheck" stop --session "$PITH_SESSION"` | No dialog; authenticated IPC only after verifying the installation belongs to this session. Safe to repeat while this helper is installed. | Status is stopped at the reviewed version; route snapshot and utun inventory match the latest active baseline. A successful comparison is persisted as cleanup proof. If IPC is broken, use emergency cleanup instead. |
 | 8a. Optional next mode | While stopped, the user selects the approved Tailscale mode; then `"$PITH_TEST_BIN/rootcheck" rebaseline --session "$PITH_SESSION" --label tailnet` (or `vpn-off` / `exit-node`) | No dialog. Verifies the same idle installation and the preceding cleanup proof; takes new snapshots and makes three bounded HTTPS requests to the frozen target through system/A/B. Writes private review files only; it does not change VPN settings, capture scope, or routing. | Both reviewed adapters resolve and are up; helper identity/version remain unchanged; snapshots are stable across preflight. Only then does the new baseline become active, with smoke/pass state cleared. Repeat step 3 before any further case. A failed rebaseline leaves the previous active baseline and all history intact. |
+| 8b. Reviewed external change | `"$PITH_TEST_BIN/rootcheck" rebaseline --session "$PITH_SESSION" --label vpn-rebuilt --accept-external-change` | No dialog or routing change. Use only after reviewing an `external-change` cleanup report; this is not a general mismatch override. | Pith's recorded interfaces and exact capture prefixes are absent; every difference belongs to other interfaces; the same idle installation and stable preflight checks pass. Archive both the prior proof and current differences, then repeat smoke. The original failed check remains failed. |
 | 9. Final uninstall, once | `"$PITH_TEST_BIN/rootcheck" uninstall --session "$PITH_SESSION"` | Administrator dialog requests `Pith needs your password to remove its routing helper.` Enter the password. Attempts `Stop` on the verified installation, then independently boots out launchd, checks stale capture ownership, and removes managed files. It does not require working IPC or a matching IPC version. | Helper, service, socket, journal, and data directory are absent; the latest baseline's routes and utun inventory are restored. Shared parent directories and private session artifacts remain. A clearly different installation is refused before authorization; review ownership and the standalone emergency command instead. |
 
 macOS supplies the surrounding dialog title, buttons, and any cached
@@ -160,24 +166,76 @@ It also checks public-IP
 echoes against preflight when available. A rotating public exit can make this
 evidence inconclusive and requires review rather than an automatic retry.
 
-Every capture start first clears and saves the previous cleanup proof. Failed
-Stop, non-stopped status, identity/version mismatch during cleanup, a missing
-snapshot, or unequal routes/tunnels cannot produce valid proof. A test assertion
+Every capture start first clears and saves the previous cleanup proof, then
+durably records a pending attempt before calling Start. Failed Stop, non-stopped
+status, identity/version mismatch during cleanup, or a missing snapshot cannot
+produce usable proof. Unequal routes/tunnels cannot produce a restored-baseline
+proof; only the separately classified external-change exception below is eligible
+for explicit acceptance. A test assertion
 failure still fails the check, even when independent cleanup succeeds and records
 proof; review that failed test before continuing. A read-only check rejection
 before capture or cleanup begins preserves the preceding proof, so accidentally
 running `check` after an approved VPN switch does not prevent `rebaseline`.
 The proof is bound to the session directory/UID, reviewed binary/plan/targets,
-installation identity, and current baseline. An older or copied proof is refused.
+installation identity, capture history, and current baseline. An older or copied proof is refused.
 File identity is rechecked immediately before Start/Stop, but it is not an atomic
 IPC installation token: keep the app and all other installers closed throughout.
 
-Tunnel cleanup compares the exact sorted utun inventory, not its changing
-addresses or display metadata. An additional, missing, or renamed utun still
-fails the comparison. Removal checks require all five managed paths to have
+Tunnel cleanup compares the exact sorted utun inventory and its indices within
+the same boot, not its changing addresses or display metadata. An additional,
+missing, renamed, or reindexed utun still fails the restored-baseline comparison.
+Removal checks require all five managed paths to have
 been inspected and found absent, with no inspection error; a missing or repeated
 path entry cannot pass. The managed launchd service must also be absent, but
 its diagnostic output text is archived rather than compared for equality.
+
+## External VPN changes during a check
+
+A VPN can rebuild its own tunnel while Pith is running. A mismatch alone does
+not prove that Pith left something behind, but it must never be silently ignored.
+The helper's authenticated `Status.LastCapture` reports its most recently
+prepared capture's boot identity, journal token, utun name/index and exact
+prefixes. It survives Stop and SafeStart failure within that helper process.
+The harness records each receipt, including failed Start attempts, in the private
+session history. A helper restart can clear its in-memory receipt; receipts
+already saved by the controller remain available. They never authorize deletion.
+
+After successful Stop, the harness may archive **external-change** evidence only
+when all of the following hold:
+
+1. The reviewed binary/plist installation still matches, and the helper responds
+   at the reviewed version in `Stopped` both before and after the snapshot.
+2. Capture ownership history is complete, with no pending/unobserved Start. Every
+   receipt matches the frozen host prefixes and current boot. Any current helper
+   receipt is already in this session's history.
+3. Neither a route nor an interface uses **any** utun name or index Pith recorded
+   in this session. Reuse by another VPN is conservatively ambiguous and rejected.
+   No exact capture prefix exists on any interface, including scoped routes.
+4. Complete, consistent interface-name/index inventories accompany both
+   snapshots. Every added/removed route and changed interface belongs solely to
+   interfaces outside Pith's ownership history.
+
+This report has `restored: false`, `passed: false`, a separate external-change
+classification, and full route/interface/index differences. The command still
+returns a failure so a test interrupted by a VPN change cannot become a pass.
+Review the private report, then use step 8b explicitly. Without that flag,
+rebaseline refuses this kind of proof. The flag cannot override missing evidence,
+a Pith residue, an unknown capture, a different installation/version, a down
+reviewed adapter, a scope conflict, or a failed/unstable preflight.
+
+Rebaseline independently classifies the current snapshot again, makes the same
+three bounded requests, and requires stable routes, interface indices and
+topology throughout. It archives the accepted proof reference and current
+differences before atomically selecting the new baseline. Previous reports and
+failed assertions are preserved; smoke must pass again. It does not adopt a
+running capture, delete a route, restart a VPN, widen scope, or add a password
+dialog. If external state has already returned exactly to the old baseline,
+run `stop` to obtain an ordinary restored-baseline proof instead.
+
+An interrupted controller or a failed preparation without a readable capture
+receipt permanently disables this exception for that session. Ordinary exact
+cleanup comparisons still work. Use the reviewed uninstall path if ownership
+remains ambiguous; do not reconstruct missing history from guessed utun names.
 
 ## Manual cases and remaining acceptance limits
 
@@ -229,6 +287,10 @@ observation automatically and treats an unexpected helper stop as a failure.
   target from the TCP smoke result. A later IPv6 test must use only a reviewed
   `/128`. Testing `/1` capture requires another explicit go-ahead after scoped
   capture and cleanup have passed.
+
+The [next acceptance plan](NEXT-ACCEPTANCE.md) separates the broader capture,
+IPv6, UDP/QUIC, throughput, and app-bundle cases. It authorizes no execution and
+does not add those capabilities to this host-only harness.
 
 ## Optional Tailscale compatibility phases
 

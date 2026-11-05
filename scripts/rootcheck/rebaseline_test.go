@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -50,6 +51,7 @@ func (c *baselineService) Start(ctx context.Context, scene string) error {
 		c.onStart()
 	}
 	c.status.State = api.Running
+	c.status.LastCapture = &api.CaptureIdentity{BootSession: "test-boot", Token: fmt.Sprintf("test-capture-%d", c.starts), Interface: "utun90", Index: 90, Prefixes: []string{"192.0.2.20/32"}}
 	if c.startErr != nil {
 		c.status.State = api.Failed
 		c.status.Error = &api.Error{Code: api.Code(c.startErr)}
@@ -87,6 +89,7 @@ func baselineFixture(t *testing.T) (*session, *baselineService, rootcheckOps) {
 		Version: "test", Target: "192.0.2.20:443", ServerName: "example.com",
 		Interfaces: [2]api.InterfaceRef{{Name: "example0", HardwareAddr: "02:00:00:00:00:01"}, {Name: "example1", HardwareAddr: "02:00:00:00:00:02"}},
 		Original: snapshot{
+			BootSession: "test-boot", InterfaceIndices: map[string]int{"example0": 42, "example1": 43},
 			At: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 			Interfaces: []api.Interface{
 				{Name: "example0", Kind: api.KindEthernet, Up: true, HardwareAddr: "02:00:00:00:00:01", IPv4: []string{"192.0.2.1"}},
@@ -97,6 +100,7 @@ func baselineFixture(t *testing.T) (*session, *baselineService, rootcheckOps) {
 		BaselineLabel: "initial", BaselineFile: "original.json",
 		Installation: &installationID{Device: 1, Inode: 2, Modified: 3, Size: 4},
 		CancelPassed: true, Installed: true, SmokePassed: true, AuthorizationAttempted: true,
+		Ownership: captureHistory{Complete: true},
 		Preflight: []preflight{
 			{Interface: "", TLS: tlsEvidence{StatusCode: 200, BodyBytes: 12, PublicIP: "192.0.2.1"}},
 			{Interface: "example0", TLS: tlsEvidence{StatusCode: 200, BodyBytes: 12, PublicIP: "192.0.2.1"}},
@@ -127,6 +131,12 @@ func cloneSnapshot(in snapshot) snapshot {
 	out := in
 	out.Routes = slices.Clone(in.Routes)
 	out.Interfaces = slices.Clone(in.Interfaces)
+	if in.InterfaceIndices != nil {
+		out.InterfaceIndices = make(map[string]int, len(in.InterfaceIndices))
+		for name, index := range in.InterfaceIndices {
+			out.InterfaceIndices[name] = index
+		}
+	}
 	return out
 }
 
@@ -135,6 +145,7 @@ func nextMode(s *session) snapshot {
 	next.At = next.At.Add(time.Hour)
 	next.Routes[0].Interface, next.Routes[0].Index = "utun42", 84
 	next.Interfaces = append(next.Interfaces, api.Interface{Name: "utun42", Up: true, Kind: api.KindVPN, IPv4: []string{"203.0.113.1"}})
+	next.InterfaceIndices["utun42"] = 84
 	return next
 }
 

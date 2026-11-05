@@ -76,6 +76,16 @@ type Capture struct {
 	closeErr  error
 }
 
+// Identity reports the immutable journal identity, including after Close. It is
+// safe to publish to the authenticated controller; it is not deletion authority.
+func (c *Capture) Identity() *api.CaptureIdentity {
+	identity := &api.CaptureIdentity{BootSession: c.state.BootSession, Token: c.state.Token, Interface: c.Name, Index: c.state.Index}
+	for _, p := range c.state.Plan.Prefixes {
+		identity.Prefixes = append(identity.Prefixes, p.String())
+	}
+	return identity
+}
+
 // Prepare snapshots routing, rejects conflicts, creates/configures one utun and
 // records its exact intent. It does not install capture routes: the packet stack
 // must be ready before Activate. Every failure closes the utun it created.

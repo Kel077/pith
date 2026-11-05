@@ -93,6 +93,11 @@ func (e *Engine) Status(ctx context.Context) (api.Status, error) {
 }
 func cloneStatus(s api.Status) api.Status {
 	s.Warnings = slices.Clone(s.Warnings)
+	if s.LastCapture != nil {
+		identity := *s.LastCapture
+		identity.Prefixes = slices.Clone(identity.Prefixes)
+		s.LastCapture = &identity
+	}
 	if s.Error != nil {
 		copy := *s.Error
 		s.Error = &copy
@@ -101,6 +106,9 @@ func cloneStatus(s api.Status) api.Status {
 }
 func (e *Engine) state(s api.Status) {
 	e.mu.Lock()
+	if s.LastCapture == nil {
+		s.LastCapture = e.status.LastCapture
+	}
 	e.status = s
 	e.publishLocked(api.Event{Status: statusPointer(s)})
 	e.mu.Unlock()

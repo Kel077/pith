@@ -29,18 +29,21 @@ type installationID struct {
 type cleanupProof struct {
 	File   string `json:"file"`
 	SHA256 string `json:"sha256"`
+	Kind   string `json:"kind,omitempty"`
 }
 
 type cleanupRecord struct {
-	At        time.Time  `json:"at"`
-	Operation string     `json:"operation"`
-	Label     string     `json:"baselineLabel"`
-	Binding   string     `json:"sessionAndBaselineSHA256"`
-	Status    api.Status `json:"status"`
-	After     snapshot   `json:"after"`
-	Restored  bool       `json:"restored"`
-	Passed    bool       `json:"passed"`
-	Error     string     `json:"error,omitempty"`
+	At                    time.Time       `json:"at"`
+	Operation             string          `json:"operation"`
+	Label                 string          `json:"baselineLabel"`
+	Binding               string          `json:"sessionAndBaselineSHA256"`
+	Status                api.Status      `json:"status"`
+	After                 snapshot        `json:"after"`
+	Restored              bool            `json:"restored"`
+	Passed                bool            `json:"passed"`
+	Error                 string          `json:"error,omitempty"`
+	External              *externalChange `json:"externalChange,omitempty"`
+	ClassificationProblem string          `json:"classificationProblem,omitempty"`
 }
 
 // The production operations have no privileged side effects. Tests replace
@@ -155,8 +158,9 @@ func (s *session) cleanupBinding() string {
 		Target, ServerName, DNSTarget, Baseline                       string
 		UID                                                           int
 		Installation                                                  *installationID
+		Ownership                                                     captureHistory
 	}{s.Dir, s.Helper, s.HelperSHA256, s.InstallScriptSHA256, s.Version,
-		s.Target, s.ServerName, s.DNSTarget, s.baselineDigest(), s.UID, s.Installation})
+		s.Target, s.ServerName, s.DNSTarget, s.baselineDigest(), s.UID, s.Installation, s.Ownership})
 	return hashBytes(data)
 }
 
@@ -183,10 +187,10 @@ func (s *session) startCapture(ctx context.Context, c api.Service, scene string,
 	if err := idleReviewedStatus(s, st); err != nil {
 		return err
 	}
-	return c.Start(ctx, scene)
+	return s.startWithIdentity(ctx, c, scene, st.LastCapture, ops)
 }
 
-func (s *session) requireCleanup() error {
+func (s *session) requireCleanup(acceptExternal ...bool) error {
 	proof := s.Cleanup
 	if proof == nil || filepath.Base(proof.File) != proof.File || !strings.HasPrefix(proof.File, "cleanup-") || !strings.HasSuffix(proof.File, ".json") {
 		return errors.New("rebaseline requires persisted successful stop/check cleanup under the current baseline")
@@ -204,7 +208,19 @@ func (s *session) requireCleanup() error {
 	if err := json.Unmarshal(data, &record); err != nil {
 		return err
 	}
-	if !record.Passed || !record.Restored || record.Error != "" || (record.Operation != "stop" && record.Operation != "check") || record.Binding != s.cleanupBinding() || idleReviewedStatus(s, record.Status) != nil || !sameRoutes(s.Original.Routes, record.After.Routes) || !sameTunnels(s.Original.Interfaces, record.After.Interfaces) {
+	if (record.Operation != "stop" && record.Operation != "check") || record.Binding != s.cleanupBinding() || idleReviewedStatus(s, record.Status) != nil {
+		return errors.New("cleanup evidence does not belong to this idle installation and baseline")
+	}
+	if proof.Kind == externalProof {
+		if len(acceptExternal) == 0 || !acceptExternal[0] {
+			return errExternalChange
+		}
+		if record.Passed || record.Restored || record.External == nil || record.Error != errExternalChange.Error() {
+			return errors.New("invalid external-change cleanup evidence")
+		}
+		return s.recheckExternal(record.After, record.Status, record.External)
+	}
+	if proof.Kind != "" || record.External != nil || !record.Passed || !record.Restored || record.Error != "" || !sameCleanupBaseline(s.Original, record.After) {
 		return errors.New("cleanup evidence does not prove this installation restored the current session baseline")
 	}
 	return nil
@@ -232,8 +248,24 @@ func collectCleanup(ctx context.Context, s *session, c api.Service, ops rootchec
 	}
 	record.After, err = ops.snapshot(ctx)
 	if err == nil {
-		record.Restored = sameRoutes(s.Original.Routes, record.After.Routes) && sameTunnels(s.Original.Interfaces, record.After.Interfaces)
+		st, statusErr := c.Status(ctx)
+		if statusErr == nil {
+			statusErr = idleReviewedStatus(s, st)
+		}
+		resultErr = errors.Join(resultErr, statusErr, ops.verifyInstalled(s))
+		if statusErr == nil {
+			record.Status = st
+		}
+		record.Restored = sameCleanupBaseline(s.Original, record.After)
 		if !record.Restored {
+			if resultErr == nil {
+				if diff, classifyErr := s.externalDifferences(record.After, record.Status); classifyErr == nil {
+					record.External = diff
+					return record, errExternalChange
+				} else {
+					record.ClassificationProblem = classifyErr.Error()
+				}
+			}
 			err = errors.New("routes or tunnel inventory differ from the current baseline; inspect the private snapshots")
 		}
 	}
@@ -250,12 +282,17 @@ func (s *session) recordCleanup(record cleanupRecord, resultErr error, ops rootc
 	if err != nil {
 		return err
 	}
-	if record.Passed {
+	external := record.External != nil && resultErr == errExternalChange && s.recheckExternal(record.After, record.Status, record.External) == nil
+	if record.Passed || external {
 		checksum, err := fileHash(filepath.Join(s.Dir, name))
 		if err != nil {
 			return err
 		}
 		s.Cleanup = &cleanupProof{File: name, SHA256: checksum}
+		if external {
+			s.Cleanup.Kind = externalProof
+			fmt.Println("External-change cleanup evidence (not a test pass):", filepath.Join(s.Dir, name))
+		}
 	}
 	if err := ops.save(s); err != nil {
 		s.Cleanup = nil
@@ -289,22 +326,25 @@ func archiveJSON(s *session, prefix string, value any) (name string, resultErr e
 }
 
 type rebaselineReport struct {
-	Started        time.Time   `json:"started"`
-	Finished       time.Time   `json:"finished"`
-	Label          string      `json:"label"`
-	PreviousFile   string      `json:"previousBaselineFile"`
-	PreviousSHA256 string      `json:"previousBaselineSHA256"`
-	Before         snapshot    `json:"before"`
-	After          snapshot    `json:"after"`
-	Preflight      []preflight `json:"preflight"`
-	Error          string      `json:"error,omitempty"`
+	Started                time.Time       `json:"started"`
+	Finished               time.Time       `json:"finished"`
+	Label                  string          `json:"label"`
+	PreviousFile           string          `json:"previousBaselineFile"`
+	PreviousSHA256         string          `json:"previousBaselineSHA256"`
+	Before                 snapshot        `json:"before"`
+	After                  snapshot        `json:"after"`
+	Preflight              []preflight     `json:"preflight"`
+	Error                  string          `json:"error,omitempty"`
+	AcceptedExternalChange bool            `json:"acceptedExternalChange,omitempty"`
+	Cleanup                *cleanupProof   `json:"cleanupProof,omitempty"`
+	External               *externalChange `json:"externalChange,omitempty"`
 }
 
-func rebaseline(ctx context.Context, s *session, c api.Service, label string) error {
-	return rebaselineWithOps(ctx, s, c, label, liveOps())
+func rebaseline(ctx context.Context, s *session, c api.Service, label string, acceptExternal bool) error {
+	return rebaselineWithOps(ctx, s, c, label, liveOps(), acceptExternal)
 }
 
-func rebaselineWithOps(parent context.Context, s *session, c api.Service, label string, ops rootcheckOps) (resultErr error) {
+func rebaselineWithOps(parent context.Context, s *session, c api.Service, label string, ops rootcheckOps, acceptExternal ...bool) (resultErr error) {
 	if len(label) == 0 || len(label) > 40 || label[0] < 'a' || label[0] > 'z' || strings.IndexFunc(label, func(r rune) bool {
 		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_')
 	}) != -1 {
@@ -325,10 +365,12 @@ func rebaselineWithOps(parent context.Context, s *session, c api.Service, label 
 	if err := idleReviewedStatus(s, st); err != nil {
 		return err
 	}
-	if err := s.requireCleanup(); err != nil {
+	if err := s.requireCleanup(acceptExternal...); err != nil {
 		return err
 	}
 	report := rebaselineReport{Started: time.Now(), Label: label, PreviousFile: s.BaselineFile, PreviousSHA256: s.baselineDigest()}
+	report.Cleanup = s.Cleanup
+	report.AcceptedExternalChange = s.Cleanup.Kind == externalProof
 	defer func() {
 		if resultErr != nil {
 			report.Finished, report.Error = time.Now(), resultErr.Error()
@@ -339,6 +381,12 @@ func rebaselineWithOps(parent context.Context, s *session, c api.Service, label 
 	report.Before, err = ops.snapshot(ctx)
 	if err != nil {
 		return err
+	}
+	if report.AcceptedExternalChange {
+		report.External, err = s.externalDifferences(report.Before, st)
+		if err != nil {
+			return fmt.Errorf("current snapshot cannot accept external changes: %w", err)
+		}
 	}
 	var resolved [2]api.InterfaceRef
 	for i, ref := range s.Interfaces {
@@ -374,7 +422,7 @@ func rebaselineWithOps(parent context.Context, s *session, c api.Service, label 
 	if err != nil {
 		return err
 	}
-	if !sameRoutes(report.Before.Routes, report.After.Routes) || !sameInterfaces(report.Before.Interfaces, report.After.Interfaces) {
+	if !stableSnapshots(report.Before, report.After) {
 		return errors.New("routes or interfaces changed during rebaseline preflight; previous baseline remains active")
 	}
 	if err := ops.verifyInstalled(s); err != nil {
@@ -386,6 +434,15 @@ func rebaselineWithOps(parent context.Context, s *session, c api.Service, label 
 	}
 	if err := idleReviewedStatus(s, st); err != nil {
 		return err
+	}
+	if report.AcceptedExternalChange {
+		// stableSnapshots already checked semantic equality. Retain the final
+		// full observations without treating IPv6 address-only churn as a new
+		// topology change merely because the diff contains unnormalized values.
+		report.External, err = s.externalDifferences(report.After, st)
+		if err != nil {
+			return err
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return err

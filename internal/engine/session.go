@@ -81,6 +81,9 @@ func (e *Engine) startLocked(ctx context.Context, scene api.Scene, settings api.
 	if err != nil {
 		return err
 	}
+	e.mu.Lock()
+	e.status.LastCapture = s.capture.Identity()
+	e.mu.Unlock()
 	s.router = egress.New(s.capture.Plan.Before, ifaces, e.opts.Dial)
 	if err := s.router.Reload(scene, settings); err != nil {
 		return err
@@ -130,7 +133,7 @@ func (e *Engine) startLocked(ctx context.Context, scene api.Scene, settings api.
 	s.cancel = cancel
 	e.mu.Lock()
 	e.run = s
-	e.status = api.Status{State: api.Running, SceneID: scene.ID, Since: started, Warnings: warnings(s)}
+	e.status = api.Status{State: api.Running, SceneID: scene.ID, Since: started, Warnings: warnings(s), LastCapture: e.status.LastCapture}
 	e.publishLocked(api.Event{Status: statusPointer(e.status)})
 	e.mu.Unlock()
 	go e.monitor(runCtx, s)
@@ -141,7 +144,7 @@ func (e *Engine) stopLocked() error {
 	e.mu.Lock()
 	s := e.run
 	if s == nil {
-		e.status = api.Status{State: api.Stopped}
+		e.status = api.Status{State: api.Stopped, LastCapture: e.status.LastCapture}
 		e.publishLocked(api.Event{Status: statusPointer(e.status)})
 		e.mu.Unlock()
 		_, err := e.store.Flush(true)

@@ -28,7 +28,7 @@ const usage = `rootcheck prepares a private, scoped acceptance session.
   install   --session DIRECTORY
   check     --session DIRECTORY [--batch | --safe-failure | --preserve | --app-bypass | --observe 90s]
   stop      --session DIRECTORY
-  rebaseline --session DIRECTORY --label MODE
+  rebaseline --session DIRECTORY --label MODE [--accept-external-change]
   uninstall --session DIRECTORY
 
 prepare writes review material only to a fresh directory in TMPDIR. It reads
@@ -72,8 +72,10 @@ func run(args []string) error {
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	dir := fs.String("session", "", "private directory printed by prepare")
 	var label string
+	var acceptExternal bool
 	if args[0] == "rebaseline" {
 		fs.StringVar(&label, "label", "", "generic phase label, such as vpn-off, tailnet, or exit-node")
+		fs.BoolVar(&acceptExternal, "accept-external-change", false, "accept reviewed external-only differences after proven Pith cleanup")
 	}
 	var opts checkOptions
 	if args[0] == "check" {
@@ -119,7 +121,7 @@ func run(args []string) error {
 	case "stop":
 		return stop(ctx, s, c)
 	case "rebaseline":
-		return rebaseline(ctx, s, c, label)
+		return rebaseline(ctx, s, c, label, acceptExternal)
 	case "uninstall":
 		return uninstall(ctx, s, c)
 	default:
@@ -219,7 +221,7 @@ func install(ctx context.Context, s *session, c api.Service) error {
 	if _, err := archiveJSON(s, "after-install", after); err != nil {
 		return err
 	}
-	if !sameRoutes(s.Original.Routes, after.Routes) || !sameTunnels(s.Original.Interfaces, after.Interfaces) {
+	if !sameCleanupBaseline(s.Original, after) {
 		return errors.New("installation changed routes or tunnel inventory while idle; run uninstall and review the snapshots")
 	}
 	fmt.Println("PASS: the reviewed helper is installed, authenticated, version-matched, and idle; no capture was added.")
