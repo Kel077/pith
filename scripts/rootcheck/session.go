@@ -55,6 +55,8 @@ type session struct {
 	ProcessWindows       []processWindow        `json:"processObservationWindows,omitempty"`
 	Throughput           *throughputPlan        `json:"throughput,omitempty"`
 	ThroughputPlanSHA256 string                 `json:"throughputPlanSHA256,omitempty"`
+	VPNRestart           *vpnRestartPlan        `json:"vpnRestart,omitempty"`
+	VPNPlanSHA256        string                 `json:"vpnPlanSHA256,omitempty"`
 	Interfaces           [2]api.InterfaceRef    `json:"interfaces"`
 	Preflight            []preflight            `json:"preflight"`
 	TestProfile          *testprofile.Profile   `json:"testProfile,omitempty"`
@@ -119,6 +121,9 @@ func prepare(ctx context.Context, args []string) error {
 	fs.StringVar(&s.QUICServerName, "quic-server-name", "", "reviewed HTTP/3 TLS certificate name")
 	bundle := fs.Bool("app-bundle", false, "freeze a disposable pure-Go app and helper fixture using this rootcheck executable")
 	webkit := fs.String("webkit-app", "", "freeze an absolute Safari .app path for explicit bounded delegation observation")
+	var vpn vpnRestartPlan
+	fs.StringVar(&vpn.DNS, "vpn-dns-target", "", "reviewed device-local VPN DNS IPv4:53; requires full-ipv4")
+	fs.StringVar(&vpn.OwnName, "vpn-own-name", "", "this Mac's full MagicDNS name; no peer queries")
 	var speed throughputPlan
 	fs.StringVar(&speed.Target, "throughput-target", "", "optional reviewed throughput public IPv4:443")
 	fs.StringVar(&speed.ServerName, "throughput-server-name", "", "reviewed throughput TLS certificate name")
@@ -172,6 +177,9 @@ func prepare(ctx context.Context, args []string) error {
 		}
 	}
 	fs.Visit(func(f *flag.Flag) {
+		if strings.HasPrefix(f.Name, "vpn-") {
+			s.VPNRestart = &vpn
+		}
 		if strings.HasPrefix(f.Name, "throughput-") {
 			s.Throughput = &speed
 		}
@@ -242,6 +250,11 @@ func prepare(ctx context.Context, args []string) error {
 	if err := s.validateSnapshotScope(s.Original); err != nil {
 		return fmt.Errorf("test capture conflicts with an existing route: %w", err)
 	}
+	if s.VPNRestart != nil {
+		if err := s.freezeVPN(ctx, liveVPNChecks(takeSnapshot)); err != nil {
+			return err
+		}
+	}
 	target, _ := netip.ParseAddrPort(s.Target)
 	if capture.SystemInterface(s.Original.Routes, target.Addr()) == "" {
 		return errors.New("the test destination has no effective system route")
@@ -283,6 +296,9 @@ func prepare(ctx context.Context, args []string) error {
 		return err
 	}
 	if err := s.writeThroughputPlan(); err != nil {
+		return err
+	}
+	if err := s.writeVPNPlan(); err != nil {
 		return err
 	}
 	if err := writeJSON(filepath.Join(s.Dir, "install-plan.json"), plan); err != nil {
@@ -333,6 +349,9 @@ func prepare(ctx context.Context, args []string) error {
 }
 
 func (s *session) scopes() ([]netip.Prefix, error) {
+	if err := s.validateVPN(); err != nil {
+		return nil, err
+	}
 	if err := s.validateThroughput(); err != nil {
 		return nil, err
 	}

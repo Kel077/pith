@@ -40,6 +40,7 @@ type checkOptions struct {
 	webkit         time.Duration
 	webkitOpen     bool
 	throughput     string
+	vpnRestart     bool
 }
 
 type tlsEvidence struct {
@@ -93,6 +94,7 @@ type checkReport struct {
 	RouteDiagnostics []string               `json:"routeDiagnostics,omitempty"`
 	WebKit           *webkitEvidence        `json:"webKit,omitempty"`
 	Throughput       *throughputEvidence    `json:"throughput,omitempty"`
+	VPNRestart       *vpnRestartEvidence    `json:"vpnRestart,omitempty"`
 }
 
 func check(parent context.Context, s *session, c api.Service, opts checkOptions) (resultErr error) {
@@ -104,16 +106,24 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		return errors.New("check requires recorded cancellation or a managed skip, and this session's reviewed installation")
 	}
 	choices := 0
-	for _, selected := range []bool{opts.batch, opts.safeFailure, opts.preserve, opts.appBypass, opts.crash, opts.observe != 0, opts.udpDNS, opts.udpDNSBatch, opts.quic, opts.quicBatch, opts.appBundle, opts.appBundleBatch, opts.webkit != 0, opts.throughput != ""} {
+	for _, selected := range []bool{opts.batch, opts.safeFailure, opts.preserve, opts.appBypass, opts.crash, opts.observe != 0, opts.udpDNS, opts.udpDNSBatch, opts.quic, opts.quicBatch, opts.appBundle, opts.appBundleBatch, opts.webkit != 0, opts.throughput != "", opts.vpnRestart} {
 		if selected {
 			choices++
 		}
 	}
 	if choices > 1 || opts.observe < 0 || opts.observe > 90*time.Second || opts.webkit < 0 || opts.webkit > 60*time.Second {
-		return errors.New("choose one check mode: batch, safe-failure, preserve, app-bypass, crash, udp-dns, udp-dns-batch, quic, quic-batch, app-bundle, app-bundle-batch, throughput a|b, webkit in (0,60s], or observe in (0,90s]")
+		return errors.New("choose one check mode: batch, safe-failure, preserve, app-bypass, crash, udp-dns, udp-dns-batch, quic, quic-batch, app-bundle, app-bundle-batch, throughput a|b, vpn-restart, webkit in (0,60s], or observe in (0,90s]")
 	}
 	if opts.webkitOpen && opts.webkit == 0 {
 		return errors.New("--webkit-open requires an explicit --webkit observation duration")
+	}
+	if opts.vpnRestart {
+		if err := s.reviewedVPNPlan(); err != nil {
+			return err
+		}
+		if ops.vpn == nil {
+			return errors.New("VPN acceptance boundaries unavailable")
+		}
 	}
 	if opts.throughput != "" {
 		if _, err := throughputAdapter(opts.throughput); err != nil {
@@ -203,6 +213,8 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		report.Mode, report.Observation = "webkit", true
 	} else if opts.throughput != "" {
 		report.Mode = "throughput-" + opts.throughput
+	} else if opts.vpnRestart {
+		report.Mode = "vpn-restart"
 	} else if opts.safeFailure {
 		report.Mode = "safe-failure"
 	} else if opts.preserve {
@@ -262,6 +274,11 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cleanupCancel()
 		record, cleanupErr := collectCleanup(cleanupCtx, s, c, ops, "check")
+		if opts.vpnRestart && report.VPNRestart != nil && report.VPNRestart.ControlsPassed && (cleanupErr == nil || errors.Is(cleanupErr, errExternalChange)) {
+			postCtx, postCancel := context.WithTimeout(context.Background(), 4*time.Second)
+			resultErr = errors.Join(resultErr, verifyVPNAfterStop(postCtx, s, record.After, report.VPNRestart, *ops.vpn))
+			postCancel()
+		}
 		report.After, report.Restored = record.After, record.Restored
 		report.RouteDiagnostics = slices.Clone(record.Status.RouteDiagnostics)
 		// A failed Start may never enter Running or deliver its last event before
@@ -272,6 +289,13 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		logCancel()
 		if err != nil {
 			report.LogError = err.Error()
+		}
+		if opts.vpnRestart && report.VPNRestart != nil {
+			if err != nil {
+				resultErr = errors.Join(resultErr, fmt.Errorf("cannot verify final VPN DNS forwarding records: %w", err))
+			} else {
+				resultErr = errors.Join(resultErr, checkVPNFinalRows(report.VPNRestart, report.Connections))
+			}
 		}
 		if cleanupErr != nil {
 			report.StopError = cleanupErr.Error()
@@ -306,6 +330,11 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		}
 	}()
 	var speed *throughputRun
+	if opts.vpnRestart {
+		if err := beginVPNCheck(ctx, s, report.Before, &report, *ops.vpn); err != nil {
+			return err
+		}
+	}
 	if opts.throughput != "" {
 		speed, err = newThroughputRun(s, opts.throughput, &report, *ops.throughput)
 		if err != nil {
@@ -492,6 +521,9 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 			return err
 		}
 		return collectTraffic(ctx, c, &report)
+	}
+	if opts.vpnRestart {
+		return runVPNRestart(ctx, s, c, cfg, status, &report, *ops.vpn)
 	}
 	if opts.crash {
 		err := crashCapture(ctx, s, c, opts.auth, ops)

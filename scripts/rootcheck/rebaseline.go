@@ -56,10 +56,12 @@ type rootcheckOps struct {
 	save            func(*session) error
 	archive         func(*session, string, any) (string, error)
 	throughput      *throughputDeps
+	vpn             *vpnRestartDeps
 }
 
 func liveOps() rootcheckOps {
 	speed := liveThroughputChecks(takeSnapshot)
+	vpn := liveVPNChecks(takeSnapshot)
 	return rootcheckOps{
 		snapshot: takeSnapshot, verifyInstalled: (*session).verifyOwnedInstallation,
 		probe: func(ctx context.Context, s *session, iface string) (tlsEvidence, error) {
@@ -67,6 +69,7 @@ func liveOps() rootcheckOps {
 		},
 		save: (*session).save, archive: archiveJSON,
 		throughput: &speed,
+		vpn:        &vpn,
 	}
 }
 
@@ -168,8 +171,9 @@ func (s *session) cleanupBinding() string {
 		BundlePlanSHA256                                              string `json:",omitempty"`
 		WebKitPlanSHA256                                              string `json:",omitempty"`
 		ThroughputPlanSHA256                                          string `json:",omitempty"`
+		VPNPlanSHA256                                                 string `json:",omitempty"`
 	}{s.Dir, s.Helper, s.HelperSHA256, s.InstallScriptSHA256, s.Version,
-		s.Target, s.ServerName, s.DNSTarget, s.baselineDigest(), s.UID, s.Installation, s.Ownership, s.DNSPlanSHA256, s.QUICPlanSHA256, s.BundlePlanSHA256, s.WebKitPlanSHA256, s.ThroughputPlanSHA256})
+		s.Target, s.ServerName, s.DNSTarget, s.baselineDigest(), s.UID, s.Installation, s.Ownership, s.DNSPlanSHA256, s.QUICPlanSHA256, s.BundlePlanSHA256, s.WebKitPlanSHA256, s.ThroughputPlanSHA256, s.VPNPlanSHA256})
 	return hashBytes(data)
 }
 

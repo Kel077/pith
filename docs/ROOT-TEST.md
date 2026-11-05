@@ -142,6 +142,7 @@ mode-0600 files include:
 | `process-audit-*.json` | Independent read-only inventory after browser observation/uninstall: all still-present processes whose kernel start time falls in the recorded observation/cleanup windows, regardless of owner or executable |
 | `throughput-plan.json` | Optional frozen IPv4 throughput endpoint/TLS name, two adapter budgets, payload/socket caps and exact direct/minimal/many-rule request counts |
 | `throughput-a-attempt.json`, `throughput-b-attempt.json` | Exclusive durable reservations created before any measurement request; interruption, failure, rebaseline and reinstall never refund these attempts |
+| `vpn-plan.json`, `vpn-restart-attempt.json` | Optional frozen own-name/device-local resolver and original VPN identity, human timing/request limits, and one durable non-repeatable restart attempt |
 | `install-plan.json`, `install.sh` | Exact scoped launchd arguments, fixed destinations, helper SHA-256 check, rollback, and authorization prompt |
 | `uninstall.sh` | Exact bootout, ownership-checked route cleanup, and managed-path removal |
 | `emergency-command.txt` | A standalone, single command that can be pasted into Terminal without IPC or the test executable |
@@ -826,6 +827,100 @@ No visible capture overhead appeared around 700 Mbps, but this is **not a
 sustained 500 Mbps proof**: the wired download samples lasted only about
 0.4 seconds. Phase CPU includes setup, download and upload and is not an isolated
 steady transfer cost. See the [comparison and limitations](NEXT-ACCEPTANCE.md#recorded-throughput-hardware-comparison).
+
+## Manual VPN reconstruction during full IPv4 capture
+
+This harness is implemented with fake snapshots/services and cancellation tests;
+hardware acceptance is pending. It requires the separate `full-ipv4` profile
+with exactly a 120-second helper lease. The user alone operates the VPN menu.
+Neither prepare nor check runs a VPN CLI, starts, stops, updates or reconfigures
+the VPN, changes an exit node, queries peers, or connects to a DNS answer address.
+
+Before the session, the user enables Tailscale **without an exit node** and keeps
+it connected through prepare, install and ordinary TCP smoke. The coordinator
+obtains this Mac's full MagicDNS name independently and supplies it privately,
+along with the device-local Quad100 resolver and an ordinary public HTTPS control.
+The actual name, addresses and adapter identifiers never belong in repository
+examples. Add these options to the reviewed prepare invocation:
+
+```sh
+--capture-mode full-ipv4 --test-lease 120s \
+--vpn-dns-target "$PITH_VPN_DNS" \
+--vpn-own-name "$PITH_OWN_MAGICDNS_NAME"
+```
+
+Prepare requires a more-specific unscoped VPN route to that resolver and a
+physical system route to the public control; an unscoped tunnel default is
+refused. One A query must return only addresses actually assigned to this Mac's
+VPN interface. Freeze that answer, name, interface identity, routes and DNS in
+`vpn-plan.json`. These options do not add capture prefixes, override the
+production DNS plan, query another node or change any DNS settings.
+
+After plan review, managed cancellation skip (or the ordinary manual cancel
+case), install and default `check` smoke, run one explicit attempt:
+
+```sh
+"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --vpn-restart
+```
+
+The coordinator may relay the following single-line prompts to the user in chat;
+the user does not need direct access to the process output:
+
+1. `READY:` means the pre-capture and running controls passed. Tell the user:
+   **turn Tailscale off, keep it off about 15 seconds, then turn it on once.**
+   Observe route withdrawal for at most 45 seconds; advance immediately on actual
+   withdrawal, not a fixed sleep. A down flag with retained VPN routes is not
+   withdrawal evidence. The printed window can be shorter if setup consumed
+   lease time.
+2. While disconnected, send one bounded own-name DNS query and one public system
+   request; continue polling throughout these requests. The DNS datagram must
+   time out with no exact helper-forwarded tuple, while the public request must
+   use the expected system exit. Require at least ten seconds of observed
+   withdrawal. An early reconnect or missing evidence is **incomplete**, not a
+   Pith network failure; Stop and ordinary cleanup still run.
+3. `RECONNECT:` means the disconnected controls/minimum interval completed.
+   Reconnection has at most 45 seconds, shortened to leave 15 seconds for final
+   controls before the controller deadline. The prompt reports the actual bound.
+   Detect recovery from current routes/interfaces even if the name/index changed.
+   Repeat own-name DNS, the physical rule and the system public request, requiring
+   the original Pith capture token, interface, prefixes and Running timestamp.
+4. `RESTORED:` means those active controls passed. The harness immediately stops
+   capture, checks cleanup and performs one final own-name query. This prompt is
+   not a cleanup pass; inspect the completed private check/cleanup reports.
+
+The command uses the existing 110-second controller deadline and the independent
+120-second helper lease; it never extends either for a human delay. Typical prompt
+relay delays of 5--15 seconds fit the windows, but the two 45-second maxima are
+not additive guarantees. Any timeout/cancellation is incomplete and ends capture.
+The durable attempt file prevents automatic or accidental repetition in this
+session, even after failure/rebaseline. If aborted while disconnected, the user
+restores the VPN manually after the coordinator confirms Pith is stopped.
+
+There are at most five own-name A queries in check (before capture, running before,
+withdrawn, rebuilt, after Stop), plus the single prepare query. Each sends one
+classic DNS datagram with a two-second deadline and no retry/fallback. Four extra
+public HTTPS requests use the frozen endpoint and three-second bounds, in addition
+to the existing SafeStart/common system control. No polling request is sent to a
+tailnet peer: route/status polls are local reads and capped at 512 observations.
+All request workers are canceled and joined before returning.
+
+Private reports retain the prompts' times and actual windows, independent
+snapshots, local VPN name/index and routes, exact DNS tuples/replies, public
+connection records and the unchanged capture identity. The API does not expose
+the internal egress generation; it is not inferred from timestamps. If Stop
+reports only a verified external VPN change, active controls and cleanup remain
+separate results: inspect the differences, then explicitly
+`rebaseline --label vpn-rebuilt --accept-external-change` while stopped before
+uninstall. No automatic baseline adoption or route repair is allowed.
+
+Quad100 is a [device-local service](https://tailscale.com/docs/reference/quad100);
+an [own-name MagicDNS answer](https://tailscale.com/docs/features/magicdns) does
+not prove remote peer reachability. This stage establishes local DNS and route
+withdrawal/reconstruction continuity only. Absence of a forwarded connection
+record plus a query timeout is not a wire capture proving every packet was
+contained. Existing long-lived connections, remote tailnet destinations, a
+daemon self-update/restart, and independently damaged capture routes remain
+separate acceptance items. Do not broaden the test to obtain any of those claims.
 
 ## Ordered execution
 

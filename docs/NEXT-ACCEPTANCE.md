@@ -342,7 +342,7 @@ developer. The coordinator reviews each completed implementation before use.
 | QUIC | One permitted HTTP/3 endpoint; one request per case, with a real HTTP/3 response as application evidence. | Implemented: freeze endpoint/certificate and request/packet budgets in `quic-plan.json`, run `--quic` before `--quic-batch`. The third batch request is an explicit fragmented-Initial negative SNI control with a positive IP-route response. |
 | App bundles and delegation | A temporary pure-Go `.app` with main executable, nested helper, and an outside-bundle control; one Safari request to the frozen URL. Background URLSession is explicitly skipped this round. | Bundle portion implemented: `prepare --app-bundle` freezes checksums/metadata and request limits; `--app-bundle` gates `--app-bundle-batch`. Children exit and fixtures are removed. WebKit requires a separate observation; bundle containment does not establish delegation. |
 | Throughput | A permitted upload/download service, direct baseline before Pith, separate wired and cellular total byte budgets. | Implemented: freeze endpoint/protocol and private caps in `throughput-plan.json`; exclusive attempts reserve baseline, warmup and captured phases before transfer. Bound TLS bytes and request time independently, preserve overhead headroom, and never retry or replace an endpoint automatically. |
-| Full capture with Tailscale | The user enables the VPN and manually disconnects/reconnects at the agreed checkpoint. MagicDNS checks use only this machine's name; no peer scan. | Add explicit transition evidence and private own-name DNS controls to the reviewed full-mode stage; do not automatically toggle/restart the VPN or claim remote tailnet reachability from self-name resolution. |
+| Full capture with Tailscale | The user enables the VPN and manually disconnects/reconnects at the agreed checkpoint. MagicDNS checks use only this machine's name; no peer scan. | Implemented, hardware pending: freeze own-name/Quad100 evidence with `--vpn-own-name` / `--vpn-dns-target`, then `check --vpn-restart` after smoke. READY / RECONNECT / RESTORED prompts allow relayed human action. Local DNS/route continuity does not prove remote tailnet reachability or a daemon self-update. |
 
 ## Required full-capture VPN restart acceptance
 
@@ -351,11 +351,30 @@ synthetic coverage for withdrawal, name/index reuse, replacement/shadowing of
 capture routes, observer failure, pending and established sockets, and VPN
 packets arriving before notifications. This is not hardware acceptance.
 
-**The next round must include a Tailscale self-restart during full IPv4
-capture, without an exit node.** Review and authorize this as a separate fault
-stage with a helper lease of at most 120 seconds. Freeze one permitted tailnet
-endpoint, its MagicDNS name, the public control endpoint, the restart action and
-undo. The user performs the approved VPN restart; no agent silently updates it.
+**The next round includes a user-controlled Tailscale disconnect/reconnect during
+full IPv4 capture, without an exit node.** The bounded harness is implemented;
+see the [exact procedure](ROOT-TEST.md#manual-vpn-reconstruction-during-full-ipv4-capture).
+Freeze this Mac's own MagicDNS name, the device-local Quad100 resolver and the
+public control endpoint. The A answer must match the VPN interface's own address.
+No agent invokes the VPN CLI, operates its menu, updates it or scans peers.
+Use the separately reviewed 120-second full-profile installation and pass ordinary
+TCP smoke first. `check --vpn-restart` then permits exactly one manual transition.
+
+READY allows up to 45 seconds for observed withdrawal. The user keeps the VPN off
+about 15 seconds before reconnecting; require at least ten observed seconds for
+the bounded negative DNS and positive public controls. RECONNECT permits up to
+45 seconds for rebuilding, clipped to preserve 15 seconds for final checks inside
+the 110-second controller deadline. Early reconnect, timeout or insufficient
+evidence is incomplete, followed by safe Stop. RESTORED reports active controls,
+not final cleanup. An external-only changed VPN identity still requires explicit
+review/rebaseline while stopped, never automatic baseline adoption.
+
+This implemented subset samples capture identity/state and independent routing,
+checks physical-rule and system public exits, and repeats own-name DNS before,
+during and after capture. No internal egress generation is exposed by the API.
+Self-name/Quad100 does not establish remote peer reachability, existing TCP
+continuity or a daemon self-update/restart; those broader criteria remain below
+for a separately authorized extension, not implicit claims of this run:
 
 1. Record the external tunnel name/index, scoped defaults, more-specific routes,
    addresses and DNS. Verify one public, tailnet and MagicDNS request first.
@@ -375,7 +394,7 @@ undo. The user performs the approved VPN restart; no agent silently updates it.
    or utun must still trigger automatic `ErrNetworkLost` and safe cleanup; this
    distinct fault test must not be confused with ordinary VPN reconstruction.
 
-If self-restart cannot be reproduced safely, record this required item as pending,
+If daemon self-restart cannot be reproduced safely, record that broader item as pending,
 not passed. An unplanned VPN change in a throughput stage still aborts that stage.
 
 ## Required adapter renewal and fallback acceptance

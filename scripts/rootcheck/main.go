@@ -30,6 +30,7 @@ const usage = `rootcheck prepares a private, bounded acceptance session.
              --throughput-budget-a BYTES --throughput-budget-b BYTES]
             [--capture-mode full-ipv4 --test-lease 120s]
             [--capture-mode host-ipv6 --test-lease 60s]
+            [--vpn-dns-target IP:53 --vpn-own-name THIS_MAC_FQDN]
   cancel    --session DIRECTORY [--auth keychain:SERVICE]
   install   --session DIRECTORY [--auth keychain:SERVICE]
   check     --session DIRECTORY [--batch | --safe-failure | --preserve | --app-bypass | --observe 90s]
@@ -40,6 +41,7 @@ const usage = `rootcheck prepares a private, bounded acceptance session.
   check     --session DIRECTORY [--app-bundle | --app-bundle-batch]
   check     --session DIRECTORY --webkit 45s [--webkit-open]
   check     --session DIRECTORY --throughput a|b
+  check     --session DIRECTORY --vpn-restart
   stop      --session DIRECTORY
   rebaseline --session DIRECTORY --label MODE [--accept-external-change]
   uninstall --session DIRECTORY [--auth keychain:SERVICE]
@@ -118,6 +120,7 @@ func run(args []string) error {
 		fs.DurationVar(&opts.webkit, "webkit", 0, "observe one manually triggered Safari navigation for at most 60s")
 		fs.BoolVar(&opts.webkitOpen, "webkit-open", false, "after READY, open the frozen Safari URL once using LaunchServices; requires --webkit")
 		fs.StringVar(&opts.throughput, "throughput", "", "one reserved direct/minimal/many-rule measurement on adapter a or b")
+		fs.BoolVar(&opts.vpnRestart, "vpn-restart", false, "observe one user-controlled VPN disconnect/reconnect during full IPv4 capture")
 	}
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
