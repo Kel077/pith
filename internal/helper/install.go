@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/Kel077/pith/internal/api"
+	"github.com/Kel077/pith/internal/testprofile"
 	"howett.net/plist"
 )
 
@@ -80,6 +81,22 @@ func PlanScopedInstall(source string, uid uint32, opts ScopedOptions) (InstallPl
 		return InstallPlan{}, fmt.Errorf("SafeStart address is outside the test capture")
 	}
 	return planInstall(source, uid, args)
+}
+
+// PlanTestInstall is visibly distinct from both host-scoped and production
+// installs. The profile is immutable launchd configuration, enforced by pithd.
+func PlanTestInstall(source string, uid uint32, profile testprofile.Profile) (InstallPlan, error) {
+	args, err := profile.Arguments()
+	if err != nil {
+		return InstallPlan{}, err
+	}
+	plan, err := planInstall(source, uid, args)
+	if err != nil {
+		return InstallPlan{}, err
+	}
+	plan.Prompt = "Pith needs your password to install its full IPv4 test helper (at most 120 seconds per capture)."
+	plan.Undo += " Full IPv4 test capture has a helper-enforced " + profile.Lease.String() + " lease; Stop removes both /1 routes and only the reviewed DNS host routes."
+	return plan, nil
 }
 
 func planInstall(source string, uid uint32, args []string) (InstallPlan, error) {

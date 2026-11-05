@@ -62,6 +62,7 @@ type checkReport struct {
 	Mode        string              `json:"mode"`
 	Baseline    string              `json:"baselineLabel"`
 	BaselineSHA string              `json:"baselineSHA256"`
+	CaptureMode string              `json:"captureMode"`
 	Cases       []checkCase         `json:"cases"`
 	Traffic     api.Traffic         `json:"traffic"`
 	Events      []api.Event         `json:"events"`
@@ -81,7 +82,7 @@ func check(parent context.Context, s *session, c api.Service, opts checkOptions)
 
 func checkWithOps(parent context.Context, s *session, c api.Service, opts checkOptions, ops rootcheckOps) (resultErr error) {
 	if !s.Installed || !s.cancellationRecorded() {
-		return errors.New("check requires recorded cancellation or a managed skip, and this session's scoped installation")
+		return errors.New("check requires recorded cancellation or a managed skip, and this session's reviewed installation")
 	}
 	choices := 0
 	for _, selected := range []bool{opts.batch, opts.safeFailure, opts.preserve, opts.appBypass, opts.crash, opts.observe != 0} {
@@ -95,6 +96,9 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 	if opts.renewHotspot && opts.observe == 0 {
 		return errors.New("--renew-hotspot requires an explicit --observe duration")
 	}
+	if opts.renewHotspot && s.TestProfile != nil {
+		return errors.New("hotspot renewal is currently accepted only in the host-scoped harness")
+	}
 	if choices != 0 && !s.SmokePassed {
 		return errors.New("run the default smoke check successfully before additional checks")
 	}
@@ -106,7 +110,7 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 	if err := ops.verifyInstalled(s); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(parent, 3*time.Minute)
+	ctx, cancel := context.WithTimeout(parent, s.checkTimeout())
 	defer cancel()
 	status, err := c.Status(ctx)
 	if err != nil {
@@ -115,7 +119,7 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 	if err := idleReviewedStatus(s, status); err != nil {
 		return err
 	}
-	report := checkReport{Started: time.Now(), Mode: "smoke", Baseline: s.BaselineLabel, BaselineSHA: s.baselineDigest()}
+	report := checkReport{Started: time.Now(), Mode: "smoke", Baseline: s.BaselineLabel, BaselineSHA: s.baselineDigest(), CaptureMode: s.captureMode()}
 	if s.CancelSkipped {
 		report.Notes = append(report.Notes, "Manual cancellation dialog skipped under explicit managed authorization; not passed.")
 	}
@@ -142,6 +146,9 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 	if !sameCleanupBaseline(s.Original, report.Before) {
 		return errors.New("routing or tunnel inventory changed since the current baseline; use rebaseline only after a verified stop and an approved mode change")
 	}
+	if err := s.validateSnapshotScope(report.Before); err != nil {
+		return err
+	}
 	for _, ref := range s.Interfaces {
 		if iface := ref.Resolve(report.Before.Interfaces); iface == nil || !iface.Up {
 			return errors.New("a reviewed interface is missing or down")
@@ -157,7 +164,7 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		return err
 	}
 	// The cleanup context is independent of signal cancellation and test timeout.
-	// The helper's scoped five-minute lease is the final bound if this process
+	// The helper's immutable test lease is the final bound if this process
 	// is killed before its deferred Stop can run.
 	defer func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -190,7 +197,7 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 	settings := api.DefaultSettings()
 	settings.KeepRouting, settings.ResumeOnLaunch, settings.OpenAtLogin = false, false, false
 	settings.IPv6, settings.SafeStart, settings.SniffDomains, settings.LogDays = false, true, true, 1
-	cfg := api.Config{Version: api.ConfigVersion, Selected: "rootcheck", Scenes: []api.Scene{{ID: "rootcheck", Name: "Scoped acceptance"}}, Settings: settings}
+	cfg := api.Config{Version: api.ConfigVersion, Selected: "rootcheck", Scenes: []api.Scene{{ID: "rootcheck", Name: "Acceptance: " + s.captureMode()}}, Settings: settings}
 	address, _ := netip.ParseAddrPort(s.Target)
 	block := api.Rule{ID: "block", Enabled: true, Targets: []string{address.Addr().String()}, Protocol: api.TCP, Action: api.Block}
 	if opts.safeFailure {
@@ -382,7 +389,7 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 				return runCase(probeCtx, "new connection uses interface A after hotspot renewal", []api.Rule{a}, api.Routed, s.Interfaces[0].Name, a.ID, nil)
 			})
 		}
-		fmt.Printf("Manual observation window: %s. Capture remains limited to the reviewed hosts and stops when this command returns.\n", opts.observe)
+		fmt.Printf("Manual observation window: %s. Capture mode: %s; stops when this command returns.\n", opts.observe, s.captureMode())
 		deadline := time.NewTimer(opts.observe)
 		defer deadline.Stop()
 		ticker := time.NewTicker(time.Second)
@@ -395,7 +402,7 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 				return nil
 			case <-ticker.C:
 				st, err := c.Status(ctx)
-				if err != nil || st.State != api.Running {
+				if err != nil || st.State != api.Running || !st.Since.Equal(runningSince) || st.LastCapture == nil || status.LastCapture == nil || !sameCapture(*st.LastCapture, *status.LastCapture) {
 					return fmt.Errorf("manual observation interrupted: state=%s error=%v", st.State, err)
 				}
 			}

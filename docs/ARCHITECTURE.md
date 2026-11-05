@@ -235,6 +235,23 @@ root capture test without the coordinator's explicit go-ahead and the recorded
 undo plan.** Unit tests use fake drivers, memory tunnels and synthetic addresses;
 unprivileged live tests only read interface/socket metadata or use loopback.
 
+Full IPv4 acceptance uses a separate `--test-profile full-ipv4` installation,
+never an omitted `--capture` flag on the production installer. Its immutable
+launch arguments freeze a literal TLS endpoint, IPv4-only capture, the exact
+LAN-DNS host routes and a lease of at most 120 seconds. The engine rejects mixed
+scoped/profile arguments, disabled SafeStart, IPv6 enablement, and changed DNS
+capture scope before creating a tunnel. Ordinary production capture planning is
+used, including both IPv4 `/1`s and LAN-DNS routes, then checked against that
+frozen route set. Changing the test mode or DNS capture requires a new reviewed
+installation rather than rebaseline or edited session data.
+
+The helper starts the lease clock before startup work and bounds preparation and
+SafeStart by that deadline. After startup, its independent monitor stops capture
+when the same deadline expires, even if the controller dies. Repeated Start and
+hot Reload cannot extend it or bypass the profile settings. Explicit Stop/crash
+cleanup still removes only journal-owned routes. This is test support verified
+with fake drivers, not evidence that full capture has passed on hardware.
+
 See [building and packaging](BUILDING.md) and the consolidated
 [authorized root-test procedure](ROOT-TEST.md).
 Scoped TCP acceptance does not establish full `/1` capture, IPv6, UDP/QUIC,

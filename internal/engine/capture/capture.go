@@ -43,11 +43,12 @@ type addressExclusionReader interface {
 }
 
 type Options struct {
-	IPv6      bool
-	Scopes    []netip.Prefix
-	DNS       []netip.Addr
-	StatePath string
-	Driver    Driver // nil: the native macOS implementation
+	IPv6             bool
+	Scopes           []netip.Prefix
+	DNS              []netip.Addr
+	ExpectedPrefixes []netip.Prefix // optional frozen test scope; checked before creating any utun
+	StatePath        string
+	Driver           Driver // nil: the native macOS implementation
 }
 
 type journal struct {
@@ -122,6 +123,18 @@ func Prepare(ctx context.Context, opts Options) (*Capture, error) {
 	plan, err := Build(before, opts.DNS, opts.IPv6, opts.Scopes)
 	if err != nil {
 		return nil, err
+	}
+	if opts.ExpectedPrefixes != nil {
+		if len(plan.Prefixes) != len(opts.ExpectedPrefixes) {
+			return nil, errors.New("capture scope changed from the reviewed test profile")
+		}
+		seen := make(map[netip.Prefix]bool)
+		for _, prefix := range opts.ExpectedPrefixes {
+			if seen[prefix] || !slices.Contains(plan.Prefixes, prefix) {
+				return nil, errors.New("capture scope changed from the reviewed test profile")
+			}
+			seen[prefix] = true
+		}
 	}
 	assigned, err := opts.Driver.InterfacePrefixes()
 	if err != nil {

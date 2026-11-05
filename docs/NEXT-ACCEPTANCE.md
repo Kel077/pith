@@ -2,9 +2,12 @@
 
 This document plans future attended tests. It authorizes no administrator
 operation, network change, benchmark, VPN restart, or application launch. The
-current `rootcheck` accepts only frozen public IPv4 host captures. Its external-
-change acceptance flag does not enable IPv6, subnet capture, or a wider scope.
-Implement and review the missing harness support before approving these stages.
+current `rootcheck` defaults to frozen public IPv4 host captures. It also has a
+separate `prepare --capture-mode full-ipv4 --test-lease 120s` installation with
+an engine-enforced deadline and frozen LAN-DNS routes. Both have synthetic
+coverage; this document does not claim hardware acceptance. Its external-change
+flag cannot widen either installation. IPv6, UDP/QUIC, app-bundle fixtures and
+throughput still need their described harness extensions before approval.
 
 ## Review and boundaries
 
@@ -22,21 +25,30 @@ be accepted only while Pith is stopped and with the documented ownership proof.
 Keep the app and other helper installers closed. The user controls any approved
 VPN mode change; neither the harness nor an agent starts or updates a VPN.
 
-Installation/removal use the standard reviewed prompts from the scoped plan.
+Installation/removal use the reviewed prompts in [root tests](ROOT-TEST.md).
 Rebaseline itself has no administrator dialog. Changed frozen scopes require a
 new installation plan and explicit approval, not hand-edited session JSON. A
 full-capture test must be visibly distinct from a host-scoped installation. Test
 its cancellation first. Count the exact dialogs in the concrete session plan;
-do not promise that the present host-only installer can span all stages.
+do not reuse a host-scoped installation for full capture.
 
 Every privileged test needs a helper-enforced deadline, independent Stop cleanup,
 and a copied Pith-only emergency undo command that works without IPC or network.
 The existing five-minute lease applies to scoped capture only. **Do not remove
-`--capture` to start an unbounded full-capture helper.** Add and test a short
-explicit full-capture test lease before the `/1` stage. Leave no helper, fixture,
+`--capture` to start an unbounded full-capture helper.** Use the distinct
+`full-ipv4` profile, whose maximum lease is 120 seconds. Leave no helper, fixture,
 server, child process, socket, watcher, or benchmark running afterward.
 
 ## Stages
+
+The full IPv4 harness currently verifies its frozen TCP endpoint using the
+existing smoke, rule batch, preservation, app/tool attribution and SafeStart
+failure cases. Its observation window checks uninterrupted capture identity,
+but does not implement the manual DNS, VPN-control or mixed-protocol assertions
+below. Passing that TCP subset is not a pass for the entire full-capture stage.
+The dedicated hotspot renewal flag remains host-scoped pending review of its
+full-capture/device timing. New modes are implemented separately and reviewed
+before use; their implementation order does not change the attended test order.
 
 Run one request before each bounded batch. Stop at the first unexplained result;
 do not broaden capture, change DNS/pf, remove a VPN route, or retry indefinitely

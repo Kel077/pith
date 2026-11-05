@@ -1,4 +1,4 @@
-// rootcheck prepares and runs an explicitly authorized, host-scoped acceptance
+// rootcheck prepares and runs an explicitly authorized, bounded acceptance
 // session. Run it as the installing user, never as root. No command is implicit.
 package main
 
@@ -19,11 +19,12 @@ import (
 	"github.com/Kel077/pith/internal/helper"
 )
 
-const usage = `rootcheck prepares a private, scoped acceptance session.
+const usage = `rootcheck prepares a private, bounded acceptance session.
 
   prepare   --helper ABSOLUTE_PATH --interface-a NAME --interface-b NAME
             --target IP:PORT --server-name TLS_NAME [--version dev]
             [--dns-target IP:53]
+            [--capture-mode full-ipv4 --test-lease 120s]
   cancel    --session DIRECTORY [--auth keychain:SERVICE]
   install   --session DIRECTORY [--auth keychain:SERVICE]
   check     --session DIRECTORY [--batch | --safe-failure | --preserve | --app-bypass | --observe 90s]
@@ -38,8 +39,10 @@ system state and makes bounded, unprivileged TLS probes; it never opens an
 authorization dialog. All other commands need that session directory.
 
 cancel expects the user to cancel the install dialog. install and uninstall
-request administrator authorization. check starts routing only to the reviewed
-IPv4 test host(s), always stops it on return, and never installs the helper.
+request administrator authorization. check uses the reviewed installation mode
+(host-ipv4 by default), always stops on return, and never installs the helper.
+full-ipv4 is a distinct installation: both /1 routes plus frozen LAN DNS hosts,
+IPv6 disabled, mandatory SafeStart, and a helper-enforced lease at most 120s.
 Explicit --auth keychain:SERVICE uses a delegated password via stdin for that
 invocation only. It skips the manual cancel case and reports it as skipped.
 check --crash requires prior smoke, kills only the reviewed running helper, and
@@ -204,7 +207,7 @@ func install(ctx context.Context, s *session, c api.Service, auth authorization)
 	if err := s.save(); err != nil {
 		return err
 	}
-	fmt.Println("Authorize the reviewed host-scoped helper installation. Routing will remain stopped.")
+	fmt.Println("Authorize the reviewed helper installation (" + s.captureMode() + "). Routing will remain stopped.")
 	authCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	if err := s.authorize(authCtx, "install", plan, auth, liveOps()); err != nil {

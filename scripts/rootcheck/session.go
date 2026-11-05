@@ -25,21 +25,23 @@ import (
 	"github.com/Kel077/pith/internal/engine/capture"
 	"github.com/Kel077/pith/internal/helper"
 	"github.com/Kel077/pith/internal/netif"
+	"github.com/Kel077/pith/internal/testprofile"
 	"golang.org/x/sys/unix"
 	"howett.net/plist"
 )
 
 type session struct {
-	Dir          string              `json:"directory"`
-	UID          int                 `json:"uid"`
-	Helper       string              `json:"helper"`
-	HelperSHA256 string              `json:"helperSHA256"`
-	Version      string              `json:"version"`
-	Target       string              `json:"target"`
-	ServerName   string              `json:"serverName"`
-	DNSTarget    string              `json:"dnsTarget,omitempty"`
-	Interfaces   [2]api.InterfaceRef `json:"interfaces"`
-	Preflight    []preflight         `json:"preflight"`
+	Dir          string               `json:"directory"`
+	UID          int                  `json:"uid"`
+	Helper       string               `json:"helper"`
+	HelperSHA256 string               `json:"helperSHA256"`
+	Version      string               `json:"version"`
+	Target       string               `json:"target"`
+	ServerName   string               `json:"serverName"`
+	DNSTarget    string               `json:"dnsTarget,omitempty"`
+	Interfaces   [2]api.InterfaceRef  `json:"interfaces"`
+	Preflight    []preflight          `json:"preflight"`
+	TestProfile  *testprofile.Profile `json:"testProfile,omitempty"`
 	// Original is the active rollback baseline; original.json is never replaced.
 	Original               snapshot        `json:"original"`
 	BaselineLabel          string          `json:"baselineLabel"`
@@ -88,11 +90,18 @@ func prepare(ctx context.Context, args []string) error {
 	fs.StringVar(&s.Target, "target", "", "public TLS test IPv4:port, chosen by the user")
 	fs.StringVar(&s.ServerName, "server-name", "", "DNS name on the test endpoint's TLS certificate")
 	fs.StringVar(&s.DNSTarget, "dns-target", "", "optional public DNS test IPv4:53, for manual checks")
+	mode := fs.String("capture-mode", "host-ipv4", "reviewed installation mode: host-ipv4 or full-ipv4")
+	lease := fs.Duration("test-lease", 120*time.Second, "full-ipv4 helper lease, from 30s through 120s")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 || !filepath.IsAbs(s.Helper) || names[0] == "" || names[0] == names[1] || names[1] == "" || s.Version == "" {
 		return errors.New("supply an absolute helper path, two distinct interface names, a target, a TLS name, and the helper version")
+	}
+	if *mode == testprofile.FullIPv4 {
+		s.TestProfile = &testprofile.Profile{Mode: *mode, Lease: *lease, Target: s.Target, ServerName: s.ServerName}
+	} else if *mode != "host-ipv4" {
+		return errors.New("capture-mode must be host-ipv4 or full-ipv4")
 	}
 	if _, err := s.scopes(); err != nil {
 		return err
@@ -120,13 +129,6 @@ func prepare(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	plan, err := s.plan()
-	if err != nil {
-		return err
-	}
-	s.InstallScriptSHA256 = hashBytes([]byte(plan.Script))
-	s.UninstallScriptSHA256 = hashBytes([]byte(helper.PlanUninstall().Script))
-	s.CrashScriptSHA256 = hashBytes([]byte(crashPlan().Script))
 	// Ordinary, interface-bound sockets are a preflight only. The check command
 	// uses unbound app sockets, which must actually pass through the new utun.
 	for _, iface := range []string{"", names[0], names[1]} {
@@ -143,13 +145,25 @@ func prepare(ctx context.Context, args []string) error {
 	if err := s.Original.requireAbsent(); err != nil {
 		return err
 	}
-	scopes, _ := s.scopes()
-	if _, err := capture.Build(s.Original.Routes, nil, false, scopes); err != nil {
+	if s.TestProfile != nil {
+		if err := s.freezeFullScope(s.Original); err != nil {
+			return err
+		}
+	}
+	if err := s.validateSnapshotScope(s.Original); err != nil {
 		return fmt.Errorf("test capture conflicts with an existing route: %w", err)
 	}
-	if capture.SystemInterface(s.Original.Routes, scopes[0].Addr()) == "" {
+	target, _ := netip.ParseAddrPort(s.Target)
+	if capture.SystemInterface(s.Original.Routes, target.Addr()) == "" {
 		return errors.New("the test destination has no effective system route")
 	}
+	plan, err := s.plan()
+	if err != nil {
+		return err
+	}
+	s.InstallScriptSHA256 = hashBytes([]byte(plan.Script))
+	s.UninstallScriptSHA256 = hashBytes([]byte(helper.PlanUninstall().Script))
+	s.CrashScriptSHA256 = hashBytes([]byte(crashPlan().Script))
 	s.Dir, err = os.MkdirTemp(os.TempDir(), "pith-rootcheck-")
 	if err != nil {
 		return err
@@ -187,6 +201,7 @@ func prepare(ctx context.Context, args []string) error {
 	}
 	fmt.Println("Prepared private review material:", s.Dir)
 	fmt.Println("Helper SHA-256:", s.HelperSHA256)
+	fmt.Println("Capture mode:", s.captureMode())
 	fmt.Println("Review install-plan.json, install.sh, uninstall.sh, original.json, and emergency-command.txt before authorization.")
 	fmt.Println("No helper was installed and no routing was changed.")
 	fmt.Println("Next command: rootcheck cancel --session " + shellQuote(s.Dir))
@@ -201,6 +216,15 @@ func (s *session) scopes() ([]netip.Prefix, error) {
 	parsed, err := api.ParseTarget(s.ServerName)
 	if err != nil || !parsed.IsDomain() || parsed.Subdomains || parsed.String() != s.ServerName {
 		return nil, errors.New("server-name must be a plain, lowercase ASCII DNS name")
+	}
+	if s.TestProfile != nil {
+		if s.DNSTarget != "" || s.TestProfile.Target != s.Target || s.TestProfile.ServerName != s.ServerName || s.TestProfile.Lease < 30*time.Second {
+			return nil, errors.New("full-ipv4 session needs the same frozen TLS endpoint, no dns-target, and a lease from 30s through 120s")
+		}
+		if err := s.TestProfile.Validate(); err != nil {
+			return nil, err
+		}
+		return s.TestProfile.Prefixes(), nil
 	}
 	prefixes := []netip.Prefix{netip.PrefixFrom(target.Addr(), 32)}
 	if s.DNSTarget != "" {
@@ -228,6 +252,9 @@ func (s *session) plan() (helper.InstallPlan, error) {
 	scopes, err := s.scopes()
 	if err != nil {
 		return helper.InstallPlan{}, err
+	}
+	if s.TestProfile != nil {
+		return helper.PlanTestInstall(s.Helper, uint32(s.UID), *s.TestProfile)
 	}
 	return helper.PlanScopedInstall(s.Helper, uint32(s.UID), helper.ScopedOptions{Prefixes: scopes, ProbeAddress: s.Target, ProbeServerName: s.ServerName})
 }
@@ -342,11 +369,19 @@ func (s *session) verifyInstalledPlist(path string) error {
 	if err != nil {
 		return err
 	}
-	for _, p := range scopes {
-		want = append(want, "--capture", p.String())
+	if s.TestProfile != nil {
+		args, err := s.TestProfile.Arguments()
+		if err != nil {
+			return err
+		}
+		want = append([]string{helper.BinaryPath, "--owner-uid", strconv.Itoa(s.UID)}, args...)
+	} else {
+		for _, p := range scopes {
+			want = append(want, "--capture", p.String())
+		}
 	}
 	if launch.Label != helper.Label || !slices.Equal(launch.ProgramArguments, want) {
-		return errors.New("installed launchd arguments do not restrict capture to this session's reviewed hosts")
+		return errors.New("installed launchd arguments do not match this session's reviewed capture mode and limits")
 	}
 	return nil
 }

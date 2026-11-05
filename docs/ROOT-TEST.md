@@ -1,4 +1,4 @@
-# Scoped root acceptance session
+# Bounded root acceptance sessions
 
 This is a plan and an opt-in test harness, not a record of completed root tests.
 Do not run a command that opens an administrator dialog or starts capture until
@@ -32,9 +32,10 @@ them; the report records this limitation even when routing assertions pass.
 
 Do not use a production host whose existing connections must remain entirely
 untouched. Select a dedicated test destination. Do not select a LAN, loopback,
-link-local, private, multicast, or shared-address-space address. This initial
-harness deliberately refuses IPv6 and subnet capture; those need a subsequent
-reviewed plan.
+link-local, private, multicast, or shared-address-space address. The default
+host-scoped mode deliberately refuses IPv6 and subnet capture. The separately
+reviewed full IPv4 installation is described below; IPv6 remains a subsequent
+extension.
 
 Build both binaries into a private temporary directory, without changing the
 application's configuration or packaged resources:
@@ -114,6 +115,65 @@ The coordinator should review these concrete artifacts and obtain the user's
 go-ahead now. Keep a second Terminal window open with the emergency command
 already copied. Do not start the application or another helper installer
 during the session.
+
+## Separate full IPv4 installation
+
+This mode requires its own explicit review and installation after the previous
+session has stopped and uninstalled. Never edit a scoped session into full
+capture, remove `--capture` from its plist, or invoke the application's ordinary
+installer for a test. Preparation still refuses any existing installation.
+
+With a newly built, reviewed helper and the same privately chosen variables:
+
+```sh
+"$PITH_TEST_BIN/rootcheck" prepare --helper "$PITH_TEST_BIN/pithd" --version acceptance --interface-a "$PITH_IF_A" --interface-b "$PITH_IF_B" --target "$PITH_TLS_TARGET" --server-name "$PITH_TLS_NAME" --capture-mode full-ipv4 --test-lease 120s
+```
+
+The session records `testProfile`, including mode, lease, literal TLS endpoint,
+certificate name, and the exact LAN-DNS addresses selected by production capture
+planning. Review both IPv4 `/1` routes and every DNS `/32` before authorization.
+The helper receives explicit `--test-profile full-ipv4`, `--test-lease`, and
+repeated `--test-dns-host` arguments; no `--capture` argument is used. Tailscale
+DNS and DNS routed through another tunnel are excluded by the production plan.
+`--dns-target` cannot be combined with this mode. IPv6 capture is forbidden and
+SafeStart cannot be disabled, including by hot Reload or repeated Start.
+
+The exact install/cancellation prompt is:
+`Pith needs your password to install its full IPv4 test helper (at most 120 seconds per capture).`
+The uninstall and optional crash prompts, managed paths, ownership checks and
+emergency-command construction are unchanged. Dialog mode uses one canceled
+installation dialog and two password authorizations; optional crash adds one.
+Managed authorization, only when separately permitted, marks cancellation as
+skipped as described below. These are separate session counts, not permission
+to reuse a previous installation or credential authorization.
+
+The harness accepts a 30-to-120-second lease, default 120 seconds. The immutable
+helper limit starts before startup work, includes SafeStart, and never extends
+on reload. A separate timer closes the owned capture at expiry even if the
+engine's lifecycle lock is busy; bounded ownership-checked teardown can then
+finish. Expiry is a failure, not a passing test. The controller's total check
+deadline is ten seconds shorter than the lease, plus its independent cleanup
+deadline. Choose an observation duration that fits the remaining time after
+smoke requests; the outer deadline always wins.
+
+Only an authenticated `check` starts routing. Its smoke and existing TCP cases
+require actual captured process/target/rule/interface records. Production
+planning must still produce exactly the frozen prefixes before any utun is
+created. A changed LAN-DNS capture set refuses Start/check/rebaseline and needs
+a fresh reviewed installation. Stop removes only the two owned `/1`s, reviewed
+DNS host routes and owned utun. Defaults and external routes are never replayed
+or removed. The standalone emergency command uses the same journal ownership
+checks and needs no network or IPC.
+
+The first approved full-mode check must still be smoke. A later TCP batch,
+SafeStart failure, preservation, app/tool bypass, observation, or separately
+authorized crash uses a fresh bounded capture. Ordinary full capture includes
+other apps' new IPv4 traffic, which keeps system routing unless a test rule
+matches; reviewing only the test endpoint is therefore insufficient approval.
+DNS responses, tailnet controls, VPN self-restart, UDP/QUIC, app bundles and
+throughput require the additional evidence in [next acceptance](NEXT-ACCEPTANCE.md).
+The automated hotspot-renewal flag currently remains restricted to host-scoped
+sessions. No full-mode hardware acceptance is claimed by these unit tests.
 
 ## Ordered execution
 

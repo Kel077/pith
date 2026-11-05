@@ -20,6 +20,7 @@ import (
 	"github.com/Kel077/pith/internal/engine/passthrough"
 	"github.com/Kel077/pith/internal/engine/telemetry"
 	"github.com/Kel077/pith/internal/netif"
+	"github.com/Kel077/pith/internal/testprofile"
 )
 
 type Options struct {
@@ -27,6 +28,7 @@ type Options struct {
 	Scopes          []netip.Prefix // development: capture only these prefixes
 	ProbeAddress    string         // empty: api.ipify.org:443; IP requires ProbeServerName
 	ProbeServerName string
+	TestProfile     *testprofile.Profile // explicit bounded acceptance installation; nil in production
 	// Test seams below never relax the production helper's root requirement.
 	Driver          capture.Driver
 	WatchRoutes     func(context.Context) (<-chan capture.Change, error)
@@ -54,6 +56,17 @@ type Engine struct {
 }
 
 func New(opts Options) (*Engine, error) {
+	if opts.TestProfile != nil {
+		profile := *opts.TestProfile
+		profile.DNSHosts = slices.Clone(profile.DNSHosts)
+		if err := profile.Validate(); err != nil {
+			return nil, err
+		}
+		if len(opts.Scopes) != 0 || opts.ProbeAddress != profile.Target || opts.ProbeServerName != profile.ServerName {
+			return nil, errors.New("test profile cannot mix with scoped capture or a different SafeStart endpoint")
+		}
+		opts.TestProfile = &profile
+	}
 	if !filepath.IsAbs(opts.DataDir) {
 		return nil, fmt.Errorf("engine data directory must be absolute")
 	}
@@ -79,6 +92,9 @@ func New(opts Options) (*Engine, error) {
 		// A development controller can disappear without sending Stop. Never
 		// leave scoped test capture running indefinitely in the idle daemon.
 		e.scopedLease = 5 * time.Minute
+	}
+	if opts.TestProfile != nil {
+		e.scopedLease = opts.TestProfile.Lease
 	}
 	return e, nil
 }
@@ -121,6 +137,11 @@ func (e *Engine) state(s api.Status) {
 func statusPointer(s api.Status) *api.Status { copy := cloneStatus(s); return &copy }
 
 func (e *Engine) Start(ctx context.Context, scene api.Scene, settings api.Settings) error {
+	if e.opts.TestProfile != nil {
+		if err := e.opts.TestProfile.ValidateSettings(settings); err != nil {
+			return err
+		}
+	}
 	if err := validate(scene, settings); err != nil {
 		return err
 	}
@@ -144,6 +165,11 @@ func (e *Engine) Start(ctx context.Context, scene api.Scene, settings api.Settin
 }
 
 func (e *Engine) Reload(ctx context.Context, scene api.Scene, settings api.Settings) error {
+	if e.opts.TestProfile != nil {
+		if err := e.opts.TestProfile.ValidateSettings(settings); err != nil {
+			return err
+		}
+	}
 	if err := validate(scene, settings); err != nil {
 		return err
 	}

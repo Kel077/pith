@@ -33,11 +33,25 @@ type session struct {
 	lastSent, lastReceived uint64
 	lastAt                 time.Time
 	leaseUntil             time.Time
+	leaseTimer             *time.Timer
+	leaseDone              chan struct{}
+}
+
+func (s *session) stopLease() {
+	if s.leaseTimer != nil && !s.leaseTimer.Stop() {
+		<-s.leaseDone
+	}
 }
 
 func (e *Engine) startLocked(ctx context.Context, scene api.Scene, settings api.Settings) (result error) {
 	e.state(api.Status{State: api.Starting, SceneID: scene.ID})
 	s := &session{scene: scene, settings: settings, done: make(chan struct{})}
+	if e.opts.TestProfile != nil {
+		s.leaseUntil = time.Now().Add(e.scopedLease)
+		var cancelStartup context.CancelFunc
+		ctx, cancelStartup = context.WithDeadline(ctx, s.leaseUntil)
+		defer cancelStartup()
+	}
 	runCtx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 	changes, err := e.opts.WatchRoutes(runCtx)
@@ -51,6 +65,7 @@ func (e *Engine) startLocked(ctx context.Context, scene api.Scene, settings api.
 	}
 	defer func() {
 		if result != nil {
+			s.stopLease()
 			s.cancel()
 			if s.guard != nil {
 				s.guard.Revoke(result)
@@ -103,9 +118,22 @@ func (e *Engine) startLocked(ctx context.Context, scene api.Scene, settings api.
 			}
 		}
 	}
-	s.capture, err = capture.Prepare(ctx, capture.Options{IPv6: settings.IPv6, Scopes: e.opts.Scopes, DNS: dns, StatePath: filepath.Join(e.opts.DataDir, "capture.json"), Driver: e.opts.Driver})
+	var expected []netip.Prefix
+	if e.opts.TestProfile != nil {
+		expected = e.opts.TestProfile.Prefixes()
+	}
+	s.capture, err = capture.Prepare(ctx, capture.Options{IPv6: settings.IPv6, Scopes: e.opts.Scopes, DNS: dns, ExpectedPrefixes: expected, StatePath: filepath.Join(e.opts.DataDir, "capture.json"), Driver: e.opts.Driver})
 	if err != nil {
 		return err
+	}
+	if e.opts.TestProfile != nil {
+		// This timer closes owned capture even when a controller, Reload or disk
+		// operation holds the engine lifecycle lock. Stop always joins its work.
+		s.leaseDone = make(chan struct{})
+		s.leaseTimer = time.AfterFunc(time.Until(s.leaseUntil), func() {
+			defer close(s.leaseDone)
+			_ = s.capture.Close()
+		})
 	}
 	e.mu.Lock()
 	e.status.LastCapture = s.capture.Identity()
@@ -160,7 +188,7 @@ func (e *Engine) startLocked(ctx context.Context, scene api.Scene, settings api.
 		return err
 	}
 	started := time.Now()
-	if e.scopedLease > 0 {
+	if e.scopedLease > 0 && s.leaseUntil.IsZero() {
 		s.leaseUntil = started.Add(e.scopedLease)
 	}
 	if settings.SafeStart {
@@ -207,6 +235,7 @@ func (e *Engine) stopLocked() error {
 	e.publishLocked(api.Event{Status: statusPointer(e.status)})
 	e.mu.Unlock()
 	s.cancel()
+	s.stopLease()
 	s.guard.Revoke(errors.New("routing stopped"))
 	<-s.routeDone
 	// Restore kernel routing before waiting for application relays or disk I/O.
@@ -306,7 +335,7 @@ func (e *Engine) monitor(ctx context.Context, s *session) {
 			fail(s.guard.Err())
 			return
 		case <-leaseExpired:
-			fail(errors.New("scoped capture test lease expired; routing was stopped"))
+			fail(errors.New("capture test lease expired; routing was stopped"))
 			return
 		case err, ok := <-s.capture.Faults:
 			if ok {

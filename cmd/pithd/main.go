@@ -17,6 +17,7 @@ import (
 	"github.com/Kel077/pith/internal/engine"
 	"github.com/Kel077/pith/internal/engine/capture"
 	"github.com/Kel077/pith/internal/helper"
+	"github.com/Kel077/pith/internal/testprofile"
 )
 
 var version = "dev"
@@ -36,6 +37,16 @@ func run() error {
 	socket := flag.String("socket", helper.SocketPath, "authenticated Unix socket path")
 	probe := flag.String("safe-target", "", "SafeStart TLS host:port, resolved before capture")
 	serverName := flag.String("safe-server-name", "", "TLS server name when safe-target is an IP address")
+	testMode := flag.String("test-profile", "", "explicit acceptance installation: full-ipv4")
+	testLease := flag.Duration("test-lease", 0, "test-profile lease from 1s through 120s; never extended by reload")
+	var testDNS []netip.Addr
+	flag.Func("test-dns-host", "reviewed test-profile LAN DNS capture host (repeatable)", func(raw string) error {
+		addr, err := netip.ParseAddr(raw)
+		if err == nil {
+			testDNS = append(testDNS, addr)
+		}
+		return err
+	})
 	var scopes []netip.Prefix
 	flag.Func("capture", "development: capture only this CIDR for at most five minutes (repeatable); empty captures both /1 routes", func(raw string) error {
 		prefix, err := netip.ParsePrefix(raw)
@@ -46,6 +57,22 @@ func run() error {
 		return nil
 	})
 	flag.Parse()
+	var profile *testprofile.Profile
+	testSpecified := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "test-profile" || f.Name == "test-lease" || f.Name == "test-dns-host" {
+			testSpecified = true
+		}
+	})
+	if testSpecified {
+		profile = &testprofile.Profile{Mode: *testMode, Lease: *testLease, Target: *probe, ServerName: *serverName, DNSHosts: testDNS}
+		if err := profile.Validate(); err != nil {
+			return err
+		}
+		if len(scopes) != 0 {
+			return fmt.Errorf("--test-profile and --capture are mutually exclusive")
+		}
+	}
 	if *showVersion {
 		fmt.Println(version)
 		return nil
@@ -66,7 +93,7 @@ func run() error {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-	backend, err := engine.New(engine.Options{DataDir: *dataDir, Scopes: scopes, ProbeAddress: *probe, ProbeServerName: *serverName})
+	backend, err := engine.New(engine.Options{DataDir: *dataDir, Scopes: scopes, ProbeAddress: *probe, ProbeServerName: *serverName, TestProfile: profile})
 	if err != nil {
 		return err
 	}

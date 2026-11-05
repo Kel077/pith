@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"slices"
@@ -404,14 +405,11 @@ func rebaselineWithOps(parent context.Context, s *session, c api.Service, label 
 	if resolved[0].Name == resolved[1].Name {
 		return errors.New("reviewed interfaces no longer resolve to two distinct adapters")
 	}
-	scopes, err := s.scopes()
-	if err != nil {
-		return err
+	if err := s.validateSnapshotScope(report.Before); err != nil {
+		return fmt.Errorf("new baseline conflicts with the frozen capture: %w", err)
 	}
-	if _, err := capture.Build(report.Before.Routes, nil, false, scopes); err != nil {
-		return fmt.Errorf("new baseline conflicts with the frozen host capture: %w", err)
-	}
-	if capture.SystemInterface(report.Before.Routes, scopes[0].Addr()) == "" {
+	target, _ := netip.ParseAddrPort(s.Target)
+	if capture.SystemInterface(report.Before.Routes, target.Addr()) == "" {
 		return errors.New("the frozen test destination has no effective system route")
 	}
 	for _, iface := range []string{"", resolved[0].Name, resolved[1].Name} {
@@ -429,6 +427,9 @@ func rebaselineWithOps(parent context.Context, s *session, c api.Service, label 
 	}
 	if !stableSnapshots(report.Before, report.After) {
 		return errors.New("routes or interfaces changed during rebaseline preflight; previous baseline remains active")
+	}
+	if err := s.validateSnapshotScope(report.After); err != nil {
+		return err
 	}
 	if err := ops.verifyInstalled(s); err != nil {
 		return err
