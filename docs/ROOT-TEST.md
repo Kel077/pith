@@ -231,6 +231,16 @@ unit tests and that pass do not establish the additional acceptance items.
 
 ## Separate IPv6 host installation
 
+The first hardware smoke attempt failed during SafeStart with
+`unreadable configured route event`; rollback and uninstall were independently
+verified clean. The former `-net /128` route command produced a destination with
+neither HOST nor netmask in a synthetic Darwin reproduction. Both IPv4 `/32` and
+IPv6 `/128` now use explicit `-host` for add and delete. See
+[the source analysis and observer policy](ARCHITECTURE.md#capturing-and-forwarding).
+The original failed report contained no event metadata, so the exact event is
+not retrospectively proven. A corrected hardware pass remains pending: rebuild
+the helper and harness, then prepare and review a new session before retrying.
+
 IPv6 `/128` acceptance is another new installation and private session, selected
 explicitly by `--capture-mode host-ipv6`. Both reviewed adapters must be up and
 have a global, non-private IPv6 address. A missing IPv6 path is a prerequisite
@@ -382,6 +392,13 @@ queried after cleanup with an independent three-second bound. These retain
 outbound errors from SafeStart even when startup never reaches Running or its
 final event was not delivered. `connectionLogError` records an unavailable log;
 missing diagnostics never turn a failed probe or failed cleanup into a pass.
+The report also copies `Status.RouteDiagnostics` after Stop, independently of
+subscription delivery. Up to 32 distinct entries retain RTM type, flags, index,
+sockaddr families/lengths and the decision for unusual messages. They contain
+no raw addresses, interface names or packet contents. Startup failures retain
+them; the next capture attempt or helper restart clears them. An external scoped
+event can be recorded while capture continues only if independent ownership
+verification succeeds; an ambiguous capture-affecting event still stops routing.
 
 ### Optional hotspot renewal during observation
 

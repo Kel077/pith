@@ -16,6 +16,7 @@ func TestCheckRetainsFailedStartupConnectionsWithoutSubscription(t *testing.T) {
 		service.startErr = &api.Error{Code: api.ErrNetworkLost, Detail: "synthetic startup failure"}
 		service.onStart = func() {
 			service.logRows = []api.Connection{{ID: 1, Started: time.Now(), Remote: s.Target, Protocol: api.TCP, Outcome: api.Unreachable, Problem: "example0: network is unreachable"}}
+			service.status.RouteDiagnostics = []string{"RTM type=1 flags=0x0 index=90 addrs=[0:family=30/len=28]: synthetic format"}
 		}
 		if logFailure {
 			service.logErr = errors.New("synthetic log unavailable")
@@ -35,6 +36,9 @@ func TestCheckRetainsFailedStartupConnectionsWithoutSubscription(t *testing.T) {
 		}
 		if report == nil || service.stops == 0 || !report.Restored || service.logQuery.Since != report.Started || service.logQuery.Limit != 500 {
 			t.Fatal("startup diagnostics did not follow bounded cleanup")
+		}
+		if !reflect.DeepEqual(report.RouteDiagnostics, service.status.RouteDiagnostics) || len(report.RouteDiagnostics) != 1 {
+			t.Fatal("post-Stop report lost startup route metadata", report)
 		}
 		if logFailure {
 			if report.LogError != service.logErr.Error() {

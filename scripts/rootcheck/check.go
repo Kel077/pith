@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -57,26 +58,27 @@ type checkCase struct {
 }
 
 type checkReport struct {
-	Started     time.Time              `json:"started"`
-	Finished    time.Time              `json:"finished"`
-	Mode        string                 `json:"mode"`
-	Baseline    string                 `json:"baselineLabel"`
-	BaselineSHA string                 `json:"baselineSHA256"`
-	CaptureMode string                 `json:"captureMode"`
-	Cases       []checkCase            `json:"cases"`
-	Traffic     api.Traffic            `json:"traffic"`
-	Events      []api.Event            `json:"events"`
-	Before      snapshot               `json:"before"`
-	After       snapshot               `json:"after"`
-	Error       string                 `json:"error,omitempty"`
-	StopError   string                 `json:"stopError,omitempty"`
-	Restored    bool                   `json:"restored"`
-	Observation bool                   `json:"manualObservationOnly"`
-	Notes       []string               `json:"notes,omitempty"`
-	Hotspot     *hotspotObservation    `json:"hotspotRenewal,omitempty"`
-	SkippedDNS  []capture.DNSExclusion `json:"skippedDNS,omitempty"`
-	Connections []api.Connection       `json:"connections,omitempty"`
-	LogError    string                 `json:"connectionLogError,omitempty"`
+	Started          time.Time              `json:"started"`
+	Finished         time.Time              `json:"finished"`
+	Mode             string                 `json:"mode"`
+	Baseline         string                 `json:"baselineLabel"`
+	BaselineSHA      string                 `json:"baselineSHA256"`
+	CaptureMode      string                 `json:"captureMode"`
+	Cases            []checkCase            `json:"cases"`
+	Traffic          api.Traffic            `json:"traffic"`
+	Events           []api.Event            `json:"events"`
+	Before           snapshot               `json:"before"`
+	After            snapshot               `json:"after"`
+	Error            string                 `json:"error,omitempty"`
+	StopError        string                 `json:"stopError,omitempty"`
+	Restored         bool                   `json:"restored"`
+	Observation      bool                   `json:"manualObservationOnly"`
+	Notes            []string               `json:"notes,omitempty"`
+	Hotspot          *hotspotObservation    `json:"hotspotRenewal,omitempty"`
+	SkippedDNS       []capture.DNSExclusion `json:"skippedDNS,omitempty"`
+	Connections      []api.Connection       `json:"connections,omitempty"`
+	LogError         string                 `json:"connectionLogError,omitempty"`
+	RouteDiagnostics []string               `json:"routeDiagnostics,omitempty"`
 }
 
 func check(parent context.Context, s *session, c api.Service, opts checkOptions) (resultErr error) {
@@ -179,6 +181,7 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		defer cleanupCancel()
 		record, cleanupErr := collectCleanup(cleanupCtx, s, c, ops, "check")
 		report.After, report.Restored = record.After, record.Restored
+		report.RouteDiagnostics = slices.Clone(record.Status.RouteDiagnostics)
 		// A failed Start may never enter Running or deliver its last event before
 		// subscription cancellation. Read the bounded log after Stop, including
 		// SafeStart's outbound error, independently of event delivery.

@@ -136,6 +136,16 @@ at most 60 seconds and the controller stops its work ten seconds before that
 deadline. Preparation, installation identity, family/scope rejection and cleanup
 have synthetic coverage, not an IPv6 hardware pass.
 
+The first hardware smoke attempt stopped during SafeStart with
+`unreadable configured route event`; the coordinator verified clean rollback and
+uninstall. Source analysis and a synthetic wire-format reproduction found that
+`-net` with IPv6 `/128` removes HOST while omitting the mask. Host additions and
+deletions now explicitly use `-host` in both families. The former report had no
+event metadata, so the exact offending hardware message is unconfirmed. Rebuild
+both binaries and prepare a new session; the corrected IPv6 hardware run is still
+pending. Inspect the new `routeDiagnostics` field even on failed startup: it
+records address formats and the ownership decision without address payloads.
+
 1. Confirm the two adapters and one permitted IPv6 TLS endpoint. It must support
    certificate-verified HTTP/1.1 `GET /`; a plain-text IPv6 exit echo also enables
    the optional tool-bypass check. Freeze a literal `[IPv6]:port` and certificate

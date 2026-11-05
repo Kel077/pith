@@ -21,8 +21,16 @@ type Change struct {
 	Prefix    netip.Prefix
 	Added     bool
 	Interface bool
+	Address   bool
 	Up        bool
 	Err       error
+	// Unparsed retains a known policy header with an undecodable key or address.
+	// Prefix may retain an independently decoded IP key for relevance only.
+	// Diagnostic contains no address payloads.
+	Unparsed   bool
+	Scoped     bool
+	NonIP      bool
+	Diagnostic string
 }
 
 var ErrEgressChanged = errors.New("egress interface or route changed")
@@ -136,6 +144,11 @@ func (g *Guard) Observe(event Change) error {
 	if event.Err != nil {
 		return g.Revoke(event.Err)
 	}
+	if event.Unparsed {
+		if _, safe := g.unparsedDisposition(event); !safe {
+			return g.Revoke(errors.New(g.RouteDiagnostic(event)))
+		}
+	}
 	if event.Index == g.c.state.Index {
 		if !event.Added && !event.Interface && slices.Contains(g.c.Plan.Prefixes, event.Prefix) {
 			return g.Revoke(errors.New("capture route was withdrawn"))
@@ -143,7 +156,7 @@ func (g *Guard) Observe(event Change) error {
 	} else {
 		g.mu.Lock()
 		for name, index := range g.indices {
-			if index == event.Index && (event.Interface && !event.Up || !event.Added && event.Prefix.IsValid() && tunnel(name)) {
+			if index == event.Index && (event.Unparsed || event.Interface && !event.Up || !event.Added && event.Prefix.IsValid() && tunnel(name)) {
 				g.epochs[name]++
 			}
 			if index == event.Index && tunnel(name) && !event.Added && event.Prefix.IsValid() && event.Prefix.Bits() == 0 {
@@ -157,6 +170,41 @@ func (g *Guard) Observe(event Change) error {
 		return g.Validate(true)
 	}
 	return g.Err()
+}
+
+// RouteDiagnostic attaches the decision, without incorporating snapshot errors
+// (which may contain addresses). The caller retains it even if startup fails.
+func (g *Guard) RouteDiagnostic(event Change) string {
+	if event.Diagnostic == "" {
+		return ""
+	}
+	if event.Unparsed {
+		reason, _ := g.unparsedDisposition(event)
+		return event.Diagnostic + "; " + reason
+	}
+	return event.Diagnostic
+}
+
+func (g *Guard) unparsedDisposition(event Change) (string, bool) {
+	if event.NonIP {
+		return "non-IP route; verify capture and continue", true
+	}
+	if event.Index <= 0 {
+		return "unknown interface; capture ownership cannot be excluded", false
+	}
+	if event.Index == g.c.state.Index {
+		return "owned interface; capture ownership cannot be established", false
+	}
+	if event.Address || event.Interface {
+		return "external interface notification; verify capture and continue", true
+	}
+	if event.Scoped {
+		return "external scoped route; verify capture and continue", true
+	}
+	if event.Prefix.IsValid() && !slices.Contains(g.c.Plan.Prefixes, event.Prefix) && (event.Prefix.Addr().IsLinkLocalUnicast() || event.Prefix.Addr().IsMulticast()) {
+		return "external link-local or multicast key; verify capture and continue", true
+	}
+	return "unreadable unscoped IP route; capture overlap cannot be excluded", false
 }
 
 // Addresses, DNS and labels are mutable metadata, not interface lifetimes.

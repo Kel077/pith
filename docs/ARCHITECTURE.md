@@ -63,6 +63,41 @@ cache entries. Ordinary traffic can add or expire those entries without changing
 the configured forwarding policy. Cloning parent routes, static host routes and
 VPN routes remain visible for conflict checks, saved system egress and cleanup.
 
+Every full-width prefix uses `route -host` and a literal address for both adding
+and deleting it; this includes IPv4 `/32` and IPv6 `/128`, DNS hosts, scoped
+profiles and journal cleanup. Subnets use `-net` and a CIDR. In Apple's
+[network_cmds route.c](https://github.com/apple-oss-distributions/network_cmds/blob/main/route.tproj/route.c),
+`inet6_makenetandmask` returns a host for `/128` without a netmask. Forcing `-net`
+then clears `RTF_HOST`, leaving a non-default destination with neither HOST nor
+a mask. This reproduced the former IPv6 startup event-decoding failure in a
+synthetic Darwin message. The old failed hardware run retained no message
+metadata, so its exact event cannot be recovered retroactively.
+
+The route observer decodes each frame separately and retains address-free
+metadata for unusual events: RTM type, flags, interface index, and each sockaddr
+slot's family and original length. It accepts XNU `rt_msg1`'s unpadded final
+sockaddr (including an empty default mask), without inventing missing address
+payload. `x/net/route` normalizes KAME embedded scope and `sin6_scope_id`; scope
+bytes never enter the prefix. Synthetic wire-format tests cover scoped defaults,
+link-local destinations/gateways, multicast, link gateways, and address events.
+
+An unreadable IP event on the owned interface, with unknown interface identity,
+or with an uncertain unscoped overlap cannot exclude a capture conflict: stop
+safely and retain the reason. A proven non-IP route, an external scoped route,
+or an independently decoded external link-local/multicast key unequal to every
+capture prefix cannot replace Pith's unscoped capture; record the event,
+invalidate affected external bindings, and independently verify the complete
+owned route set before continuing. A key recovered from an otherwise malformed
+message is used only for relevance, never as a routing or deletion record.
+Unreadable address/interface notifications with a complete header and a known
+external index likewise refresh that interface and recheck capture; missing
+identity or an unreadable notification on the owned utun remains fatal.
+Do not guess a host mask or ignore an unknown unscoped route just because its
+destination looks link-local. Stream/framing failures remain ownership faults.
+`Status.RouteDiagnostics` retains the latest 32 distinct technical summaries,
+without raw addresses or names, through Stop and startup failure. A new capture
+attempt or helper restart clears it; ordinary Reload does not.
+
 The tunnel uses the first available IPv4 `/30` and IPv6 ULA `/126` from bounded
 candidate lists. Both the routing table and assigned interface prefixes must be
 free of overlaps; scoped, local and rejecting routes all count as occupied.

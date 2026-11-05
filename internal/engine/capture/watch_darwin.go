@@ -4,7 +4,6 @@ package capture
 
 import (
 	"context"
-	"errors"
 	"os"
 
 	"golang.org/x/net/route"
@@ -45,15 +44,7 @@ func Watch(ctx context.Context) (<-chan Change, error) {
 				}
 				return
 			}
-			messages, err := route.ParseRIB(route.RIBTypeRoute, data[:n])
-			if err != nil {
-				select {
-				case ch <- Change{Err: err}:
-				case <-ctx.Done():
-				}
-				return
-			}
-			for _, event := range changes(messages) {
+			for _, event := range parseRouteEvents(data[:n]) {
 				select {
 				case ch <- event:
 				default:
@@ -76,18 +67,19 @@ func changes(messages []route.Message) []Change {
 			if m.Type != unix.RTM_ADD && m.Type != unix.RTM_DELETE && m.Type != unix.RTM_CHANGE && m.Type != unix.RTM_REDIRECT {
 				continue
 			}
-			copy := *m
-			copy.Flags |= unix.RTF_UP // Deleted routes need not retain UP.
-			routes := decodeRoutes([]route.Message{&copy}, map[int]string{})
-			if len(routes) != 1 {
-				result = append(result, Change{Err: errors.New("unreadable configured route event")})
-				continue
+			event := Change{Index: messageIndex(m.Index, m.Addrs), Added: m.Type == unix.RTM_ADD, Scoped: m.Flags&unix.RTF_IFSCOPE != 0}
+			prefix, err := routePrefix(m)
+			if err != nil {
+				event.Unparsed, event.Diagnostic = true, err.Error()
+				_, event.NonIP = routeAddr(m.Addrs, unix.RTAX_DST).(*route.LinkAddr)
+			} else {
+				event.Prefix = prefix
 			}
-			result = append(result, Change{Index: messageIndex(m.Index, m.Addrs), Prefix: routes[0].Prefix, Added: m.Type == unix.RTM_ADD})
+			result = append(result, event)
 		case *route.InterfaceMessage:
 			result = append(result, Change{Index: messageIndex(m.Index, m.Addrs), Interface: true, Up: m.Flags&unix.IFF_UP != 0})
 		case *route.InterfaceAddrMessage:
-			result = append(result, Change{Index: messageIndex(m.Index, m.Addrs), Added: m.Type == unix.RTM_NEWADDR})
+			result = append(result, Change{Index: messageIndex(m.Index, m.Addrs), Address: true, Added: m.Type == unix.RTM_NEWADDR})
 		}
 	}
 	return result

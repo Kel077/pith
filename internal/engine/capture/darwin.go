@@ -4,6 +4,7 @@ package capture
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -44,7 +45,7 @@ func decodeRoutes(messages []route.Message, names map[int]string) []Route {
 	var result []Route
 	for _, message := range messages {
 		r, ok := message.(*route.RouteMessage)
-		if !ok || r.Flags&unix.RTF_UP == 0 || len(r.Addrs) <= unix.RTAX_NETMASK {
+		if !ok || r.Flags&unix.RTF_UP == 0 {
 			continue
 		}
 		// Keep CLONING/PRCLONING parents, static hosts, and VPN routes. Only their
@@ -52,26 +53,40 @@ func decodeRoutes(messages []route.Message, names map[int]string) []Route {
 		if r.Flags&(unix.RTF_WASCLONED|unix.RTF_LLINFO) != 0 {
 			continue
 		}
-		dst := address(r.Addrs[unix.RTAX_DST])
-		if !dst.IsValid() {
+		prefix, err := routePrefix(r)
+		if err != nil {
 			continue
 		}
-		bits := 0
-		if r.Flags&unix.RTF_HOST != 0 {
-			bits = dst.BitLen()
-		} else if mask := address(r.Addrs[unix.RTAX_NETMASK]); mask.IsValid() {
-			var total int
-			bits, total = net.IPMask(mask.AsSlice()).Size()
-			if total != dst.BitLen() {
-				continue
-			}
-		} else if !dst.IsUnspecified() {
-			continue
-		}
-		prefix := netip.PrefixFrom(dst, bits).Masked()
-		result = append(result, Route{Prefix: prefix, Interface: names[r.Index], Index: r.Index, Gateway: address(r.Addrs[unix.RTAX_GATEWAY]), Scoped: r.Flags&unix.RTF_IFSCOPE != 0, Local: r.Flags&unix.RTF_LOCAL != 0, Reject: r.Flags&(unix.RTF_REJECT|unix.RTF_BLACKHOLE) != 0})
+		result = append(result, Route{Prefix: prefix, Interface: names[r.Index], Index: r.Index, Gateway: address(routeAddr(r.Addrs, unix.RTAX_GATEWAY)), Scoped: r.Flags&unix.RTF_IFSCOPE != 0, Local: r.Flags&unix.RTF_LOCAL != 0, Reject: r.Flags&(unix.RTF_REJECT|unix.RTF_BLACKHOLE) != 0})
 	}
 	return result
+}
+
+func routeAddr(addrs []route.Addr, slot int) route.Addr {
+	if slot < len(addrs) {
+		return addrs[slot]
+	}
+	return nil
+}
+
+func routePrefix(r *route.RouteMessage) (netip.Prefix, error) {
+	dst := address(routeAddr(r.Addrs, unix.RTAX_DST))
+	if !dst.IsValid() {
+		return netip.Prefix{}, errors.New("missing IP destination")
+	}
+	bits := 0
+	if r.Flags&unix.RTF_HOST != 0 {
+		bits = dst.BitLen()
+	} else if mask := address(routeAddr(r.Addrs, unix.RTAX_NETMASK)); mask.IsValid() {
+		var total int
+		bits, total = net.IPMask(mask.AsSlice()).Size()
+		if total != dst.BitLen() {
+			return netip.Prefix{}, errors.New("invalid IP netmask")
+		}
+	} else if !dst.IsUnspecified() {
+		return netip.Prefix{}, errors.New("non-default destination without HOST or netmask")
+	}
+	return netip.PrefixFrom(dst, bits).Masked(), nil
 }
 
 func address(value route.Addr) netip.Addr {
@@ -156,11 +171,21 @@ func (nativeDriver) Delete(ctx context.Context, prefix netip.Prefix, name string
 }
 
 func routeCommand(ctx context.Context, action string, prefix netip.Prefix, name string) error {
+	return command(ctx, "/sbin/route", routeArguments(action, prefix, name)...)
+}
+
+func routeArguments(action string, prefix netip.Prefix, name string) []string {
 	family := "-inet"
 	if prefix.Addr().Is6() {
 		family = "-inet6"
 	}
-	return command(ctx, "/sbin/route", "-n", action, family, "-net", prefix.String(), "-interface", name)
+	kind, destination := "-net", prefix.String()
+	if prefix.Bits() == prefix.Addr().BitLen() {
+		// Darwin omits RTA_NETMASK for IPv6 /128. Forcing -net also clears
+		// RTF_HOST, making that route ambiguous. Add and delete hosts explicitly.
+		kind, destination = "-host", prefix.Addr().String()
+	}
+	return []string{"-n", action, family, kind, destination, "-interface", name}
 }
 
 func command(ctx context.Context, path string, args ...string) error {

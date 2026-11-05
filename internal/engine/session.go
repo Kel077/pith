@@ -73,7 +73,8 @@ func (e *Engine) startLocked(ctx context.Context, scene api.Scene, settings api.
 			if s.routeDone != nil {
 				<-s.routeDone
 			} else {
-				for range changes {
+				for event := range changes {
+					e.routeDiagnostic(event.Diagnostic)
 				}
 			}
 			if s.capture != nil {
@@ -150,6 +151,7 @@ func (e *Engine) startLocked(ctx context.Context, scene api.Scene, settings api.
 	go func() {
 		defer close(s.routeDone)
 		for event := range changes {
+			e.routeDiagnostic(s.guard.RouteDiagnostic(event))
 			if runCtx.Err() == nil {
 				s.guard.Observe(event)
 			}
@@ -215,7 +217,7 @@ func (e *Engine) startLocked(ctx context.Context, scene api.Scene, settings api.
 	}
 	e.mu.Lock()
 	e.run = s
-	e.status = api.Status{State: api.Running, SceneID: scene.ID, Since: started, Warnings: warnings(s), LastCapture: e.status.LastCapture}
+	e.status = api.Status{State: api.Running, SceneID: scene.ID, Since: started, Warnings: warnings(s), LastCapture: e.status.LastCapture, RouteDiagnostics: e.status.RouteDiagnostics}
 	e.publishLocked(api.Event{Status: statusPointer(e.status)})
 	e.mu.Unlock()
 	go e.monitor(runCtx, s)
@@ -226,7 +228,7 @@ func (e *Engine) stopLocked() error {
 	e.mu.Lock()
 	s := e.run
 	if s == nil {
-		e.status = api.Status{State: api.Stopped, LastCapture: e.status.LastCapture}
+		e.status = api.Status{State: api.Stopped, LastCapture: e.status.LastCapture, RouteDiagnostics: e.status.RouteDiagnostics}
 		e.publishLocked(api.Event{Status: statusPointer(e.status)})
 		e.mu.Unlock()
 		_, err := e.store.Flush(true)

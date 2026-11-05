@@ -116,6 +116,7 @@ func (e *Engine) Status(ctx context.Context) (api.Status, error) {
 }
 func cloneStatus(s api.Status) api.Status {
 	s.Warnings = slices.Clone(s.Warnings)
+	s.RouteDiagnostics = slices.Clone(s.RouteDiagnostics)
 	if s.LastCapture != nil {
 		identity := *s.LastCapture
 		identity.Prefixes = slices.Clone(identity.Prefixes)
@@ -133,10 +134,32 @@ func (e *Engine) state(s api.Status) {
 	if s.LastCapture == nil {
 		s.LastCapture = e.status.LastCapture
 	}
+	if s.State != api.Starting {
+		s.RouteDiagnostics = e.status.RouteDiagnostics
+	}
 	e.status = s
 	e.publishLocked(api.Event{Status: statusPointer(s)})
 	e.mu.Unlock()
 }
+
+func (e *Engine) routeDiagnostic(summary string) {
+	if summary == "" {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if slices.Contains(e.status.RouteDiagnostics, summary) {
+		return
+	}
+	const limit = 32
+	if len(e.status.RouteDiagnostics) == limit {
+		e.status.RouteDiagnostics = e.status.RouteDiagnostics[1:]
+	}
+	e.status.RouteDiagnostics = append(e.status.RouteDiagnostics, summary)
+	// The usual status tick publishes these while running. Failed startup and
+	// Stop publish immediately, without flooding the event stream on route churn.
+}
+
 func statusPointer(s api.Status) *api.Status { copy := cloneStatus(s); return &copy }
 
 func (e *Engine) Start(ctx context.Context, scene api.Scene, settings api.Settings) error {
