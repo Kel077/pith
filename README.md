@@ -7,8 +7,8 @@
 ### Choose the network each app goes out through.
 
 **WeChat over your phone's hotspot. The office intranet over Ethernet. Everything else as usual.**<br>
-Rules by app, domain or IP send new connections out through the interface you pick,<br>
-and Pith shows the interface every connection really used.
+Write a few rules by app, domain or IP, and new connections leave through the interface you pick.<br>
+You can also see which interface every connection really used.
 
 [![License](https://img.shields.io/badge/license-MIT-111111)](LICENSE) [![Stars](https://img.shields.io/github/stars/Kel077/pith?style=flat&color=111111)](https://github.com/Kel077/pith/stargazers)<br>
 ![macOS 13+](https://img.shields.io/badge/macOS_13+-000000?logo=apple&logoColor=white) ![Apple silicon](https://img.shields.io/badge/Apple_silicon-000000?logo=apple&logoColor=white) ![Go](https://img.shields.io/badge/Go-00ADD8?logo=go&logoColor=white)
@@ -25,14 +25,14 @@ and Pith shows the interface every connection really used.
 
 ## Is Pith for you?
 
-A Mac can be on Ethernet, Wi-Fi and a phone's hotspot at once, yet macOS sends nearly every connection through just one of them. Pith lets you choose, app by app and destination by destination:
+A Mac can be on Ethernet, Wi-Fi and a phone's hotspot at the same time, but macOS sends almost everything through just one of them. Pith lets you decide, app by app and destination by destination:
 
-- **Send an app through another network**: a chat app over the hotspot, a download tool over the second line, everything else as before.
+- **Give one app its own line**: a chat app over the hotspot, a download tool over the second connection, everything else as before.
 - **Keep the intranet on the wire**: company hosts or a NAS over Ethernet, the rest over Wi-Fi.
-- **Fall back, or don't**: a rule tries its interfaces in order; when none connects, macOS's own routing takes over, or the connection fails if you want the rule strict.
-- **See where it went**: every connection with its app, its destination, the rule that decided and the interface it really left through.
+- **Switch lines when one fails**: a rule tries its interfaces in order, moving to the next when one can't connect; if none can, it hands the connection back to macOS, or drops it if you'd rather keep the rule strict.
+- **See where everything went**: each connection with its app, its destination, the rule that matched and the interface it actually used.
 
-It's for you if your Mac has more than one network at a time and some apps should use a particular one. If you only ever use one network, you don't need it.
+If your Mac is often on more than one network and you want certain apps to stick to one of them, Pith is for you. If you only ever use one network, you won't need it.
 
 Runs on Macs with Apple silicon and macOS 13 or later.
 
@@ -71,7 +71,7 @@ While routing is on, the helper captures new connections through a utun interfac
 
 ### Rules as sentences
 
-Each rule reads as what it does: these apps, to these places, go out through these interfaces, in this order.
+Each rule reads like a sentence: these apps, going to these places, leave through these interfaces, in this order.
 
 | | |
 | :-- | :-- |
@@ -81,7 +81,7 @@ Each rule reads as what it does: these apps, to these places, go out through the
 | **Block** | Block rules always win; otherwise the first matching rule from the top decides. Drag to reorder |
 | **Checks** | A rule that an earlier one fully covers says it never applies; **Check** tells which rule a connection would match, and where it would go now |
 
-Saving applies the rules to new connections at once; open connections keep the route they have.
+Changes apply to new connections as soon as you save them; connections already open keep their route.
 
 ### Scenes
 
