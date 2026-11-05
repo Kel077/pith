@@ -192,8 +192,17 @@ func runAppCase(ctx context.Context, s *session, c api.Service, cfg api.Config, 
 	}); err != nil {
 		return entry, fmt.Errorf("new captured connection evidence: %w", err)
 	}
-	if expectSuccess && (test.ExpectedIP == "" || proof.TLS.PublicIP != test.ExpectedIP) {
-		return entry, errors.New("public-IP echo differs from the expected physical or system preflight")
+	if expectSuccess {
+		iface := test.Interface
+		if test.Outcome == api.System {
+			iface = ""
+		}
+		if s.baselineIP(iface) == "" {
+			return entry, errors.New("app-bypass requires a public-IP preflight for the expected exit")
+		}
+		if err := s.checkEcho(&entry, iface); err != nil {
+			return entry, err
+		}
 	}
 	current, err := c.Status(ctx)
 	if err != nil || current.State != api.Running || !current.Since.Equal(since) {

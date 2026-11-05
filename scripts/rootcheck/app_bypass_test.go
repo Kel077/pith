@@ -132,7 +132,7 @@ func TestAppCaseRejectsIncorrectEvidenceAndAlwaysFinishesRequester(t *testing.T)
 		{"wrong domain", func(c *api.Connection, _ *requestProof) { c.Domain = "other.example" }},
 		{"missing bytes", func(c *api.Connection, _ *requestProof) { c.Received = 0 }},
 		{"missing public echo", func(_ *api.Connection, p *requestProof) { p.TLS.PublicIP = "" }},
-		{"wrong public echo", func(_ *api.Connection, p *requestProof) { p.TLS.PublicIP = "203.0.113.99" }},
+		{"wrong public echo", func(_ *api.Connection, p *requestProof) { p.TLS.PublicIP = "203.0.113.20" }},
 		{"request changed target", func(_ *api.Connection, p *requestProof) { p.Target = "192.0.2.21:443" }},
 		{"request changed path", func(_ *api.Connection, p *requestProof) { p.Executable += "-other" }},
 	} {

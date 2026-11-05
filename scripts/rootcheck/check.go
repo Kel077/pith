@@ -47,6 +47,8 @@ type checkCase struct {
 	Connection    api.Connection `json:"connection"`
 	TLS           tlsEvidence    `json:"tls"`
 	ExpectedIP    string         `json:"expectedPublicIP,omitempty"`
+	ExitIPDrift   bool           `json:"exitIPDrift,omitempty"`
+	EvidenceNote  string         `json:"evidenceNote,omitempty"`
 	RequestPID    int            `json:"requestPID,omitempty"`
 	RequestPath   string         `json:"requestExecutable,omitempty"`
 	RequestTarget string         `json:"requestTarget,omitempty"`
@@ -301,13 +303,11 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 			return false, nil
 		})
 		if err == nil && expectSuccess {
-			entry.ExpectedIP = s.baselineIP(iface)
+			echoInterface := iface
 			if outcome == api.System {
-				entry.ExpectedIP = s.baselineIP("")
+				echoInterface = ""
 			}
-			if entry.ExpectedIP != "" && entry.TLS.PublicIP != entry.ExpectedIP {
-				err = errors.New("public-IP echo differs from the preflight for the expected interface")
-			}
+			err = s.checkEcho(&entry, echoInterface)
 		}
 		if err == nil {
 			current, statusErr := c.Status(ctx)
