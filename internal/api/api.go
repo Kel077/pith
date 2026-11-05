@@ -51,6 +51,18 @@ type Service interface {
 	// test that also finds the interface's public addresses.
 	Probe(ctx context.Context, iface, target string) (Probe, error)
 
+	// Hotspot reads the mobile hotspot behind an interface, by its Name:
+	// ErrUnsupported when Pith can't talk to it.
+	Hotspot(ctx context.Context, iface string) (Hotspot, error)
+	// SetHotspotPassword tries the admin password of the hotspot behind an
+	// interface, ErrWrongPassword when it refuses it, and keeps it in the
+	// keychain.
+	SetHotspotPassword(ctx context.Context, iface, password string) error
+	// RenewHotspot has the hotspot behind an interface reconnect to its
+	// carrier, which gives it new public addresses, and returns once it is
+	// connected again.
+	RenewHotspot(ctx context.Context, iface string) (HotspotRenewal, error)
+
 	// Connections returns logged connections, newest first.
 	Connections(ctx context.Context, q ConnectionQuery) ([]Connection, error)
 	// ClearConnections empties the connection log.
@@ -362,6 +374,38 @@ type Probe struct {
 	PublicIPv4 string        `json:"publicIPv4,omitempty"`
 	PublicIPv6 string        `json:"publicIPv6,omitempty"`
 	Problem    string        `json:"problem,omitempty"` // technical, when !OK
+}
+
+// Hotspot is a mobile hotspot behind one of the interfaces, as it reports
+// its connection to its carrier.
+type Hotspot struct {
+	Interface  string `json:"interface"`
+	Model      string `json:"model"`                // as it names itself: M2000
+	Connected  bool   `json:"connected"`            // to its carrier
+	Technology string `json:"technology,omitempty"` // 5G, LTE
+	Bars       int    `json:"bars"`                 // signal, 0 to 5
+	// Locked: Pith needs the hotspot's admin password, SetHotspotPassword,
+	// to read its cell and to renew it.
+	Locked bool         `json:"locked,omitempty"`
+	Cell   *HotspotCell `json:"cell,omitempty"` // nil when Locked
+	At     time.Time    `json:"at"`
+}
+
+// HotspotCell is the cell a hotspot uses.
+type HotspotCell struct {
+	Operator string `json:"operator,omitempty"` // the carrier: T-Mobile
+	Band     string `json:"band,omitempty"`     // n41, B66
+	Signal   int    `json:"signal"`             // dBm
+	SNR      int    `json:"snr"`                // dB
+	Roaming  bool   `json:"roaming,omitempty"`
+}
+
+// HotspotRenewal tells what renewing a hotspot changed: Pith's HTTPS test
+// through its interface before and after.
+type HotspotRenewal struct {
+	Before Probe         `json:"before"`
+	After  Probe         `json:"after"`
+	Took   time.Duration `json:"took"` // until the hotspot was connected again
 }
 
 // ---- Connections and traffic ------------------------------------------------
