@@ -33,6 +33,8 @@ type webkitEvidence struct {
 	Result           string          `json:"result"`
 	Reason           string          `json:"reason,omitempty"`
 	PageBodyVerified bool            `json:"pageBodyVerified"`
+	TargetIndex      int             `json:"frozenTargetIndex,omitempty"`
+	PrivateRelay     string          `json:"privateRelayStatus"`
 	Connection       *api.Connection `json:"connection,omitempty"`
 	PCB              *webkitPCB      `json:"pcb,omitempty"`
 }
@@ -156,8 +158,7 @@ func runWebKitCheck(parent context.Context, s *session, c api.Service, cfg api.C
 	if err := s.reviewedWebKitPlan(); err != nil {
 		return err
 	}
-	endpoint, _ := netip.ParseAddrPort(s.Target)
-	cfg.Scenes[0].Rules = []api.Rule{{ID: "webkit-app", Enabled: true, Apps: []api.AppRef{s.WebKit.App}, Targets: []string{endpoint.Addr().String()}, Protocol: api.AnyProtocol, Action: api.Route, Via: []api.InterfaceRef{s.Interfaces[0]}}}
+	cfg.Scenes[0].Rules = []api.Rule{{ID: "webkit-app", Enabled: true, Apps: []api.AppRef{s.WebKit.App}, Targets: append([]string(nil), s.WebKit.Addresses...), Protocol: api.AnyProtocol, Action: api.Route, Via: []api.InterfaceRef{s.Interfaces[0]}}}
 	if err := c.SaveConfig(parent, cfg); err != nil {
 		return err
 	}
@@ -165,10 +166,22 @@ func runWebKitCheck(parent context.Context, s *session, c api.Service, cfg api.C
 	if err != nil {
 		return err
 	}
-	evidence := &webkitEvidence{URL: s.webkitURL(), OpenRequested: launch, Result: "incomplete", Reason: "no fresh delegated socket observed"}
+	evidence := &webkitEvidence{URL: s.webkitURL(), OpenRequested: launch, Result: "incomplete", Reason: "no fresh delegated socket observed", PrivateRelay: "unknown; direct-connect prerequisite requires coordinator verification"}
 	report.WebKit = evidence
 	report.Notes = append(report.Notes, "Automatic WebKit evidence proves delegated socket ownership and exit routing only. Page body, HTTP response and URL nonce are not automatically verified; keep any manual page evidence separately. Background URLSession is skipped.")
 	defer func() {
+		// This observation summary identifies the destination by its frozen ordinal.
+		// Existing private baseline/log artifacts retain their usual audit evidence.
+		if evidence.Connection != nil {
+			copy := *evidence.Connection
+			copy.Remote = ""
+			evidence.Connection = &copy
+		}
+		if evidence.PCB != nil {
+			copy := *evidence.PCB
+			copy.Socket.Remote = netip.AddrPort{}
+			evidence.PCB = &copy
+		}
 		if err := s.reviewedWebKitPlan(); err != nil {
 			resultErr = errors.Join(resultErr, err)
 			evidence.Result = "failed"
@@ -201,7 +214,8 @@ func runWebKitCheck(parent context.Context, s *session, c api.Service, cfg api.C
 			return false, err
 		}
 		for _, conn := range rows {
-			if conn.ID <= maxID || conn.Started.Before(evidence.Ready) || conn.Remote != s.Target || (conn.Protocol != api.TCP && conn.Protocol != api.UDP) {
+			index := s.webkitTargetIndex(conn.Remote)
+			if conn.ID <= maxID || conn.Started.Before(evidence.Ready) || index == 0 || (conn.Protocol != api.TCP && conn.Protocol != api.UDP) {
 				continue
 			}
 			proof, ok := proofs[conn.ID]
@@ -211,6 +225,7 @@ func runWebKitCheck(parent context.Context, s *session, c api.Service, cfg api.C
 					evidence.Reason = "fresh flow lacks its application tuple"
 					continue
 				}
+				endpoint, _ := netip.ParseAddrPort(conn.Remote)
 				proof, err = deps.lookup(ctx, conn.Protocol, local, endpoint)
 				if err != nil {
 					evidence.Reason = "independent PCB sample unavailable: " + err.Error()
@@ -234,6 +249,7 @@ func runWebKitCheck(parent context.Context, s *session, c api.Service, cfg api.C
 				return false, err
 			}
 			evidence.Connection, evidence.PCB = &conn, &proof
+			evidence.TargetIndex = index
 			if err := webkitConnection(s.WebKit, conn, proof, s.Interfaces[0].Name); err != nil {
 				evidence.Result = "failed"
 				return false, err
@@ -251,7 +267,7 @@ func runWebKitCheck(parent context.Context, s *session, c api.Service, cfg api.C
 		return fmt.Errorf("incomplete: %s: %w", evidence.Reason, err)
 	}
 	if err == nil {
-		fmt.Println("PASS: delegated WebKit socket and exit routing; page body was not automatically verified.")
+		fmt.Printf("PASS: delegated WebKit socket and exit routing to frozen target #%d; page body was not automatically verified.\n", evidence.TargetIndex)
 	}
 	return err
 }

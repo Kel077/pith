@@ -137,7 +137,7 @@ mode-0600 files include:
 | `dns-plan.json` | Optional frozen resolver endpoints, question name, A/AAAA types, request counts, response/idle bounds and evidence limits; its checksum binds the automatic DNS stage |
 | `quic-plan.json` | Optional frozen HTTP/3 host/certificate name, request/packet/payload budgets and observable/fragmented Initial controls; its checksum binds the QUIC stage |
 | `bundle-plan.json` | Optional standalone tool checksum/size, exact bundle metadata/layout, TLS target and one/six-request smoke/batch limits for disposable bundle fixtures |
-| `webkit-plan.json` | Optional frozen Safari app/executable checksums, existing capture target, nonce URL, manual/single-open trigger and a 60-second maximum delegation observation |
+| `webkit-plan.json` | Optional frozen Safari app/executable checksums, current A-record set and lookup time, nonce URL, manual/single-open trigger and a 60-second maximum delegation observation |
 | `install-plan.json`, `install.sh` | Exact scoped launchd arguments, fixed destinations, helper SHA-256 check, rollback, and authorization prompt |
 | `uninstall.sh` | Exact bootout, ownership-checked route cleanup, and managed-path removal |
 | `emergency-command.txt` | A standalone, single command that can be pasted into Terminal without IPC or the test executable |
@@ -563,12 +563,37 @@ block priority and process cleanup without accessing a helper or network.
 
 ## Bounded Safari/WebKit observation
 
-This separate stage is implemented with synthetic tests; hardware acceptance is
-pending. Add `--webkit-app '<absolute Safari .app path>'` to a new `host-ipv4`
+The first hardware observation passed TCP smoke and performed its single open
+without an authorization prompt, but saw no new socket to the sole captured host.
+It remains `incomplete`; uninstall was clean. Multiple DNS answers and Private
+Relay were possible causes, not proven diagnoses. The expanded preparation below
+has synthetic coverage and still needs hardware acceptance.
+
+Add `--webkit-app '<absolute Safari .app path>'` to a new `host-ipv4`
 preparation. It resolves the app's canonical path, requires the Safari identifier,
 and freezes its Info.plist/executable hashes and one nonce-bearing HTTPS URL in
-`webkit-plan.json`. The URL uses the existing TLS name and port; the existing
-literal `/32` is the only capture scope. No browser runs during preparation.
+`webkit-plan.json`. One system-resolver IPv4 lookup, limited to five seconds,
+freezes every distinct A record in that answer as a `/32`, sorted numerically.
+All addresses must be public, and the separately reviewed TLS target must be in
+the set. Empty, unsafe or oversized results fail preparation. The whole scoped
+installation, including any other optional stage, may contain at most 16 hosts.
+Review every frozen host before installation. No browser runs during preparation.
+Later commands never resolve again or add new records automatically; preparing a
+different answer requires a new reviewed installation. This is the current
+resolver answer, not a promise to enumerate every address a CDN may return later.
+
+Private Relay is a direct-connect prerequisite, not a tested capability of this
+origin-only scope. No documented, reliable read-only per-Safari-navigation status
+detector was established; the preflight and report explicitly say `unknown`.
+Undocumented `networkserviceproxy` preference/status values cannot establish
+whether this particular site/connection uses the relay, so the harness does not
+read or interpret them. The coordinator must establish that the test navigation
+will connect directly before starting; if it is known to use Private Relay, stop
+at prerequisite review instead of running the timed observation. Apple describes
+device/network/site exceptions in its [Private Relay guidance](https://support.apple.com/102022).
+The tool never changes that setting, queries an account/keychain, or opens an
+automation authorization dialog. IPv6 preference, DNS changes, native connection
+reuse and other proxies can still produce an incomplete observation.
 
 After private plan review, installation and default TCP smoke, choose exactly one
 trigger for an observation of at most 60 seconds:
@@ -587,7 +612,11 @@ creation, tab inspection/closing or browser/service termination. The first form
 never starts a browser process. The coordinator closes only the test tab afterward
 and may separately record the expected page. Existing Safari windows are untouched.
 
-The app/IP rule directs fresh Safari TCP/UDP sockets to A. A successful automatic
+The app/IP rule covers every frozen A record and directs fresh Safari TCP/UDP
+sockets to A. The observation summary records the actual destination's one-based
+`frozenTargetIndex`, not its address; its Connection/PCB remote fields are cleared.
+The usual private route snapshots and full helper logs retain their existing
+audit format. A successful automatic
 observation requires a new post-READY helper record and an independent unprivileged
 PCB sample for the exact connected local/remote tuple. Its actual socket owner
 must be the WebKit networking process, with a different delegated PID resolving

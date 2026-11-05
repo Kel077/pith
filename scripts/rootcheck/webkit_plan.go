@@ -1,20 +1,25 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/Kel077/pith/internal/api"
 	"howett.net/plist"
@@ -26,6 +31,98 @@ type webkitPlan struct {
 	ExecutableSHA256 string     `json:"executableSHA256"`
 	PlistSHA256      string     `json:"plistSHA256"`
 	Nonce            string     `json:"navigationNonce"`
+	Addresses        []string   `json:"frozenARecords"`
+	ResolvedAt       time.Time  `json:"resolvedAt"`
+}
+
+type webkitResolver func(context.Context, string, string) ([]netip.Addr, error)
+
+func (s *session) freezeWebKit(ctx context.Context, path string, resolve webkitResolver) error {
+	if s.TestProfile != nil {
+		return errors.New("webkit acceptance requires host-ipv4")
+	}
+	name, err := api.ParseTarget(s.ServerName)
+	if err != nil || !name.IsDomain() || name.Subdomains || name.String() != s.ServerName {
+		return errors.New("webkit target requires a plain lowercase DNS name")
+	}
+	endpoint, err := testAddress(s.Target)
+	if err != nil {
+		return err
+	}
+	plan, err := inspectWebKitApp(path)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	addresses, err := resolve(ctx, "ip4", s.ServerName)
+	if err != nil {
+		return fmt.Errorf("freeze browser A records: %w", err)
+	}
+	unique := make(map[netip.Addr]bool)
+	for _, addr := range addresses {
+		addr = addr.Unmap()
+		if _, err := testAddress(netip.AddrPortFrom(addr, endpoint.Port()).String()); err != nil {
+			return errors.New("browser A records contain a non-public IPv4 address")
+		}
+		unique[addr] = true
+	}
+	if len(unique) == 0 || len(unique) > 16 || !unique[endpoint.Addr()] {
+		return errors.New("browser needs 1 to 16 distinct A records including the frozen TLS target")
+	}
+	ordered := make([]netip.Addr, 0, len(unique))
+	for addr := range unique {
+		ordered = append(ordered, addr)
+	}
+	slices.SortFunc(ordered, netip.Addr.Compare)
+	for _, addr := range ordered {
+		plan.Addresses = append(plan.Addresses, addr.String())
+	}
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return err
+	}
+	plan.Nonce, plan.ResolvedAt = hex.EncodeToString(nonce[:]), time.Now()
+	s.WebKit = plan
+	return nil
+}
+
+func (s *session) validateWebKit() error {
+	if s.WebKit == nil {
+		return nil
+	}
+	if s.TestProfile != nil || len(s.WebKit.Addresses) == 0 || len(s.WebKit.Addresses) > 16 || s.WebKit.ResolvedAt.IsZero() {
+		return errors.New("prepare a new host-ipv4 browser session with frozen A records")
+	}
+	endpoint, err := testAddress(s.Target)
+	if err != nil {
+		return err
+	}
+	var previous netip.Addr
+	found := false
+	for _, text := range s.WebKit.Addresses {
+		addr, err := netip.ParseAddr(text)
+		if err != nil {
+			return errors.New("invalid frozen browser A record")
+		}
+		if _, err := testAddress(netip.AddrPortFrom(addr, endpoint.Port()).String()); err != nil || addr.String() != text || previous.IsValid() && previous.Compare(addr) >= 0 {
+			return errors.New("browser A records must be canonical, public, unique and sorted")
+		}
+		previous, found = addr, found || addr == endpoint.Addr()
+	}
+	if !found {
+		return errors.New("browser A records omit the frozen TLS target")
+	}
+	return nil
+}
+
+func (s *session) webkitTargetIndex(remote string) int {
+	endpoint, err := netip.ParseAddrPort(remote)
+	target, _ := netip.ParseAddrPort(s.Target)
+	if err != nil || endpoint.Port() != target.Port() || s.WebKit == nil {
+		return 0
+	}
+	return slices.Index(s.WebKit.Addresses, endpoint.Addr().String()) + 1
 }
 
 func inspectWebKitApp(path string) (*webkitPlan, error) {
@@ -121,6 +218,9 @@ func (s *session) webkitPlanBytes() ([]byte, error) {
 	if _, err := testAddress(s.Target); err != nil {
 		return nil, err
 	}
+	if err := s.validateWebKit(); err != nil {
+		return nil, err
+	}
 	plan := struct {
 		Browser    *webkitPlan `json:"browser"`
 		Target     string      `json:"capturedTarget"`
@@ -129,7 +229,8 @@ func (s *session) webkitPlanBytes() ([]byte, error) {
 		Notes      []string    `json:"notes"`
 	}{s.WebKit, s.Target, s.webkitURL(), 60, []string{
 		"After READY, the coordinator navigates once manually, or explicit --webkit-open invokes /usr/bin/open -a with only the frozen app and URL once. No retries, AppleScript, window/tab control or browser termination. The coordinator closes only the test tab afterward.",
-		"No DNS override or new capture scope. If the browser resolves another address, reuses a native pooled socket, or its short-lived PCB cannot be observed, the case is inconclusive; do not widen capture or keep retrying.",
+		"Preparation freezes all current A records as distinct /32 routes, with at most 16 total scoped hosts. No later DNS override or scope expansion. New DNS answers, IPv6, pooled sockets or short-lived PCBs can make observation incomplete.",
+		"Private Relay status is unknown: no documented reliable per-navigation read-only detector is used. The coordinator must establish a direct-connection prerequisite before running; active relay traffic will not reach these origin /32 routes.",
 		"Observe a fresh exact TCP/UDP tuple, then independently read its owner/effective PID and executable through the existing unprivileged PCB/process resolver. A process-name match alone is never delegation proof.",
 		"Only socket delegation and routing are checked automatically. The HTTP status/body/navigation nonce inside TLS require separate manual page evidence; background URLSession is skipped.",
 		"One navigation can open multiple sockets or trigger background traffic. The harness bounds capture time, not the browser's total network bytes; use the reviewed small plain-text endpoint only.",
@@ -138,17 +239,7 @@ func (s *session) webkitPlanBytes() ([]byte, error) {
 	return append(data, '\n'), err
 }
 
-func (s *session) writeWebKitPlan(path string) error {
-	var err error
-	s.WebKit, err = inspectWebKitApp(path)
-	if err != nil {
-		return err
-	}
-	var nonce [16]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return err
-	}
-	s.WebKit.Nonce = hex.EncodeToString(nonce[:])
+func (s *session) writeWebKitPlan() error {
 	data, err := s.webkitPlanBytes()
 	if err != nil {
 		return err
@@ -182,7 +273,8 @@ func (s *session) reviewedWebKitPlan() error {
 		return err
 	}
 	current.Nonce = s.WebKit.Nonce
-	if *current != *s.WebKit {
+	current.Addresses, current.ResolvedAt = s.WebKit.Addresses, s.WebKit.ResolvedAt
+	if !reflect.DeepEqual(current, s.WebKit) {
 		return errors.New("reviewed browser app or executable changed")
 	}
 	return nil

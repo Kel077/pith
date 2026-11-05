@@ -32,7 +32,12 @@ func webkitFixture(t *testing.T) (*session, *proofService, api.Config, api.Conne
 	if err := os.WriteFile(filepath.Join(app, "Contents", "Info.plist"), metadata, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.writeWebKitPlan(app); err != nil {
+	if err := s.freezeWebKit(context.Background(), app, func(context.Context, string, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("192.0.2.20")}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.writeWebKitPlan(); err != nil {
 		t.Fatal(err)
 	}
 	networking := filepath.Join(s.Dir, "com.apple.WebKit.Networking")
@@ -63,7 +68,7 @@ func TestWebKitFrozenPlanAndAdmission(t *testing.T) {
 	if s.reviewedWebKitPlan() == nil || oldBinding == s.cleanupBinding() {
 		t.Fatal("plan not bound to review and cleanup")
 	}
-	if err := s.writeWebKitPlan(s.WebKit.App.Path); err != nil {
+	if err := s.writeWebKitPlan(); err != nil {
 		t.Fatal(err)
 	}
 	after, _ := s.scopes()
@@ -292,5 +297,92 @@ func TestWebKitKeepsLivePCBProofWhileWaitingForCounters(t *testing.T) {
 	}
 	if lookups != 1 || c.reads != 2 || report.WebKit.Result != "passed" {
 		t.Fatal(lookups, c.reads, report.WebKit)
+	}
+}
+
+func TestWebKitFreezesEveryARecordAndObservesItsOrdinal(t *testing.T) {
+	s, c, cfg, row, proof := webkitFixture(t)
+	calls := 0
+	if err := s.freezeWebKit(context.Background(), s.WebKit.App.Path, func(ctx context.Context, network, host string) ([]netip.Addr, error) {
+		calls++
+		deadline, ok := ctx.Deadline()
+		if network != "ip4" || host != "example.com" || !ok || time.Until(deadline) > 5*time.Second {
+			t.Fatal("unbounded or incorrect lookup")
+		}
+		return []netip.Addr{netip.MustParseAddr("192.0.2.21"), netip.MustParseAddr("192.0.2.20"), netip.MustParseAddr("192.0.2.21")}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.writeWebKitPlan(); err != nil {
+		t.Fatal(err)
+	}
+	scopes, err := s.scopes()
+	if err != nil || len(scopes) != 2 || !reflect.DeepEqual(s.WebKit.Addresses, []string{"192.0.2.20", "192.0.2.21"}) {
+		t.Fatal(scopes, err)
+	}
+	row.Remote, proof.Socket.Remote = "192.0.2.21:443", netip.MustParseAddrPort("192.0.2.21:443")
+	deps := webkitCheckDeps{ready: func(string) error {
+		row.Started, proof.At = time.Now(), time.Now()
+		c.logs = []api.Connection{row}
+		return nil
+	}, lookup: func(_ context.Context, _ api.Protocol, _, remote netip.AddrPort) (webkitPCB, error) {
+		if remote.String() != row.Remote {
+			t.Fatal("queried original target instead of observed target")
+		}
+		return proof, nil
+	}}
+	status, _ := c.Status(context.Background())
+	var report checkReport
+	if err := runWebKitCheck(context.Background(), s, c, cfg, status, &report, time.Second, false, deps); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || report.WebKit.TargetIndex != 2 || report.WebKit.Connection.Remote != "" || report.WebKit.PCB.Socket.Remote.IsValid() || len(c.saved[0].Scenes[0].Rules[0].Targets) != 2 {
+		t.Fatal("ordinal or frozen policy mismatch", calls, report.WebKit)
+	}
+	if s.webkitTargetIndex("192.0.2.21:8443") != 0 || s.webkitTargetIndex("192.0.2.22:443") != 0 {
+		t.Fatal("unfrozen destination admitted")
+	}
+}
+
+func TestWebKitRejectsUnreviewableDNSAndCombinedScope(t *testing.T) {
+	for _, mode := range []string{"empty", "too-many", "private", "ipv6", "missing-tls", "lookup-error"} {
+		t.Run(mode, func(t *testing.T) {
+			s, _, _, _, _ := webkitFixture(t)
+			err := s.freezeWebKit(context.Background(), s.WebKit.App.Path, func(context.Context, string, string) ([]netip.Addr, error) {
+				addresses := []netip.Addr{netip.MustParseAddr("192.0.2.20")}
+				switch mode {
+				case "empty":
+					return nil, nil
+				case "too-many":
+					for i := byte(21); i <= 36; i++ {
+						addresses = append(addresses, netip.AddrFrom4([4]byte{192, 0, 2, i}))
+					}
+				case "private":
+					addresses = append(addresses, netip.MustParseAddr("10.0.0.1"))
+				case "ipv6":
+					addresses = append(addresses, netip.MustParseAddr("2001:db8::20"))
+				case "missing-tls":
+					addresses = []netip.Addr{netip.MustParseAddr("192.0.2.21")}
+				case "lookup-error":
+					return nil, errors.New("synthetic DNS failure")
+				}
+				return addresses, nil
+			})
+			if err == nil {
+				t.Fatal("unsafe DNS set accepted")
+			}
+		})
+	}
+	s, _, _, _, _ := webkitFixture(t)
+	s.WebKit.Addresses = nil
+	for i := byte(20); i < 36; i++ {
+		s.WebKit.Addresses = append(s.WebKit.Addresses, netip.AddrFrom4([4]byte{192, 0, 2, i}).String())
+	}
+	if scopes, err := s.scopes(); err != nil || len(scopes) != 16 {
+		t.Fatal(scopes, err)
+	}
+	s.QUICTarget, s.QUICServerName = "198.51.100.20:443", "example.com"
+	if _, err := s.scopes(); err == nil {
+		t.Fatal("combined scope exceeded sixteen hosts")
 	}
 }

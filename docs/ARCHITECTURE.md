@@ -24,6 +24,30 @@ its public addresses, LAN addresses or DNS do not by themselves stop routing.
 
 ## Capturing and forwarding
 
+### iCloud Private Relay
+
+With Private Relay active for Safari, the device's observable connections go to
+Apple's ingress relay; the origin is reached by the separate egress relay.
+Origin DNS and browsing information are encrypted, as described in
+[Apple's overview](https://support.apple.com/102602). Pith cannot recover the
+website's true IP/domain from that relay connection, so origin IP/domain rules
+cannot select it. A cached origin DNS name must not be treated as the relay's
+identity. App matching does not depend on visibility of the inner destination:
+for a captured socket that XNU attributes/delegates to Safari, ordinary app-only
+rules still choose its exit. A shared/system-owned relay socket without Safari
+delegation cannot be relabeled heuristically; it follows its actual attribution.
+This behavior is distinct from the pending Safari hardware acceptance.
+
+The scoped browser harness captures only the frozen origin A records, not Apple
+relay endpoints. Active Private Relay therefore does not meet that test's
+direct-connect prerequisite. No documented reliable read-only detector of the
+effective per-navigation Safari relay state was established, so status is
+explicitly unknown; private service preferences are not treated as proof.
+Network/site exceptions and availability make a global preference insufficient.
+The harness never changes Private Relay, account, browser or network settings.
+
+### Capture ownership
+
 `engine/capture` records the routing table, creates a WireGuard-Go utun, and
 journals its name, index, boot session, random ownership token and intended prefixes before
 installing any route. A ready gVisor netstack receives eight IPv4 prefixes:

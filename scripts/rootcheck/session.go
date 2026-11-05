@@ -154,6 +154,11 @@ func prepare(ctx context.Context, args []string) error {
 	if *webkit != "" && s.TestProfile != nil {
 		return errors.New("webkit acceptance currently requires host-ipv4")
 	}
+	if *webkit != "" {
+		if err := s.freezeWebKit(ctx, *webkit, net.DefaultResolver.LookupNetIP); err != nil {
+			return err
+		}
+	}
 	if _, err := s.scopes(); err != nil {
 		return err
 	}
@@ -239,7 +244,7 @@ func prepare(ctx context.Context, args []string) error {
 		}
 	}
 	if *webkit != "" {
-		if err := s.writeWebKitPlan(*webkit); err != nil {
+		if err := s.writeWebKitPlan(); err != nil {
 			return err
 		}
 	}
@@ -279,6 +284,9 @@ func prepare(ctx context.Context, args []string) error {
 	fmt.Println("Prepared private review material:", s.Dir)
 	fmt.Println("Helper SHA-256:", s.HelperSHA256)
 	fmt.Println("Capture mode:", s.captureMode())
+	if s.WebKit != nil {
+		fmt.Printf("Browser review: %d frozen A records; Private Relay status unknown. Establish direct Safari connectivity before running; active Private Relay does not meet this origin-capture prerequisite.\n", len(s.WebKit.Addresses))
+	}
 	for _, skipped := range s.SkippedDNS {
 		fmt.Printf("DNS capture skipped for %s: %s\n", skipped.Address, skipped.Reason)
 	}
@@ -289,6 +297,9 @@ func prepare(ctx context.Context, args []string) error {
 }
 
 func (s *session) scopes() ([]netip.Prefix, error) {
+	if err := s.validateWebKit(); err != nil {
+		return nil, err
+	}
 	if err := s.validateDNS(); err != nil {
 		return nil, err
 	}
@@ -329,6 +340,17 @@ func (s *session) scopes() ([]netip.Prefix, error) {
 		if !slices.Contains(prefixes, prefix) {
 			prefixes = append(prefixes, prefix)
 		}
+	}
+	if s.WebKit != nil {
+		for _, text := range s.WebKit.Addresses {
+			prefix := netip.PrefixFrom(netip.MustParseAddr(text), 32)
+			if !slices.Contains(prefixes, prefix) {
+				prefixes = append(prefixes, prefix)
+			}
+		}
+	}
+	if len(prefixes) > 16 {
+		return nil, errors.New("all scoped stages together must fit within sixteen reviewed hosts")
 	}
 	return prefixes, nil
 }
