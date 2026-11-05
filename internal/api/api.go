@@ -433,20 +433,24 @@ const (
 
 // Connection is a TCP connection or a UDP flow that Pith handled.
 type Connection struct {
-	ID        uint64    `json:"id"`
-	Started   time.Time `json:"started"`
-	Ended     time.Time `json:"ended,omitzero"` // zero while open
-	App       AppRef    `json:"app"`            // the app it is attributed to
-	Process   Process   `json:"process"`        // the process that owns the socket
-	Protocol  Protocol  `json:"protocol"`       // TCP or UDP
-	Remote    string    `json:"remote"`         // "ip:port", "[ip6]:port"
-	Domain    string    `json:"domain,omitempty"`
-	RuleID    string    `json:"ruleId,omitempty"` // the rule that decided; empty: none matched
-	Outcome   Outcome   `json:"outcome"`
-	Interface string    `json:"interface,omitempty"` // the interface it went out through
-	Problem   string    `json:"problem,omitempty"`   // technical, when it failed
-	Sent      uint64    `json:"sent"`
-	Received  uint64    `json:"received"`
+	ID       uint64    `json:"id"`
+	Started  time.Time `json:"started"`
+	Ended    time.Time `json:"ended,omitzero"`  // zero while open
+	App      AppRef    `json:"app"`             // the app it is attributed to
+	Process  Process   `json:"process"`         // the process that owns the socket
+	Protocol Protocol  `json:"protocol"`        // TCP or UDP
+	Local    string    `json:"local,omitempty"` // application-side "ip:port" or "[ip6]:port"
+	// OutboundLocal is the outbound socket's local ip:port before NAT. It is
+	// empty when blocked or dialing did not succeed; it is not the public NAT tuple.
+	OutboundLocal string  `json:"outboundLocal,omitempty"`
+	Remote        string  `json:"remote"` // "ip:port", "[ip6]:port"
+	Domain        string  `json:"domain,omitempty"`
+	RuleID        string  `json:"ruleId,omitempty"` // the rule that decided; empty: none matched
+	Outcome       Outcome `json:"outcome"`
+	Interface     string  `json:"interface,omitempty"` // the interface it went out through
+	Problem       string  `json:"problem,omitempty"`   // technical, when it failed
+	Sent          uint64  `json:"sent"`
+	Received      uint64  `json:"received"`
 }
 
 // Process is a running program.
