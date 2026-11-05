@@ -312,10 +312,16 @@ func (g *Guard) Validate(active bool) error {
 	if err := g.Err(); err != nil {
 		return err
 	}
-	routes, details, err := snapshotDetails(g.c.opts.Driver)
+	routes, details, attempts, err := g.observeSnapshot()
 	if err != nil {
-		diagnostics = []string{"capture ownership: routing snapshot unavailable"}
+		if stopped := g.Err(); stopped != nil {
+			return stopped
+		}
+		diagnostics = []string{"capture ownership: routing snapshot remained unavailable through the bounded observation window"}
 		return g.Revoke(fmt.Errorf("observe capture ownership: %w", err))
+	}
+	if attempts > 1 {
+		diagnostics = []string{"capture ownership: routing snapshot recovered within the bounded observation window"}
 	}
 	fault := func(err error) error {
 		diagnostics = g.ownershipDiagnostics(routes, details, active)
@@ -402,6 +408,39 @@ func (g *Guard) Validate(active bool) error {
 		}
 	}
 	return g.Err()
+}
+
+// Called with mu held: no new binding or system route may use the old view while
+// ownership is unreadable. Established flows are not revoked during this brief
+// observation window. A readable but incorrect table is never retried here.
+func (g *Guard) observeSnapshot() ([]Route, []RouteDetail, int, error) {
+	ctx, cancel := context.WithTimeout(g.ctx, 2*time.Second)
+	defer cancel()
+	var last error
+	for attempts := 1; ; attempts++ {
+		var routes []Route
+		var details []RouteDetail
+		if reader, ok := g.c.opts.Driver.(interface {
+			SnapshotDetailsContext(context.Context) ([]Route, []RouteDetail, error)
+		}); ok {
+			routes, details, last = reader.SnapshotDetailsContext(ctx)
+		} else {
+			routes, details, last = snapshotDetails(g.c.opts.Driver)
+		}
+		if ctx.Err() != nil {
+			return nil, nil, attempts, errors.Join(ctx.Err(), last)
+		}
+		if last == nil {
+			return routes, details, attempts, nil
+		}
+		timer := time.NewTimer(50 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, nil, attempts, errors.Join(ctx.Err(), last)
+		case <-timer.C:
+		}
+	}
 }
 
 func (g *Guard) System(destination netip.Addr) (Binding, error) {

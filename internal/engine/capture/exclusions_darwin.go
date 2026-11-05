@@ -3,8 +3,10 @@
 package capture
 
 import (
+	"context"
 	"net/netip"
 
+	"github.com/Kel077/pith/internal/rib"
 	"golang.org/x/net/route"
 	"golang.org/x/sys/unix"
 )
@@ -14,7 +16,7 @@ import (
 // configured parent route is a default or /1. They must never enter the saved
 // policy snapshot or be used as evidence that a route belongs to Pith.
 func (nativeDriver) AddressExclusions() ([]netip.Prefix, error) {
-	data, err := route.FetchRIB(unix.AF_UNSPEC, route.RIBTypeRoute, 0)
+	data, err := rib.Read(context.Background())
 	if err != nil {
 		return nil, err
 	}

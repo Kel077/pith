@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Kel077/pith/internal/api"
+	"github.com/Kel077/pith/internal/rib"
 	"golang.org/x/net/route"
 	"golang.org/x/sys/unix"
 )
@@ -35,11 +36,11 @@ func platformMetadata(ctx context.Context) (map[string]api.Interface, error) {
 		return nil, err
 	}
 	result := storeInterfaces(store)
-	rib, err := route.FetchRIB(unix.AF_UNSPEC, route.RIBTypeRoute, 0)
+	raw, err := rib.Read(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("read routes: %w", err)
 	}
-	messages, err := route.ParseRIB(route.RIBTypeRoute, rib)
+	messages, err := route.ParseRIB(route.RIBTypeRoute, raw)
 	if err != nil {
 		return nil, err
 	}

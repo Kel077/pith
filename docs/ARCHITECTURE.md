@@ -89,6 +89,26 @@ to manually added IPv6 interface hosts, including point-to-point links. Ordinary
 traffic can add or expire dynamic caches without changing policy. Cloning parents,
 static hosts and VPN routes remain visible for conflicts, system egress and cleanup.
 
+All native route-table readers share a bounded sysctl reader. The queried size
+is only a hint: the RIB can grow before copying it. Reserve at least 16 KiB or
+25% extra, whichever is greater, and grow again after `ENOMEM`; never decode
+its partial buffer. Each read permits at most ten attempts with short cancellable
+backoff, a 250 ms deadline and a 64 MiB allocation cap. XNU may report only the
+bytes copied on `ENOMEM`, so that returned length alone is not a new capacity.
+See [sysctl's copyout and length handling](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_newsysctl.c)
+and its read-only [syscall ABI](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/syscalls.master).
+
+A running ownership check distinguishes an unreadable snapshot from a readable
+incorrect one. It retries observation failures within a two-second window, holding
+new bindings and system-route publication until a complete snapshot is verified.
+Existing flows are not revoked solely by an intermediate read failure; guarded
+operations may briefly wait. Recovery keeps capture running. A readable missing,
+replaced or duplicated owned route still fails immediately, as does unreadability
+that lasts through the window. Stop/cancellation interrupts retry backoff. The
+bounded address-free diagnostic ring records recovery or exhausted observation.
+Preparation, conflict checks, journal recovery, cleanup and interface discovery
+also use the padded reader; none accepts partial data or guesses route ownership.
+
 Every full-width prefix uses `route -host` and a literal address for both adding
 and deleting it; this includes IPv4 `/32` and IPv6 `/128`, DNS hosts, scoped
 profiles and journal cleanup. Subnets use `-net` and a CIDR. In Apple's
@@ -251,7 +271,8 @@ full-capture VPN reconstruction on hardware remains outstanding:
   notifications, and every second. Verify the exact owned utun and capture routes
   before publishing a new system-route generation. Only verified owned routes are
   removed from this lookup. A missing, replaced, duplicated or newly shadowed
-  capture route, lost owned utun, or unavailable ownership observation stops
+  capture route, lost owned utun, or ownership observation unavailable for the
+  bounded recovery window stops
   capture. Existing bypass prefixes may move between external VPNs; connected
   and local routes may follow address changes. A new unrelated forwarding route
   that shadows capture still requires a fresh reviewed Start.

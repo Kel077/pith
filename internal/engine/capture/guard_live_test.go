@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -142,7 +143,7 @@ func TestNotificationsVerifyCurrentOwnedInterface(t *testing.T) {
 			}
 			before := d.reads
 			err = g.Observe(tc.event)
-			if d.reads != before+1 {
+			if !tc.readFail && d.reads != before+1 || tc.readFail && d.reads <= before+1 {
 				t.Fatal("notification did not recheck the complete route table")
 			}
 			if tc.down || tc.readFail {
@@ -166,6 +167,37 @@ func (d *liveDriver) Index(name string) (int, error) {
 		return 0, errors.New("absent interface")
 	}
 	return index, nil
+}
+
+func TestOwnershipRetryStopsOnCaptureCancellation(t *testing.T) {
+	d := &notificationDriver{liveDriver: liveDriver{fakeDriver: fakeDriver{routes: []Route{{Prefix: prefix("0.0.0.0/0"), Interface: "test0", Index: 1}}}, indices: map[string]int{"test0": 1}}, up: true}
+	c, err := Prepare(context.Background(), Options{Driver: d, Scopes: []netip.Prefix{prefix("192.0.2.9/32")}, StatePath: filepath.Join(t.TempDir(), "capture.json")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	g, err := NewGuard(c, []api.Interface{{Name: "test0", Up: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Activate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	d.snapshotErr = syscall.ENOMEM
+	done := make(chan struct{})
+	start := time.Now()
+	timer := time.AfterFunc(25*time.Millisecond, func() {
+		defer close(done)
+		g.Revoke(errors.New("test stop"))
+	})
+	err = g.Validate(true)
+	if !timer.Stop() {
+		<-done
+	}
+	d.snapshotErr = nil
+	if err == nil || !strings.Contains(err.Error(), "test stop") || time.Since(start) >= time.Second {
+		t.Fatal("capture stop waited for the observation deadline", err)
+	}
 }
 
 func TestSystemSettlingExpiresWithoutRestartAndIsFamilySpecific(t *testing.T) {

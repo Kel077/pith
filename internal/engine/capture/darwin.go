@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Kel077/pith/internal/rib"
 	"golang.org/x/net/route"
 	"golang.org/x/sys/unix"
 	"golang.zx2c4.com/wireguard/tun"
@@ -27,7 +28,11 @@ func Snapshot() ([]Route, error) {
 }
 
 func (nativeDriver) SnapshotDetails() ([]Route, []RouteDetail, error) {
-	data, err := route.FetchRIB(unix.AF_UNSPEC, route.RIBTypeRoute, 0)
+	return (nativeDriver{}).SnapshotDetailsContext(context.Background())
+}
+
+func (nativeDriver) SnapshotDetailsContext(ctx context.Context) ([]Route, []RouteDetail, error) {
+	data, err := rib.Read(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -44,7 +49,7 @@ func (nativeDriver) SnapshotDetails() ([]Route, []RouteDetail, error) {
 		names[iface.Index] = iface.Name
 	}
 	routes, details := decodeRouteSnapshot(messages, names)
-	return routes, details, nil
+	return routes, details, ctx.Err()
 }
 
 func decodeRoutes(messages []route.Message, names map[int]string) []Route {
