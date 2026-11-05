@@ -7,10 +7,44 @@ separate `prepare --capture-mode full-ipv4 --test-lease 120s` installation with
 an engine-enforced deadline and frozen LAN-DNS routes. A separate
 `prepare --capture-mode host-ipv6 --test-lease 60s` freezes one public IPv6
 `/128`, requires global IPv6 on both adapters, and uses IPv6-only preflights and
-SafeStart. All modes have synthetic coverage; this document does not claim
-hardware acceptance. Its external-change flag cannot widen an installation.
+SafeStart. All modes have synthetic coverage; the completed hardware coverage
+is recorded below. The external-change flag cannot widen an installation.
 UDP/QUIC, app-bundle fixtures and throughput still need their described harness
 extensions before approval.
+
+## Recorded full IPv4 hardware acceptance
+
+The coordinator reported a successful hardware run of `9ceff5c`, with Tailscale
+disconnected. The following full IPv4 cases passed, each using bounded capture:
+
+* `smoke`: immediate SafeStart, system egress and a rule through adapter A.
+* `batch`: all 11 TCP cases, including block priority, interface/system fallback
+  and established versus new connections across hot reload.
+* `app-bypass`: standalone tool identity and an unmatched different-path child.
+* `preserve`: an existing native TCP connection survived capture activation.
+* `safe-failure`: a deliberately blocked SafeStart rolled back.
+* `crash`: helper death removed capture and the replacement helper started idle.
+* Final `uninstall`: baseline restoration passed. Independent inspection found
+  none of the eight capture prefixes, retained normal default routing and
+  connectivity, and found no remaining test processes or sudo credential cache.
+
+The initial full-capture SafeStart failed because XNU's bound-socket fallback
+looked up the zero address when no scoped route matched. The former lower `/1`
+captured that lookup, selecting the utun instead of the bound system adapter;
+forwarding failed and reset the probe. Eight IPv4 prefixes excluding
+`0.0.0.0/8` preserve that lookup. Production IPv6 has the corresponding split
+excluding `::/8`, with synthetic regression coverage only so far. See
+[the XNU source references and exact prefixes](ARCHITECTURE.md#capturing-and-forwarding).
+
+A gateway also used as DNS had an existing `/32 UCS` host route. Its route was
+preserved and its optional DNS capture was skipped, with the exclusion retained
+in the private review. Queries on that path are not observed; domain rules need
+another observed name, such as SNI or HTTP Host. This is not a DNS-capture pass.
+
+This record does not cover full capture with Tailscale connected (including VPN
+restart), IPv6 `/128`, UDP/QUIC, app bundles/delegated processes, or throughput.
+Tool attribution is not bundle acceptance. Raw reports were reviewed privately
+and deleted; no network identifiers or raw observations are reproduced here.
 
 ## Review and boundaries
 
@@ -45,9 +79,8 @@ or benchmark running afterward.
 
 ## Stages
 
-The full IPv4 harness currently verifies its frozen TCP endpoint using the
-existing smoke, rule batch, preservation, app/tool attribution and SafeStart
-failure cases. Its observation window checks uninterrupted capture identity,
+The full IPv4 harness has passed the TCP subset recorded above. Its observation
+window checks uninterrupted capture identity,
 but does not implement the manual DNS, VPN-control or mixed-protocol assertions
 below. Passing that TCP subset is not a pass for the entire full-capture stage.
 The dedicated hotspot renewal flag remains `host-ipv4` only pending review of its
@@ -65,7 +98,7 @@ SafeStart through the system adapter when it has an unscoped default but no
 scoped default: a successful bound request on a second adapter alone misses this
 regression. Repeat that condition in the later full-IPv6 stage. Fake-driver
 tests reproduce the old split's failure and the new split's success in both
-families; they do not establish a hardware pass.
+families; IPv6 hardware acceptance remains pending.
 
 Run one request before each bounded batch. Stop at the first unexplained result;
 do not broaden capture, change DNS/pf, remove a VPN route, or retry indefinitely
@@ -78,7 +111,7 @@ to obtain a pass. Preserve failures and independent cleanup evidence separately.
 | QUIC | One reviewed QUIC endpoint on frozen host routes; one handshake/request before at most 3 sequential cases, each with a 10-second deadline. | Require a server-confirmed QUIC exchange, UDP flow attribution, expected interface, rule and bytes. Compare an ordinary Initial carrying recoverable SNI with a fixture whose name cannot be sniffed. Verify IP rules in both cases. | Domain routing requires actual observed SNI or a valid DNS mapping; encrypted/ECH or unsupported fragmented Initials must not be described as successful sniffing. No TLS interception or logging application plaintext. Stop and verify routes/tunnel. |
 | App bundle and helpers | One test bundle with a main executable, a nested helper/XPC service, and a separate control executable; each makes one bounded request to the frozen host. Then a separately reviewed WebKit and background URL-session fixture. | Correlate spawned PID, executable, outer bundle path/identifier, socket-owner PID and effective/delegated app with connection records. Apply one parent-app rule through A, then a block; repeat a control request outside the bundle. Ensure no preexisting pooled socket is mistaken for a new flow. | Main and nested helpers match the parent automatically. WebKit/URL-session traffic is attributed to the requesting app only when the kernel delegation evidence supports it. The control remains unmatched. End/wait for every fixture process and remove only the temporary fixtures. |
 | Throughput | A permitted dedicated endpoint and finite transfer budget; direct bound baseline first, then Pith on the same adapter. Use 5-second warmup and at most three 15-second samples per direction; cap total transferred bytes in the reviewed plan. | Measure server/client payload bytes and elapsed time independently of Pith counters; record CPU, memory, log volume, connection count and idle CPU after completion. Compare a rule-heavy scene separately from the minimal scene. | Claim the 500 Mbps target only if the direct link/server baseline can support it and sustained observed payload throughput meets it. Otherwise record a bottleneck or inconclusive target. Do not use an unrelated public speed service without permission or create an unlimited generator. |
-| Full IPv4 capture last | Separate approval and helper-enforced lease of at most 120 seconds; one ordinary TCP request first, then a small bounded mixed-protocol batch. Use the eight IPv4 split prefixes above; do not enable IPv6 capture in this stage. | Review all intended LAN-DNS host routes as well as every split prefix. Verify original default routes remain installed, real DNS answers, immediate system SafeStart, ordinary system egress, explicit A/B rules, block, SafeStart rollback, and native TCP continuity. Check selected existing VPN/tailnet/MagicDNS controls without scanning peers. | Prove each asserted flow crossed Pith and reached the expected external path. Stop on lost ordinary connectivity, routing loops, unexpected destination scope, conflicting ownership, or changed VPN state. After Stop and optional separately approved helper crash, verify no Pith split prefix, DNS host route or utun remains, and unrelated paths still work. |
+| Full IPv4 extensions after scoped stages | The core TCP and cleanup cases above have passed. DNS, mixed-protocol and VPN extensions still need separate approval and a helper-enforced lease of at most 120 seconds; one ordinary TCP request first, then a small bounded batch. Use the eight IPv4 split prefixes above; do not enable IPv6 capture in this stage. | Review all intended LAN-DNS host routes as well as every split prefix. Retain the TCP regression checks, and separately verify real observed DNS answers, mixed protocols and the selected VPN/tailnet/MagicDNS controls without scanning peers. | Prove each asserted flow crossed Pith and reached the expected external path. Stop on lost ordinary connectivity, routing loops, unexpected destination scope, conflicting ownership, or changed VPN state. After Stop and optional separately approved helper crash, verify no Pith split prefix, DNS host route or utun remains, and unrelated paths still work. |
 
 A proxy helper with a direct delegated kernel socket and an arbitrary loopback
 HTTP/SOCKS proxy are different cases. Add a controlled loopback-proxy negative
@@ -91,6 +124,50 @@ Do not substitute ordinary HTTPS success for path evidence. Keep server-side
 nonces/addresses, caller identity, and matching Pith connection records together.
 The root helper's identity receipt establishes which tunnel Pith created; it
 does not itself prove that a test request traversed it.
+
+## Next session: IPv6 host capture
+
+The `host-ipv6` harness is implemented and ready for a separately reviewed
+session; no new protocol driver is needed for this stage. It freezes one `/128`,
+requires global IPv6 on both adapters, forces `tcp6` for all three preflights and
+test requests, and requires the native SafeStart socket to cross capture. IPv4
+fallback and an IPv4 echo cannot satisfy the IPv6 checks. The helper's lease is
+at most 60 seconds and the controller stops its work ten seconds before that
+deadline. Preparation, installation identity, family/scope rejection and cleanup
+have synthetic coverage, not an IPv6 hardware pass.
+
+1. Confirm the two adapters and one permitted IPv6 TLS endpoint. It must support
+   certificate-verified HTTP/1.1 `GET /`; a plain-text IPv6 exit echo also enables
+   the optional tool-bypass check. Freeze a literal `[IPv6]:port` and certificate
+   name, without choosing a default server or adding another target.
+2. Follow [the separate IPv6 installation](ROOT-TEST.md#separate-ipv6-host-installation)
+   with `--capture-mode host-ipv6 --test-lease 60s`. Review the new private scope,
+   preflights, installation and emergency undo before authorization. A missing
+   system/A/B IPv6 path ends preparation; it must not fall back to IPv4.
+3. Run `check` first. Only after smoke passes, run `check --batch`, then
+   `check --safe-failure`, each with the same `--session` and a fresh bounded
+   capture. Verify reports and cleanup after each command. A slow batch that
+   exceeds its deadline remains failed; do not extend the lease to finish it.
+4. Uninstall against the current baseline and independently check owned routes,
+   tunnel, service and files. An IPv4 route comparison is not an independent
+   IPv4 connectivity control; that would require another reviewed endpoint.
+
+Additional preservation, tool-bypass or crash cases need to be included in this
+session's explicit scope. No UDP/QUIC, bundle, throughput or full IPv6 test is
+implicitly enabled by the IPv6 host profile.
+
+## Inputs to confirm before later harness extensions
+
+Keep actual answers in private session notes, not in this table. These choices
+define the fixtures and bounded requests; none authorizes deployment or traffic.
+
+| Stage | Coordinator/user choices | Harness preparation after confirmation |
+| --- | --- | --- |
+| UDP and DNS | A server the user controls or has permission to test; public address/family and UDP port; permission to run a temporary nonce-echo fixture. For DNS, separately select a permitted resolver, controlled test name and expected answer/TTL. Confirm whether pre-existing connected UDP and an unconnected listener are included. | Freeze the endpoints and response format, use one nonce-matched request first, then at most 10 datagrams per case with two-second deadlines. The fixture must report the observed source tuple without amplification, and exit after a finite budget. DNS requests are a separate opt-in scope. |
+| QUIC | A permitted QUIC endpoint, port, certificate name/trust and application protocol/request (for example HTTP/3); access to server-side request evidence; fixtures with observable and unobservable SNI. | Freeze the protocol/version and certificate checks, use at most three sequential handshakes/requests with ten-second deadlines, and correlate server evidence with captured UDP records. Confirm the endpoint before selecting a client dependency. |
+| App bundles and delegation | Permission to build/run a disposable test `.app` with a main process and nested helper, or a suitable existing app that can target the frozen host. Identify separate WebKit/background URL-session samples, and whether an arbitrary loopback-proxy control is permitted. | Freeze fixture checksums, bundle identifiers, paths and exact destinations; make one request per process, collect delegated/socket-owner evidence, then wait for and remove every temporary fixture. A plain tool copy cannot establish bundle or delegation behavior. |
+| Throughput | A permitted dedicated upload/download endpoint and protocol; adapters/directions to include; per-direction and total byte budgets, allowed time window and repetition count. Confirm that every selected link may consume that traffic. | Enforce the byte cap as well as the existing time bounds: five-second warmup and at most three fifteen-second samples per direction. Count direct baselines and captured runs against the same total budget; do not substitute an unapproved public speed service. |
+| Full capture with Tailscale | One permitted tailnet endpoint and MagicDNS name, the initial VPN mode, and approval for a bounded user-performed restart and its undo. | Add explicit public/tailnet/DNS controls and transition evidence to the reviewed full-mode stage below; do not automatically toggle or restart the VPN. |
 
 ## Required full-capture VPN restart acceptance
 

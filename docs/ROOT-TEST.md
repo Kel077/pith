@@ -1,11 +1,12 @@
 # Bounded root acceptance sessions
 
-This is a plan and an opt-in test harness, not a record of completed root tests.
+This document describes an opt-in test harness and records the limited completed
+hardware coverage below. A past result does not authorize another session.
 Do not run a command that opens an administrator dialog or starts capture until
 the coordinator has obtained the user's approval for this session. Run the
 harness as the installing user, never with `sudo` or as root.
 
-The first session captures only one explicitly selected public IPv4 `/32`
+The default host-scoped session captures only one explicitly selected public IPv4 `/32`
 HTTPS destination, plus an optional public IPv4 `/32` DNS destination. It does
 not install full-capture routes, alter DNS settings or pf, or replace the default route.
 The helper starts idle. It creates one utun only when `check` calls `Start`.
@@ -14,6 +15,39 @@ cleanup deadline. SIGINT and SIGTERM cancel the check and invoke cleanup.
 The helper also limits each scoped routing run to five minutes, so a killed
 test client cannot leave routing active indefinitely. The helper remains
 installed and idle until the explicit uninstall step.
+
+## Recorded full IPv4 result
+
+The coordinator reported that the full IPv4 hardware run of `9ceff5c`, with
+Tailscale disconnected, passed `smoke`, all 11 `batch` cases, `app-bypass`,
+`preserve`, `safe-failure` and `crash`. Final `uninstall` restored the accepted
+baseline. Independent inspection found none of Pith's eight split prefixes,
+normal default routing and connectivity, no remaining test processes and no
+sudo credential cache. The app-bypass result covers standalone executables and
+their different-path child, not app bundles or delegated networking services.
+
+The initial full-capture SafeStart failed at outbound forwarding. When no scoped
+route matched a bound socket, XNU fell back to a longest-prefix lookup of the
+zero address. The former lower `/1` selected Pith's utun instead of the required
+system interface, so the forwarded probe was reset. The fix splits IPv4 into
+eight prefixes excluding `0.0.0.0/8`, and production IPv6 likewise excludes
+`::/8`. The system default remains available to that lookup. See
+[the exact prefixes and XNU sources](ARCHITECTURE.md#capturing-and-forwarding).
+Both families have synthetic old-failure/new-success coverage; the hardware
+pass recorded here applies only to IPv4.
+
+A gateway serving DNS with an existing `/32 UCS` route is preserved. Its
+optional DNS capture is skipped and recorded in the private plan/report, so
+queries using it are not observed. Domain rules then need another observed name
+such as TLS SNI, HTTP Host or QUIC SNI. This behavior allowed full capture to
+start without replacing the gateway route; it does not prove DNS interception.
+
+Still pending: full capture while Tailscale is connected (including restart),
+IPv6 `/128`, UDP/QUIC, app bundles/delegation and throughput. The next prepared
+stage is [IPv6 host capture](NEXT-ACCEPTANCE.md#next-session-ipv6-host-capture).
+Raw reports were reviewed privately and deleted; only this sanitized outcome is
+retained. A skipped manual cancellation under delegated authorization is not a
+cancellation-dialog pass.
 
 ## Prepare a concrete review
 
@@ -192,7 +226,8 @@ matches; reviewing only the test endpoint is therefore insufficient approval.
 DNS responses, tailnet controls, VPN self-restart, UDP/QUIC, app bundles and
 throughput require the additional evidence in [next acceptance](NEXT-ACCEPTANCE.md).
 The automated hotspot-renewal flag currently remains restricted to `host-ipv4`
-sessions. No full-mode hardware acceptance is claimed by these unit tests.
+sessions. The recorded hardware pass above covers the TCP and cleanup cases;
+unit tests and that pass do not establish the additional acceptance items.
 
 ## Separate IPv6 host installation
 
@@ -528,17 +563,18 @@ observation automatically and treats an unexpected helper stop as a failure.
   helper, and delegated networking process attribution. The automatic tests
   prove attribution to this command-line process only; they do not validate
   WebKit, `nsurlsessiond`, bundle matching, or delegated UUID behavior.
-* **IPv6, QUIC, existing UDP, loss-driven failover, throughput, and full capture:**
-  these remain separate acceptance items. The automatic fallback uses a missing
+* **IPv6, QUIC, existing UDP, loss-driven failover, throughput, and full-capture
+  extensions:** these remain separate acceptance items beyond the recorded IPv4
+  TCP result. The automatic fallback uses a missing
   synthetic interface; it does not prove timeout behavior on a live interface
   that drops packets. Do not infer IPv6, UDP/QUIC correctness or a throughput
   target from the TCP smoke result. A later IPv6 test must use only a reviewed
-  `/128`. Testing full capture requires another explicit go-ahead after scoped
-  capture and cleanup have passed.
+  `/128`. Every new full-capture session still requires an explicit go-ahead;
+  the completed IPv4 run does not authorize VPN or mixed-protocol extensions.
 
 The [next acceptance plan](NEXT-ACCEPTANCE.md) separates the broader capture,
 IPv6, UDP/QUIC, throughput, and app-bundle cases. It authorizes no execution and
-does not add those capabilities to this host-only harness.
+does not add the pending protocol or fixture capabilities to this harness.
 
 ## Optional Tailscale compatibility phases
 

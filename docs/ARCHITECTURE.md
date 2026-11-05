@@ -132,7 +132,7 @@ VPN can supply a different route layout.
 
 The runtime separates capture ownership from replaceable egress observations.
 Its implementation is covered by synthetic drivers and transition tests;
-full-capture acceptance on hardware remains outstanding:
+full-capture VPN reconstruction on hardware remains outstanding:
 
 * Observe configured routes before capture starts, after activation, on kernel
   notifications, and every second. Verify the exact owned utun and capture routes
@@ -280,8 +280,9 @@ The helper starts the lease clock before startup work and bounds preparation and
 SafeStart by that deadline. After startup, its independent monitor stops capture
 when the same deadline expires, even if the controller dies. Repeated Start and
 hot Reload cannot extend it or bypass the profile settings. Explicit Stop/crash
-cleanup still removes only journal-owned routes. This is test support verified
-with fake drivers, not evidence that full capture has passed on hardware.
+cleanup still removes only journal-owned routes. The completed full IPv4 TCP
+and cleanup hardware cases, and the remaining acceptance limits, are recorded
+in [root tests](ROOT-TEST.md#recorded-full-ipv4-result).
 
 The separate `host-ipv6` acceptance profile freezes exactly one public IPv6
 `/128`, a literal bracketed TLS endpoint, and a lease of at most 60 seconds.
