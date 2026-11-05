@@ -32,6 +32,7 @@ func TestDarwinAddressExclusionsOnlyCacheEndpoints(t *testing.T) {
 		wideMask,
 		message(addr("192.0.2.10"), unix.RTF_UP|unix.RTF_HOST|unix.RTF_STATIC),
 		message(addr("2001:db8::10"), unix.RTF_UP|unix.RTF_HOST|unix.RTF_STATIC),
+		message(addr("2001:db8::11"), unix.RTF_UP|unix.RTF_HOST|unix.RTF_STATIC|unix.RTF_LLINFO), // Already excluded by configured policy.
 		message(addr("192.0.2.0"), unix.RTF_UP|unix.RTF_CLONING),
 		message(addr("203.0.113.0"), unix.RTF_UP|unix.RTF_PRCLONING),
 		message(addr("192.0.2.11"), unix.RTF_WASCLONED),

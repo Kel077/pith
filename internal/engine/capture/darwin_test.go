@@ -56,7 +56,9 @@ func TestDarwinRouteDecodingExcludesKernelCaches(t *testing.T) {
 		message("2001:db8::5/128", unix.RTF_LLINFO, 1, ""), // NDP is filtered independently of WASCLONED.
 		message("192.0.2.9/32", unix.RTF_STATIC, 1, "192.0.2.1"),
 		message("192.0.2.54/32", unix.RTF_WASCLONED|unix.RTF_LLINFO, 1, ""),
-		message("2001:db8:1::1/128", unix.RTF_STATIC, 3, ""), // A static capture route remains visible for cleanup.
+		message("2001:db8:1::1/128", unix.RTF_STATIC, 3, ""),                                    // A static capture route remains visible for cleanup.
+		message("2001:db8:1::2/128", unix.RTF_STATIC|unix.RTF_LLINFO, 3, ""),                    // Explicit IPv6 hosts also carry ND metadata.
+		message("2001:db8:1::3/128", unix.RTF_STATIC|unix.RTF_LLINFO|unix.RTF_WASCLONED, 3, ""), // Inherited STATIC never promotes a clone.
 	}
 	routes := decodeRoutes(messages, map[int]string{1: "test0", 2: "utun12", 3: "utun13"})
 	want := []Route{
@@ -65,6 +67,7 @@ func TestDarwinRouteDecodingExcludesKernelCaches(t *testing.T) {
 		{Prefix: prefix("203.0.113.0/24"), Interface: "utun12", Index: 2},
 		{Prefix: prefix("192.0.2.9/32"), Interface: "test0", Index: 1, Gateway: addr("192.0.2.1")},
 		{Prefix: prefix("2001:db8:1::1/128"), Interface: "utun13", Index: 3},
+		{Prefix: prefix("2001:db8:1::2/128"), Interface: "utun13", Index: 3},
 	}
 	if !slices.Equal(routes, want) {
 		t.Fatalf("decoded routes = %v; want %v", routes, want)
@@ -76,7 +79,7 @@ func TestDarwinRouteDecodingExcludesKernelCaches(t *testing.T) {
 	if err != nil || !slices.Contains(plan.Prefixes, prefix("192.0.2.53/32")) {
 		t.Fatalf("neighbor cache prevented a LAN DNS capture: plan=%v error=%v", plan, err)
 	}
-	for _, host := range []string{"192.0.2.9/32", "2001:db8:1::1/128"} {
+	for _, host := range []string{"192.0.2.9/32", "2001:db8:1::1/128", "2001:db8:1::2/128"} {
 		if _, err := Build(routes, nil, true, []netip.Prefix{prefix(host)}); api.Code(err) != api.ErrRouteConflict {
 			t.Fatalf("static host route %s must still conflict: %v", host, err)
 		}

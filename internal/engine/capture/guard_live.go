@@ -300,28 +300,41 @@ func (g *Guard) shadow(r Route, addresses []netip.Prefix) bool {
 // An inconsistent external index only makes that egress temporarily unavailable.
 func (g *Guard) Validate(active bool) error {
 	g.mu.Lock()
-	defer g.mu.Unlock()
+	var diagnostics []string
+	defer func() {
+		g.mu.Unlock()
+		if publish := g.c.opts.Diagnostic; publish != nil {
+			for _, summary := range diagnostics {
+				publish(summary)
+			}
+		}
+	}()
 	if err := g.Err(); err != nil {
 		return err
 	}
-	routes, err := g.c.opts.Driver.Snapshot()
+	routes, details, err := snapshotDetails(g.c.opts.Driver)
 	if err != nil {
+		diagnostics = []string{"capture ownership: routing snapshot unavailable"}
 		return g.Revoke(fmt.Errorf("observe capture ownership: %w", err))
+	}
+	fault := func(err error) error {
+		diagnostics = g.ownershipDiagnostics(routes, details, active)
+		return g.Revoke(err)
 	}
 	addresses, err := g.c.opts.Driver.InterfacePrefixes()
 	if err != nil {
-		return g.Revoke(fmt.Errorf("observe connected routes: %w", err))
+		return fault(fmt.Errorf("observe connected routes: %w", err))
 	}
 	owned := map[netip.Prefix]int{}
 	var external []Route
 	for _, r := range routes {
 		if r.Interface == g.c.Name || r.Index == g.c.state.Index {
 			if r.Interface != g.c.Name || r.Index != g.c.state.Index {
-				return g.Revoke(errors.New("capture interface identity changed"))
+				return fault(errors.New("capture interface identity changed"))
 			}
 			if slices.Contains(g.c.Plan.Prefixes, r.Prefix) {
 				if r.Scoped || r.Local || r.Reject || r.Gateway.IsValid() {
-					return g.Revoke(errors.New("capture route ownership changed"))
+					return fault(errors.New("capture route ownership changed"))
 				}
 				owned[r.Prefix]++
 				continue
@@ -329,13 +342,13 @@ func (g *Guard) Validate(active bool) error {
 			if g.localAddress(r.Prefix) || r.Prefix == g.c.Plan.Addresses.IPv6 || r.Prefix.Addr().IsLinkLocalUnicast() || r.Prefix.Addr().IsMulticast() {
 				continue
 			}
-			return g.Revoke(errors.New("unexpected route on capture interface"))
+			return fault(errors.New("unexpected route on capture interface"))
 		}
 		if r.Local && g.localAddress(r.Prefix) {
 			continue
 		}
 		if g.shadow(r, addresses) {
-			return g.Revoke(errors.New("external route shadows capture"))
+			return fault(errors.New("external route shadows capture"))
 		}
 		external = append(external, r)
 	}
@@ -345,7 +358,7 @@ func (g *Guard) Validate(active bool) error {
 			want = 1
 		}
 		if owned[p] != want {
-			return g.Revoke(fmt.Errorf("capture route missing or duplicated: %s", p))
+			return fault(fmt.Errorf("capture route missing or duplicated: %s", p))
 		}
 	}
 	var index int
@@ -356,10 +369,10 @@ func (g *Guard) Validate(active bool) error {
 		index, err = g.c.opts.Driver.Index(g.c.Name)
 	}
 	if err != nil || index != g.c.state.Index {
-		return g.Revoke(errors.New("capture interface generation changed"))
+		return fault(errors.New("capture interface generation changed"))
 	}
 	if !up {
-		return g.Revoke(errors.New("capture interface is down"))
+		return fault(errors.New("capture interface is down"))
 	}
 	if !maps.Equal(routeCounts(g.routes), routeCounts(external)) {
 		for _, old := range g.routes {

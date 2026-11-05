@@ -58,10 +58,12 @@ Every split prefix and explicitly requested scoped prefix still fails with
 `ErrRouteConflict` on an exact unscoped conflict; a VPN default is reported as
 `WarnVPN`.
 
-Routing snapshots omit `RTF_WASCLONED` host routes and `RTF_LLINFO` neighbor
-cache entries. Ordinary traffic can add or expire those entries without changing
-the configured forwarding policy. Cloning parent routes, static host routes and
-VPN routes remain visible for conflict checks, saved system egress and cleanup.
+Routing snapshots and events omit `RTF_WASCLONED` hosts and non-static
+`RTF_LLINFO` neighbor entries. A non-cloned `RTF_STATIC | RTF_LLINFO` route
+remains configured policy: XNU's `nd6_rtrequest` also attaches neighbor metadata
+to manually added IPv6 interface hosts, including point-to-point links. Ordinary
+traffic can add or expire dynamic caches without changing policy. Cloning parents,
+static hosts and VPN routes remain visible for conflicts, system egress and cleanup.
 
 Every full-width prefix uses `route -host` and a literal address for both adding
 and deleting it; this includes IPv4 `/32` and IPv6 `/128`, DNS hosts, scoped
@@ -73,11 +75,31 @@ a mask. This reproduced the former IPv6 startup event-decoding failure in a
 synthetic Darwin message. The old failed hardware run retained no message
 metadata, so its exact event cannot be recovered retroactively.
 
+For a global IPv6 host, `-interface` selects the named interface's `sockaddr_dl`
+as gateway; it does not request `RTF_GATEWAY` or `RTF_IFSCOPE`. `-host` sets
+`RTF_HOST`, and `route(8)` defaults to `RTF_STATIC`. XNU then sets `RTF_LLINFO`
+on that explicit interface host in
+[nd6_rtrequest](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/netinet6/nd6.c).
+The configured route is still unscoped, with a link gateway and no IP gateway.
+It is not a cloned child: `in6_addroute` only makes non-host unicast routes
+cloning, and an exact existing key is rejected (with special handling for
+replaceable cache entries). See
+[in6_rmx.c](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/netinet6/in6_rmx.c)
+and [route.c](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/net/route.c).
+Retaining static LLINFO corrects observation without loosening the one-route,
+unscoped, no-IP-gateway, matching-name-and-index ownership checks. Stop, journal
+recovery and emergency cleanup use that same configured-policy snapshot.
+
 The route observer decodes each frame separately and retains address-free
 metadata for unusual events: RTM type, flags, interface index, and each sockaddr
 slot's family and original length. It accepts XNU `rt_msg1`'s unpadded final
 sockaddr (including an empty default mask), without inventing missing address
-payload. `x/net/route` normalizes KAME embedded scope and `sin6_scope_id`; scope
+payload. IPv6 point-to-point addresses without a peer have a non-NULL,
+zero-length AF_UNSPEC destination in
+[in6.c](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/netinet6/in6.c).
+`rt_newaddrmsg` sets `RTA_BRD`, but `rt_msg1` copies zero final bytes. The observer
+accepts this empty final slot only for NEWADDR/DELADDR, not missing route gateways
+or assigned addresses. `x/net/route` normalizes KAME embedded scope and `sin6_scope_id`; scope
 bytes never enter the prefix. Synthetic wire-format tests cover scoped defaults,
 link-local destinations/gateways, multicast, link gateways, and address events.
 
@@ -111,6 +133,13 @@ destination looks link-local. Stream/framing failures remain ownership faults.
 `Status.RouteDiagnostics` retains the latest 32 distinct technical summaries,
 without raw addresses or names, through Stop and startup failure. A new capture
 attempt or helper restart clears it; ordinary Reload does not.
+Ownership failures also retain per-capture-prefix summaries from the exact RIB
+read used by the failed check, before cleanup. They include flags, gateway family,
+scope, interface index and grouped counts, including filtered cache/down candidates.
+Prefix ordinals, family and width replace addresses; interface names are omitted.
+Each summary contains at most 32 distinct metadata groups and an omitted count.
+Raw metadata is separate from policy equality, so reference flags cannot trigger
+egress changes. It never authorizes route selection or deletion.
 
 The tunnel uses the first available IPv4 `/30` and IPv6 ULA `/126` from bounded
 candidate lists. Both the routing table and assigned interface prefixes must be

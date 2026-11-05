@@ -248,8 +248,22 @@ its interface header directly. That classification is corrected, with synthetic
 IPv4/IPv6 IFINFO, NEWADDR and route-ADD startup sequences, both immediate and
 delayed delivery. Notifications now verify the complete capture and current link
 state instead of treating the owned interface's notification as a route fault.
-Repeat scoped IPv4, then IPv6 host capture, then full IPv4 after review; this
-correction still requires hardware confirmation and does not authorize a run.
+The corrected scoped IPv4 hardware regression passed smoke, the 11-case batch,
+app-bypass, preservation and forced SafeStart failure, including explicit IPv4
+host-route add/delete.
+
+The subsequent IPv6 smoke reached ownership validation but reported its `/128`
+missing. Source analysis and a synthetic RIB reproduce a filter error: XNU marks
+manually added IPv6 interface hosts with LLINFO as well as STATIC. Only dynamic
+neighbor entries and cloned children should be omitted; explicit static hosts
+must remain visible to ownership and cleanup. The same attempt's non-fatal
+NEWADDR diagnostic matches a legitimate empty final RTA_BRD on an IPv6
+point-to-point address without a peer. Both formats are now covered by wire
+fixtures. Failed ownership checks retain address-free candidate summaries from
+the failed RIB read in `routeDiagnostics`, including flags, gateway family,
+scope, index and counts, even after Stop. See the
+[source analysis](ARCHITECTURE.md#capturing-and-forwarding). Corrected IPv6
+hardware acceptance remains pending; these changes do not authorize a test.
 
 IPv6 `/128` acceptance is another new installation and private session, selected
 explicitly by `--capture-mode host-ipv6`. Both reviewed adapters must be up and
@@ -383,9 +397,9 @@ testing helper updates needs its own reviewed case.
 All snapshots and detailed reports, including real addresses and MACs, stay
 under `PITH_SESSION`. Do not attach or commit them without redaction. The
 harness compares route and utun snapshots strictly against the active baseline.
-Snapshots exclude `RTF_WASCLONED` host routes and `RTF_LLINFO` ARP/NDP entries;
+Snapshots exclude `RTF_WASCLONED` hosts and non-static `RTF_LLINFO` ARP/NDP entries;
 ordinary traffic refreshing those caches does not change the baseline. Static
-host routes, cloning parents and VPN routes remain in the comparison. Another
+non-cloned hosts remain even with LLINFO, as do cloning parents and VPN routes. Another
 VPN, interface change, or configured-route change can make the result
 inconclusive; the harness never removes an unrelated route to force a pass.
 Connection records (process, target, rule, outcome, interface and bytes) are the

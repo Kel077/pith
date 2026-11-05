@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"slices"
 	"strings"
 	"testing"
@@ -103,5 +104,54 @@ func TestRouteDiagnosticsBoundAndCopy(t *testing.T) {
 	copy, _ := e.Status(context.Background())
 	if copy.RouteDiagnostics[0] == status.RouteDiagnostics[0] {
 		t.Fatal("caller can mutate retained evidence")
+	}
+}
+
+type filteredCaptureDriver struct{ *testDriver }
+
+func (d *filteredCaptureDriver) SnapshotDetails() ([]capture.Route, []capture.RouteDetail, error) {
+	routes, err := d.Snapshot()
+	var details []capture.RouteDetail
+	for _, r := range routes {
+		if r.Index == 42 {
+			// Synthetic raw NDP-only host: not configured capture policy.
+			details = append(details, capture.RouteDetail{Prefix: r.Prefix, Flags: 0x405, GatewayFamily: 18, Index: 42, Raw: true})
+		}
+	}
+	routes = slices.DeleteFunc(routes, func(r capture.Route) bool { return r.Index == 42 })
+	return routes, details, err
+}
+
+func TestOwnershipSnapshotDiagnosticsSurviveStartupRollback(t *testing.T) {
+	e, d := newTestEngine(t, func(context.Context, *capture.Capture, *forward.Forwarder) error {
+		t.Error("SafeStart ran without owned routes")
+		return nil
+	})
+	e.opts.Driver = &filteredCaptureDriver{d}
+	e.opts.Scopes = []netip.Prefix{netip.MustParsePrefix("2001:db8::9/128")}
+	cfg := api.DefaultConfig()
+	cfg.Settings.IPv6 = true
+	ctx := context.Background()
+	if err := e.Start(ctx, cfg.Scenes[0], cfg.Settings); api.Code(err) != api.ErrNetworkLost {
+		t.Fatal(err)
+	}
+	status, _ := e.Status(ctx)
+	if status.State != api.Failed || len(status.RouteDiagnostics) != 1 {
+		t.Fatal("startup rollback lost ownership metadata", status)
+	}
+	for _, want := range []string{"family=IPv6 bits=128", "owned_count=0 policy_count=0 candidate_count=1", "flags=0x405 gateway_family=18 scoped=false index=42 policy=false"} {
+		if !strings.Contains(status.RouteDiagnostics[0], want) {
+			t.Fatal("incomplete failed snapshot evidence", status.RouteDiagnostics)
+		}
+	}
+	if strings.Contains(status.RouteDiagnostics[0], "2001:db8") || strings.Contains(status.RouteDiagnostics[0], "utun") {
+		t.Fatal("address or interface name leaked into route diagnostic")
+	}
+	if err := e.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := e.Status(ctx)
+	if !slices.Equal(after.RouteDiagnostics, status.RouteDiagnostics) {
+		t.Fatal("Stop discarded the pre-cleanup evidence")
 	}
 }

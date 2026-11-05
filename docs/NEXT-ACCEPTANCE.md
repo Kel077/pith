@@ -151,8 +151,20 @@ normal IFINFO with `ifm_addrs=0` was skipped by `x/net/route` and misclassified 
 unreadable. Header decoding and snapshot-based notification handling are now
 corrected. Synthetic IPv4/IPv6 startup sequences cover immediate and queued
 IFINFO/NEWADDR/route-ADD delivery without stopping capture, plus actual link-down
-and failed ownership checks. The next reviewed regression order is scoped IPv4,
-host IPv6, then full IPv4; hardware confirmation remains pending.
+and failed ownership checks. The corrected scoped IPv4 hardware regression passed
+smoke, the 11-case batch, app-bypass, preservation and forced SafeStart failure;
+explicit IPv4 host add/delete is therefore verified again.
+
+The next IPv6 retry reached ownership validation but reported the `/128` missing.
+Source analysis and a raw-RIB fixture reproduce the cause: XNU adds LLINFO to
+explicit static IPv6 interface hosts, and the previous cache filter discarded
+them. Static non-cloned LLINFO entries now remain visible to validation and
+cleanup; unscoped, link-gateway and exact interface checks remain strict. The same
+retry's non-fatal NEWADDR diagnostic was reproduced as an empty final RTA_BRD
+for a point-to-point address without a peer, which is now accepted. Both fixes
+have synthetic coverage, including teardown and retained pre-cleanup diagnostics;
+corrected IPv6 hardware acceptance is still pending. Rebuild both binaries and
+prepare a new reviewed session before retrying.
 
 1. Confirm the two adapters and one permitted IPv6 TLS endpoint. It must support
    certificate-verified HTTP/1.1 `GET /`; a plain-text IPv6 exit echo also enables

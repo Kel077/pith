@@ -125,7 +125,7 @@ func (e *Engine) startLocked(ctx context.Context, scene api.Scene, settings api.
 	if e.opts.TestProfile != nil {
 		expected = e.opts.TestProfile.Prefixes()
 	}
-	s.capture, err = capture.Prepare(ctx, capture.Options{IPv6: settings.IPv6, Scopes: e.opts.Scopes, DNS: dns, ExpectedPrefixes: expected, StatePath: filepath.Join(e.opts.DataDir, "capture.json"), Driver: e.opts.Driver})
+	s.capture, err = capture.Prepare(ctx, capture.Options{IPv6: settings.IPv6, Scopes: e.opts.Scopes, DNS: dns, ExpectedPrefixes: expected, StatePath: filepath.Join(e.opts.DataDir, "capture.json"), Driver: e.opts.Driver, Diagnostic: e.routeDiagnostic})
 	if err != nil {
 		return err
 	}

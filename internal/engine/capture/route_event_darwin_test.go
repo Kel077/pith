@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -189,8 +190,14 @@ func TestDarwinUtunStartupSequencePreservesCapture(t *testing.T) {
 					t.Fatal(err)
 				}
 				up := wireMessage(unix.RTM_IFINFO, unix.IFF_UP|unix.IFF_POINTOPOINT|unix.IFF_RUNNING|unix.IFF_MULTICAST, 42, nil, false)
-				address := wireMessage(unix.RTM_NEWADDR, 0, 42, map[int][]byte{unix.RTAX_IFP: wireLink(42), unix.RTAX_IFA: assigned, unix.RTAX_NETMASK: mask}, false)
-				add := wireMessage(unix.RTM_ADD, unix.RTF_UP|unix.RTF_HOST|unix.RTF_STATIC, 42, map[int][]byte{unix.RTAX_DST: dst, unix.RTAX_GATEWAY: wireLink(42)}, false)
+				addressAddrs := map[int][]byte{unix.RTAX_IFP: wireLink(42), unix.RTAX_IFA: assigned, unix.RTAX_NETMASK: mask}
+				flags := unix.RTF_UP | unix.RTF_HOST | unix.RTF_STATIC
+				if ipv6 {
+					addressAddrs[unix.RTAX_BRD] = nil
+					flags |= unix.RTF_LLINFO
+				}
+				address := wireMessage(unix.RTM_NEWADDR, 0, 42, addressAddrs, false)
+				add := wireMessage(unix.RTM_ADD, flags, 42, map[int][]byte{unix.RTAX_DST: dst, unix.RTAX_GATEWAY: wireLink(42)}, false)
 				batch := append(append(append([]byte(nil), up...), address...), add...)
 				events := parseRouteEvents(batch)
 				if len(events) != 3 {
@@ -294,6 +301,175 @@ func TestDarwinAddressMessages(t *testing.T) {
 		if len(events) != 1 || events[0].Err != nil || events[0].Unparsed || !events[0].Address || events[0].Index != 50 || events[0].Added != (typ == unix.RTM_NEWADDR) || events[0].Prefix.IsValid() {
 			t.Fatalf("type=%d: %+v", typ, events)
 		}
+	}
+}
+
+func TestDarwinIPv6PointToPointAddressWithoutPeer(t *testing.T) {
+	for _, typ := range []int{unix.RTM_NEWADDR, unix.RTM_DELADDR} {
+		for _, padded := range []bool{false, true} {
+			// in6.c leaves a non-NULL, AF_UNSPEC/zero-length destination on
+			// point-to-point addresses without a peer. rt_newaddrmsg sets RTA_BRD;
+			// rt_msg1 copies zero bytes at that final slot, unlike a padded RIB.
+			link := append(wireLink(42), make([]byte, 6)...)
+			link[0] = byte(len(link))
+			mask := wireMask(126, false)
+			mask[1] = unix.AF_INET6
+			b := wireMessage(typ, 0x100, 42, map[int][]byte{
+				unix.RTAX_NETMASK: mask, unix.RTAX_IFP: link,
+				unix.RTAX_IFA: wireIPv6("2001:db8:1::1", 0, 0), unix.RTAX_BRD: nil,
+			}, padded)
+			if !padded && len(b) != 20+28+20+28 {
+				t.Fatal("unexpected unpadded ifa_msghdr layout", len(b))
+			}
+			events := parseRouteEvents(b)
+			if len(events) != 1 || !events[0].Address || events[0].Err != nil || events[0].Unparsed || events[0].Diagnostic != "" {
+				t.Fatalf("type=%d padded=%t: absent peer was treated as truncated: %+v", typ, padded, events)
+			}
+		}
+	}
+}
+
+func TestOmittedSockaddrIsLimitedToKnownEmptyFormats(t *testing.T) {
+	for _, tc := range []struct {
+		typ   int
+		addrs map[int][]byte
+	}{
+		{unix.RTM_ADD, map[int][]byte{unix.RTAX_DST: wireIPv6("2001:db8::9", 0, 0), unix.RTAX_GATEWAY: nil}},
+		{unix.RTM_NEWADDR, map[int][]byte{unix.RTAX_IFP: wireLink(42), unix.RTAX_IFA: nil}},
+		{unix.RTM_NEWADDR, map[int][]byte{unix.RTAX_IFA: wireIPv6("2001:db8::9", 0, 0), unix.RTAX_BRD: {28}}},
+	} {
+		events := parseRouteEvents(wireMessage(tc.typ, unix.RTF_UP|unix.RTF_HOST|unix.RTF_STATIC, 42, tc.addrs, false))
+		if len(events) != 1 || !events[0].Unparsed || events[0].Diagnostic == "" {
+			t.Fatal("missing required address payload was silently invented", events)
+		}
+	}
+}
+
+func TestDarwinStaticIPv6HostRetainsNeighborMetadata(t *testing.T) {
+	// route(8) sends UP|HOST|STATIC and an AF_LINK gateway. XNU nd6_rtrequest
+	// also sets LLINFO for this explicit RTM_ADD on a point-to-point interface.
+	const flags = unix.RTF_UP | unix.RTF_HOST | unix.RTF_STATIC | unix.RTF_LLINFO
+	addrs := map[int][]byte{unix.RTAX_DST: wireIPv6("2001:db8::9", 0, 0), unix.RTAX_GATEWAY: wireLink(42)}
+	b := wireMessage(unix.RTM_GET, flags, 42, addrs, true)
+	messages, err := route.ParseRIB(route.RIBTypeRoute, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := decodeRoutes(messages, map[int]string{42: "utun42"})
+	if len(routes) != 1 || routes[0].Prefix != prefix("2001:db8::9/128") || routes[0].Scoped || routes[0].Gateway.IsValid() || routes[0].Index != 42 {
+		t.Fatal("explicit IPv6 capture was lost as neighbor churn", routes)
+	}
+	for _, typ := range []int{unix.RTM_ADD, unix.RTM_CHANGE, unix.RTM_DELETE} {
+		events := parseRouteEvents(wireMessage(typ, flags, 42, addrs, false))
+		if len(events) != 1 || events[0].Unparsed || events[0].Err != nil || events[0].Prefix != routes[0].Prefix {
+			t.Fatal("static IPv6 ownership event was filtered", typ, events)
+		}
+	}
+	for _, cache := range []int{unix.RTF_HOST | unix.RTF_LLINFO, unix.RTF_HOST | unix.RTF_STATIC | unix.RTF_WASCLONED, flags | unix.RTF_WASCLONED} {
+		if events := parseRouteEvents(wireMessage(unix.RTM_ADD, cache|unix.RTF_UP, 42, addrs, false)); len(events) != 0 {
+			t.Fatal("transient neighbor or clone entered the policy event stream", events)
+		}
+	}
+}
+
+func TestDarwinSnapshotDetailsIncludeFilteredCandidates(t *testing.T) {
+	const configured = unix.RTF_UP | unix.RTF_HOST | unix.RTF_STATIC | unix.RTF_LLINFO
+	var data []byte
+	for _, flags := range []int{configured, configured | unix.RTF_IFREF, unix.RTF_UP | unix.RTF_HOST | unix.RTF_LLINFO, unix.RTF_UP | unix.RTF_HOST | unix.RTF_WASCLONED | unix.RTF_STATIC, unix.RTF_HOST | unix.RTF_STATIC} {
+		data = append(data, wireMessage(unix.RTM_GET, flags, 42, map[int][]byte{unix.RTAX_DST: wireIPv6("2001:db8::9", 0, 0), unix.RTAX_GATEWAY: wireLink(42)}, true)...)
+	}
+	messages, err := route.ParseRIB(route.RIBTypeRoute, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes, details := decodeRouteSnapshot(messages, map[int]string{42: "utun42"})
+	if len(routes) != 2 || routes[0] != routes[1] || len(details) != 5 {
+		t.Fatal("policy contains cache churn or detail lost filtered entries", routes, details)
+	}
+	for i, detail := range details {
+		if detail.GatewayFamily != unix.AF_LINK || detail.Prefix != prefix("2001:db8::9/128") || !detail.Raw || detail.Policy != (i < 2) || detail.Scoped {
+			t.Fatal("incorrect raw RIB metadata", i, detail)
+		}
+	}
+}
+
+// This memory-only driver exposes the same static IPv6 host through the raw RIB
+// decoder on every read. Fake device close and Delete change its underlying
+// route set, so cleanup cannot pass merely by dropping LLINFO in the decoder.
+type ipv6HostWireDriver struct{ fakeDriver }
+
+func (d *ipv6HostWireDriver) Snapshot() ([]Route, error) {
+	routes, _, err := d.SnapshotDetails()
+	return routes, err
+}
+func (d *ipv6HostWireDriver) SnapshotDetails() ([]Route, []RouteDetail, error) {
+	var data []byte
+	for _, r := range d.routes {
+		data = append(data, wireMessage(unix.RTM_GET, unix.RTF_UP|unix.RTF_HOST|unix.RTF_STATIC|unix.RTF_LLINFO, r.Index, map[int][]byte{
+			unix.RTAX_DST: wireIPv6(r.Prefix.Addr().String(), 0, 0), unix.RTAX_GATEWAY: wireLink(r.Index),
+		}, true)...)
+	}
+	messages, err := route.ParseRIB(route.RIBTypeRoute, data)
+	if len(data) == 0 {
+		return nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	routes, details := decodeRouteSnapshot(messages, map[int]string{42: "utun42"})
+	return routes, details, nil
+}
+
+func TestDarwinStaticIPv6HostLifecycle(t *testing.T) {
+	for _, mode := range []string{"stop", "emergency", "withdrawal"} {
+		t.Run(mode, func(t *testing.T) {
+			d := &ipv6HostWireDriver{}
+			ctx := context.Background()
+			p := prefix("2001:db8::9/128")
+			opts := Options{Driver: d, IPv6: true, Scopes: []netip.Prefix{p}, StatePath: filepath.Join(t.TempDir(), "capture.json")}
+			c, err := Prepare(ctx, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer c.Close()
+			g, err := NewGuard(c, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := c.Activate(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := g.Validate(true); err != nil {
+				t.Fatal("static IPv6 host was missing from ownership snapshot", err)
+			}
+			routes, _ := d.Snapshot()
+			if !ownsRoutes(c.state, routes) || Recover(opts.StatePath, d) == nil {
+				t.Fatal("journal recovery forgot a live static IPv6 capture")
+			}
+			switch mode {
+			case "stop":
+				if err := c.Close(); err != nil || c.Identity().EndedAt.IsZero() {
+					t.Fatal("Stop did not confirm closure", err)
+				}
+			case "emergency":
+				if err := cleanupStale(ctx, opts.StatePath, d, func(int) bool { return false }); err != nil {
+					t.Fatal(err)
+				}
+			case "withdrawal":
+				frame := wireMessage(unix.RTM_DELETE, unix.RTF_HOST|unix.RTF_STATIC|unix.RTF_LLINFO, 42, map[int][]byte{unix.RTAX_DST: wireIPv6(p.Addr().String(), 0, 0), unix.RTAX_GATEWAY: wireLink(42)}, false)
+				events := parseRouteEvents(frame)
+				if len(events) != 1 || api.Code(g.Observe(events[0])) != api.ErrNetworkLost {
+					t.Fatal("static IPv6 withdrawal was ignored", events)
+				}
+				return
+			}
+			if !slices.Contains(d.operations, "delete "+p.String()) {
+				t.Fatal("cleanup skipped explicit host deletion", d.operations)
+			}
+			if _, err := os.Stat(opts.StatePath); !os.IsNotExist(err) {
+				t.Fatal("cleaned host retained its journal", err)
+			}
+		})
 	}
 }
 
@@ -414,6 +590,8 @@ func TestHostPrefixWithoutMaskSlot(t *testing.T) {
 }
 
 func FuzzRouteEventFrames(f *testing.F) {
+	f.Add(wireMessage(unix.RTM_NEWADDR, 0, 42, map[int][]byte{unix.RTAX_IFA: wireIPv6("2001:db8::9", 0, 0), unix.RTAX_BRD: nil}, false))
+	f.Add(wireMessage(unix.RTM_DELETE, unix.RTF_HOST|unix.RTF_STATIC|unix.RTF_LLINFO, 42, map[int][]byte{unix.RTAX_DST: wireIPv6("2001:db8::9", 0, 0), unix.RTAX_GATEWAY: wireLink(42)}, true))
 	f.Add(wireMessage(unix.RTM_IFINFO, unix.IFF_UP, 42, nil, false))
 	f.Add(wireMessage(unix.RTM_IFINFO2, unix.IFF_UP, 42, map[int][]byte{unix.RTAX_IFP: wireLink(42)}, false))
 	f.Add(wireMessage(unix.RTM_NEWMADDR2, 0, 42, map[int][]byte{unix.RTAX_IFA: wireIPv6("ff02::1", 42, 0)}, false))

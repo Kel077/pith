@@ -30,7 +30,7 @@ func decodeAddressExclusions(messages []route.Message) []netip.Prefix {
 	seen := make(map[netip.Addr]bool)
 	for _, message := range messages {
 		r, ok := message.(*route.RouteMessage)
-		if !ok || r.Flags&unix.RTF_UP == 0 || r.Flags&(unix.RTF_WASCLONED|unix.RTF_LLINFO) == 0 || len(r.Addrs) <= unix.RTAX_DST {
+		if !ok || r.Flags&unix.RTF_UP == 0 || !transientRoute(r.Flags) || len(r.Addrs) <= unix.RTAX_DST {
 			continue
 		}
 		dst := address(r.Addrs[unix.RTAX_DST]).Unmap()

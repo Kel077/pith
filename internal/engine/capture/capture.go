@@ -55,7 +55,8 @@ type Options struct {
 	DNS              []netip.Addr
 	ExpectedPrefixes []netip.Prefix // optional frozen test scope; checked before creating any utun
 	StatePath        string
-	Driver           Driver // nil: the native macOS implementation
+	Driver           Driver       // nil: the native macOS implementation
+	Diagnostic       func(string) // bounded address-free ownership evidence
 }
 
 type journal struct {

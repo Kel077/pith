@@ -62,7 +62,7 @@ func changes(messages []route.Message) []Change {
 	for _, message := range messages {
 		switch m := message.(type) {
 		case *route.RouteMessage:
-			if m.Err != nil || m.Flags&(unix.RTF_WASCLONED|unix.RTF_LLINFO) != 0 {
+			if m.Err != nil || transientRoute(m.Flags) {
 				continue
 			}
 			if m.Type != unix.RTM_ADD && m.Type != unix.RTM_DELETE && m.Type != unix.RTM_CHANGE && m.Type != unix.RTM_REDIRECT {

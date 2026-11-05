@@ -47,7 +47,7 @@ func parseRouteEvents(data []byte) []Change {
 			}
 			continue
 		}
-		if meta.route && (meta.flags&(unix.RTF_WASCLONED|unix.RTF_LLINFO) != 0 || binary.NativeEndian.Uint32(frame[28:32]) != 0) {
+		if meta.route && (transientRoute(meta.flags) || binary.NativeEndian.Uint32(frame[28:32]) != 0) {
 			continue // Neighbor/cache churn and unsuccessful requests.
 		}
 		aligned, problem := meta.sockaddrs(frame)
@@ -154,8 +154,11 @@ func (m *routeEventHeader) sockaddrs(frame []byte) ([]byte, string) {
 			continue
 		}
 		last := m.attrs>>uint(slot+1) == 0
-		// rt_msg1 can omit the entire final, zero-length default mask.
-		if offset == len(frame) && last && (slot == unix.RTAX_NETMASK || slot == unix.RTAX_GENMASK) {
+		// rt_msg1 omits a final zero-length sockaddr. Besides default masks,
+		// in6.c uses an empty point-to-point peer when none was configured;
+		// rt_newaddrmsg still sets RTA_BRD. This never applies to route gateways.
+		emptyPeer := slot == unix.RTAX_BRD && (m.typ == unix.RTM_NEWADDR || m.typ == unix.RTM_DELADDR)
+		if offset == len(frame) && last && (slot == unix.RTAX_NETMASK || slot == unix.RTAX_GENMASK || emptyPeer) {
 			m.formats = append(m.formats, fmt.Sprintf("%d:family=0/len=0", slot))
 			m.prefixAddrs[slot] = nil
 			return padRouteFrame(frame, 4)

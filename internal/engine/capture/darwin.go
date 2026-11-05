@@ -19,47 +19,69 @@ import (
 )
 
 // Snapshot reads configured forwarding routes without opening a route writer.
-// Cloned host routes and link-layer neighbor caches are transient kernel state,
-// not capture conflicts or rollback baseline entries.
+// Cloned hosts and dynamic neighbor caches are transient kernel state. Static
+// interface hosts remain policy even when XNU also attaches neighbor metadata.
 func Snapshot() ([]Route, error) {
+	routes, _, err := (nativeDriver{}).SnapshotDetails()
+	return routes, err
+}
+
+func (nativeDriver) SnapshotDetails() ([]Route, []RouteDetail, error) {
 	data, err := route.FetchRIB(unix.AF_UNSPEC, route.RIBTypeRoute, 0)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	messages, err := route.ParseRIB(route.RIBTypeRoute, data)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	interfaces, err := net.Interfaces()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	names := make(map[int]string)
 	for _, iface := range interfaces {
 		names[iface.Index] = iface.Name
 	}
-	return decodeRoutes(messages, names), nil
+	routes, details := decodeRouteSnapshot(messages, names)
+	return routes, details, nil
 }
 
 func decodeRoutes(messages []route.Message, names map[int]string) []Route {
+	routes, _ := decodeRouteSnapshot(messages, names)
+	return routes
+}
+
+func decodeRouteSnapshot(messages []route.Message, names map[int]string) ([]Route, []RouteDetail) {
 	var result []Route
+	var details []RouteDetail
 	for _, message := range messages {
 		r, ok := message.(*route.RouteMessage)
-		if !ok || r.Flags&unix.RTF_UP == 0 {
-			continue
-		}
-		// Keep CLONING/PRCLONING parents, static hosts, and VPN routes. Only their
-		// traffic-created children and ARP/NDP cache entries are excluded.
-		if r.Flags&(unix.RTF_WASCLONED|unix.RTF_LLINFO) != 0 {
+		if !ok {
 			continue
 		}
 		prefix, err := routePrefix(r)
 		if err != nil {
 			continue
 		}
+		d := RouteDetail{Prefix: prefix, Flags: r.Flags, Index: r.Index, Scoped: r.Flags&unix.RTF_IFSCOPE != 0, Policy: r.Flags&unix.RTF_UP != 0 && !transientRoute(r.Flags), Raw: true}
+		if gateway := routeAddr(r.Addrs, unix.RTAX_GATEWAY); gateway != nil {
+			d.GatewayFamily = gateway.Family()
+		}
+		details = append(details, d)
+		if !d.Policy {
+			continue
+		}
 		result = append(result, Route{Prefix: prefix, Interface: names[r.Index], Index: r.Index, Gateway: address(routeAddr(r.Addrs, unix.RTAX_GATEWAY)), Scoped: r.Flags&unix.RTF_IFSCOPE != 0, Local: r.Flags&unix.RTF_LOCAL != 0, Reject: r.Flags&(unix.RTF_REJECT|unix.RTF_BLACKHOLE) != 0})
 	}
-	return result
+	return result, details
+}
+
+// nd6_rtrequest adds LLINFO to explicit IPv6 interface host routes, including
+// point-to-point links. STATIC without WASCLONED is configured policy, not
+// traffic-created neighbor churn; apply this distinction to snapshots and events.
+func transientRoute(flags int) bool {
+	return flags&unix.RTF_WASCLONED != 0 || flags&unix.RTF_LLINFO != 0 && flags&unix.RTF_STATIC == 0
 }
 
 func routeAddr(addrs []route.Addr, slot int) route.Addr {
