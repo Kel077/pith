@@ -83,13 +83,14 @@ func (r *Relay) Handle(source, destination netip.Addr, message []byte) {
 			if r.opts.Guard.Admit(destination) != nil {
 				return
 			}
-			index, err := r.opts.Guard.Index(iface)
+			binding, err := r.opts.Guard.System(destination)
 			if err != nil {
 				return
 			}
+			iface = binding.Name
 			stop := context.AfterFunc(r.opts.Guard.Context(), cancel)
 			defer stop()
-			ctx = netif.WithBinding(ctx, index, func() error { return r.opts.Guard.Check(iface) })
+			ctx = netif.WithBinding(ctx, binding.Index, binding.Check)
 		}
 		reply, err := r.opts.Exchange(ctx, iface, destination, message)
 		if err != nil || ctx.Err() != nil || len(reply) != len(message) || reply[1] != 0 {

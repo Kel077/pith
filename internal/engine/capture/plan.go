@@ -34,6 +34,8 @@ type Plan struct {
 func SystemInterface(routes []Route, address netip.Addr) string {
 	best := -1
 	name := ""
+	var chosen Route
+	ambiguous := false
 	address = address.WithZone("").Unmap()
 	for _, r := range routes {
 		if r.Scoped || !r.Prefix.Contains(address) {
@@ -42,12 +44,18 @@ func SystemInterface(routes []Route, address netip.Addr) string {
 		if r.Prefix.Bits() > best {
 			best = r.Prefix.Bits()
 			name = r.Interface
+			chosen, ambiguous = r, false
 			// A more specific rejected/local route must not become permission to
 			// send an unmatched connection through the broader default route.
 			if r.Reject || r.Local {
 				name = ""
 			}
+		} else if r.Prefix.Bits() == best && r != chosen {
+			ambiguous = true
 		}
+	}
+	if ambiguous {
+		return ""
 	}
 	return name
 }

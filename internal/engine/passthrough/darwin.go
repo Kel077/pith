@@ -21,14 +21,15 @@ type socketKey struct {
 	proto  api.Protocol
 }
 type nativeSender struct {
-	guard   *capture.Guard
-	mu      sync.Mutex
-	closed  bool
-	sockets map[socketKey]int
+	guard    *capture.Guard
+	mu       sync.Mutex
+	closed   bool
+	sockets  map[socketKey]int
+	bindings map[socketKey]capture.Binding
 }
 
 func newSender(guards ...*capture.Guard) Sender {
-	s := &nativeSender{sockets: make(map[socketKey]int)}
+	s := &nativeSender{sockets: make(map[socketKey]int), bindings: make(map[socketKey]capture.Binding)}
 	if len(guards) > 0 {
 		s.guard = guards[0]
 	}
@@ -41,11 +42,6 @@ func (s *nativeSender) Send(iface string, p Packet) error {
 	if s.closed {
 		return net.ErrClosed
 	}
-	if s.guard != nil {
-		if err := s.guard.Check(iface); err != nil {
-			return err
-		}
-	}
 	key := socketKey{iface, p.Local.Addr(), p.Protocol}
 	fd, exists := s.sockets[key]
 	if !exists {
@@ -56,6 +52,13 @@ func (s *nativeSender) Send(iface string, p Packet) error {
 			return errors.New("native socket preservation reached its socket limit")
 		}
 		var err error
+		if s.guard != nil {
+			binding, err := s.guard.Binding(iface)
+			if err != nil {
+				return err
+			}
+			s.bindings[key] = binding
+		}
 		fd, err = openRaw(key, s.guard)
 		if err != nil {
 			return err
@@ -63,7 +66,7 @@ func (s *nativeSender) Send(iface string, p Packet) error {
 		s.sockets[key] = fd
 	}
 	if s.guard != nil {
-		if err := s.guard.Check(iface); err != nil {
+		if err := s.bindings[key].Check(); err != nil {
 			return err
 		}
 	}
@@ -105,7 +108,7 @@ func openRaw(key socketKey, guards ...*capture.Guard) (int, error) {
 			return -1, err
 		}
 		if iface.Index != index {
-			return -1, guards[0].Revoke(errors.New("raw socket interface generation changed"))
+			return -1, capture.ErrEgressChanged
 		}
 	}
 	family, protocol := unix.AF_INET, unix.IPPROTO_RAW

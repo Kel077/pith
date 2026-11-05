@@ -42,7 +42,8 @@ owner separately. A delegated helper cannot match its own app by accident.
 Each flow retains an immutable rule snapshot. Block rules win; the first other
 matching rule supplies an ordered interface list. Every outbound socket uses
 `IP_BOUND_IF` or `IPV6_BOUND_IF`; each attempt gets three seconds. System routing
-uses the pre-capture effective interface, including another VPN. A failed strict
+uses the current effective interface with Pith's owned routes excluded, including
+another VPN. A failed strict
 TCP rule sends RST. UDP has no handshake: route/socket errors can fail over, but
 a silent peer expires its session. DNS sessions idle for ten seconds; other UDP
 sessions for two minutes. The bridge limits active flows and pending handshakes.
@@ -88,37 +89,42 @@ VPN can supply a different route layout.
 
 ### Rebuilding a VPN while capture is running
 
-The runtime guard uses conservative stop-and-restart, not live migration. Its
-implementation is covered by synthetic drivers and transition tests; full-capture
-acceptance on hardware remains outstanding:
+The runtime separates capture ownership from replaceable egress observations.
+Its implementation is covered by synthetic drivers and transition tests;
+full-capture acceptance on hardware remains outstanding:
 
-* Subscribe to kernel route/interface events before recording the external
-  baseline. Retain the name/index pairs and an observation generation. A
-  configured external route mutation, address change or interface event invalidates that
-  generation even if the same name, index and routes immediately reappear.
-  Re-read configured routes and indices after activation, on interface updates,
-  and every second. Missing, replaced, duplicate or shadowing capture routes,
-  changed external routes, unavailable observation, and changed interface indices
-  fail closed. Cache routes and neighbor discovery entries are not policy events.
-  Service-label edits are harmless; address, DNS and availability changes require
-  a new baseline. This includes IPv6 temporary-address rotation: the first
-  implementation deliberately prefers stopping over accepting ambiguous churn.
-* A revocable forwarding gate is shared by new dials, packet ingress, native
-  passthrough and ICMP. Revocation cancels pending work and prevents fallback from
-  treating a topology failure as an ordinary interface connection failure.
-  Before binding, validate the saved index; after connecting, check the generation
-  again. A verified stable snapshot renews only observation, never substitutes a
-  new upstream interface into an existing session. New topology requires an
-  explicit Start with a fresh baseline and SafeStart.
+* Observe configured routes before capture starts, after activation, on kernel
+  notifications, and every second. Verify the exact owned utun and capture routes
+  before publishing a new system-route generation. Only verified owned routes are
+  removed from this lookup. A missing, replaced, duplicated or newly shadowed
+  capture route, lost owned utun, or unavailable ownership observation stops
+  capture. Existing bypass prefixes may move between external VPNs; connected
+  and local routes may follow address changes. A new unrelated forwarding route
+  that shadows capture still requires a fresh reviewed Start.
+* Rule references resolve by name and MAC against current interfaces for each
+  attempt, and bind the current index. Missing/down adapters fall through the
+  ordered list. Address, IPv6 privacy/prefix, DNS and availability changes do not
+  stop capture. Each bind gets a lifetime token; removal, reindexing or MAC
+  replacement invalidates that token without revoking other interfaces. Check
+  it before binding and after dialing; established sockets keep their binding,
+  never migrate, and fail locally if that interface lifetime ends.
+* System dials and ICMP select the most-specific unscoped route from the verified
+  live view. Ambiguous ties, stale indices or a missing route fail that request
+  immediately. After a VPN default is withdrawn, public system fallback is held
+  for a three-second settling interval; requests fail during the interval rather
+  than waiting without a bound. Explicit physical rules remain available. A new
+  VPN default can be used immediately; a stable physical default becomes usable
+  after settling. No automatic teardown or SafeStart is needed for these updates.
 * Independently of notification timing, packets for a pre-existing, more-specific
   unscoped VPN route must not enter this capture. If one does, drop it before
-  TCP/UDP rules, native passthrough or ICMP, revoke the generation and stop. This
+  TCP/UDP rules, native passthrough or ICMP, without stopping other traffic. This
   covers the withdrawal gap without ever sending tailnet or VPN DNS destinations
   through a physical fallback. Deliberate narrower scoped capture remains valid.
-* A guard fault removes Pith's capture and closes its relays, reporting
+* A capture ownership fault removes Pith's capture and closes its relays, reporting
   `ErrNetworkLost`. No automatic restart or route repair is attempted. The journal
   remains an ownership ledger, never a baseline replay: only Pith's own matching
-  routes are deleted, and another VPN's rebuilt routes are left intact.
+  routes are deleted, and another VPN's rebuilt routes are left intact. Ordinary
+  native-passthrough send failures drop that flow's packets, not the whole capture.
 
 These guarantees cover Pith's forwarding while capture exists. After a safe stop,
 ordinary macOS routing and the VPN's own withdrawal/kill-switch policy apply.

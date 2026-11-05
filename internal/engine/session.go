@@ -296,8 +296,7 @@ func (e *Engine) monitor(ctx context.Context, s *session) {
 		}
 	}
 	if watchErr != nil {
-		fail(watchErr)
-		return
+		updates = nil
 	}
 	for {
 		select {
@@ -329,8 +328,7 @@ func (e *Engine) monitor(ctx context.Context, s *session) {
 		case ifaces, ok := <-updates:
 			if !ok {
 				updates = nil
-				fail(errors.New("interface observer closed"))
-				return
+				continue
 			}
 			if err := s.guard.Interfaces(ifaces); err != nil {
 				fail(err)
@@ -345,6 +343,19 @@ func (e *Engine) monitor(ctx context.Context, s *session) {
 			}
 			e.mu.Unlock()
 		case now := <-ticker.C:
+			// Metadata observation can recover by polling. Ownership still has the
+			// independent route observer and verified snapshot below.
+			if updates == nil {
+				readCtx, cancel := context.WithTimeout(ctx, time.Second)
+				if ifaces, err := e.opts.Interfaces(readCtx); err == nil {
+					s.guard.Interfaces(ifaces)
+					s.router.Interfaces(ifaces)
+					e.mu.Lock()
+					s.ifaces = ifaces
+					e.mu.Unlock()
+				}
+				cancel()
+			}
 			if err := s.guard.Validate(true); err != nil {
 				fail(err)
 				return
