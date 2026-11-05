@@ -17,7 +17,9 @@ import (
 	"golang.zx2c4.com/wireguard/tun"
 )
 
-// Snapshot reads the routing information base without opening a route writer.
+// Snapshot reads configured forwarding routes without opening a route writer.
+// Cloned host routes and link-layer neighbor caches are transient kernel state,
+// not capture conflicts or rollback baseline entries.
 func Snapshot() ([]Route, error) {
 	data, err := route.FetchRIB(unix.AF_UNSPEC, route.RIBTypeRoute, 0)
 	if err != nil {
@@ -43,6 +45,11 @@ func decodeRoutes(messages []route.Message, names map[int]string) []Route {
 	for _, message := range messages {
 		r, ok := message.(*route.RouteMessage)
 		if !ok || r.Flags&unix.RTF_UP == 0 || len(r.Addrs) <= unix.RTAX_NETMASK {
+			continue
+		}
+		// Keep CLONING/PRCLONING parents, static hosts, and VPN routes. Only their
+		// traffic-created children and ARP/NDP cache entries are excluded.
+		if r.Flags&(unix.RTF_WASCLONED|unix.RTF_LLINFO) != 0 {
 			continue
 		}
 		dst := address(r.Addrs[unix.RTAX_DST])

@@ -53,7 +53,7 @@ func SystemInterface(routes []Route, address netip.Addr) string {
 }
 
 // Build is read-only. A scoped plan captures only the supplied prefixes and
-// never adds global DNS host routes. Exact pre-existing routes are conflicts;
+// never adds global DNS host routes. Exact pre-existing configured routes conflict;
 // more specific routes (including Tailscale's routes) remain in place.
 func Build(routes []Route, dns []netip.Addr, ipv6 bool, scopes []netip.Prefix) (Plan, error) {
 	p := Plan{Before: slices.Clone(routes), Scoped: len(scopes) > 0}

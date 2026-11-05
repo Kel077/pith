@@ -28,8 +28,10 @@ var ipv6Candidates = [...]netip.Prefix{
 
 // SelectAddresses is read-only. Specific, scoped, rejecting and local routes
 // all reserve their address space. Default and /1 routes do not identify an
-// occupied subnet. Assigned interface prefixes are checked independently, so an
-// interface whose route is missing still cannot have its address taken over.
+// occupied subnet. Assigned interface prefixes, scoped capture destinations and
+// observed transient endpoints are checked independently, without treating those
+// address exclusions as forwarding routes. Uncached remote addresses behind a
+// default or /1 route cannot be inferred from these observations.
 func SelectAddresses(routes []Route, assigned []netip.Prefix, ipv6 bool) (TunnelAddresses, error) {
 	free := func(pool netip.Prefix) bool {
 		for _, r := range routes {

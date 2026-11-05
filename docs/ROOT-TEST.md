@@ -103,6 +103,9 @@ without the recorded installation identity cannot acquire cleanup proof or
 rebaseline; do not edit JSON to upgrade them. The initial snapshot file is never
 rewritten. For compatibility, `session.json.original` holds the **active**
 rollback snapshot, selected by `baselineLabel` and `baselineFile`.
+Sessions prepared by an older snapshot decoder may contain kernel route-cache
+entries without their original flags. Prepare a new session rather than deleting
+host routes from saved JSON or comparing that old baseline with filtered data.
 
 The coordinator should review these concrete artifacts and obtain the user's
 go-ahead now. Keep a second Terminal window open with the emergency command
@@ -148,8 +151,12 @@ testing helper updates needs its own reviewed case.
 All snapshots and detailed reports, including real addresses and MACs, stay
 under `PITH_SESSION`. Do not attach or commit them without redaction. The
 harness compares route and utun snapshots strictly against the active baseline.
-Another VPN, interface change, or unrelated route-cache change can make the result inconclusive; it
-never removes an unrelated route to force a pass. It also checks public-IP
+Snapshots exclude `RTF_WASCLONED` host routes and `RTF_LLINFO` ARP/NDP entries;
+ordinary traffic refreshing those caches does not change the baseline. Static
+host routes, cloning parents and VPN routes remain in the comparison. Another
+VPN, interface change, or configured-route change can make the result
+inconclusive; the harness never removes an unrelated route to force a pass.
+It also checks public-IP
 echoes against preflight when available. A rotating public exit can make this
 evidence inconclusive and requires review rather than an automatic retry.
 
@@ -164,6 +171,13 @@ The proof is bound to the session directory/UID, reviewed binary/plan/targets,
 installation identity, and current baseline. An older or copied proof is refused.
 File identity is rechecked immediately before Start/Stop, but it is not an atomic
 IPC installation token: keep the app and all other installers closed throughout.
+
+Tunnel cleanup compares the exact sorted utun inventory, not its changing
+addresses or display metadata. An additional, missing, or renamed utun still
+fails the comparison. Removal checks require all five managed paths to have
+been inspected and found absent, with no inspection error; a missing or repeated
+path entry cannot pass. The managed launchd service must also be absent, but
+its diagnostic output text is archived rather than compared for equality.
 
 ## Manual cases and remaining acceptance limits
 
@@ -257,8 +271,8 @@ call `stop` after switching modes merely to establish proof against the old
 baseline: establish that proof before the switch, then call `rebaseline`.
 
 The command permits the expected route changes between approved modes. It
-compares only its new before/after route and complete interface snapshots for
-stability, and rechecks helper identity and stopped status after the probes.
+compares its new before/after routes and interface topology for stability, and
+rechecks helper identity and stopped status after the probes.
 Success requires three sequential TLS preflights (system, A, B), each bounded
 to eight seconds, with a forty-second command deadline. A unique candidate
 file is archived first; only a fully successful operation atomically selects
@@ -271,6 +285,19 @@ fresh ordinary smoke check before `--batch`, `--app-bypass`, or any other case.
 Do not edit JSON or rerun prepare/cancel/install between modes. All approved
 phases share the original frozen targets and the same installation; remove it
 once at the end of this attended window.
+
+For this IPv4-only harness, interface comparison normalizes interface and IPv4
+address ordering. It preserves interface identity, kind, up/down state, IPv4
+address values, both routers, DNS values and priority order, and primary status.
+`api.Interface` exposes neither IPv6 prefix lengths nor address lifetimes or
+temporary flags, so the harness does not guess which address is temporary.
+It compares whether global IPv6 addresses are available, while tolerating changes
+to their individual values or count; full addresses remain in the private
+snapshots. This does not establish IPv6 address stability or replace a future
+reviewed `/128` acceptance plan. Route comparison stays strict: if IPv6 address
+rotation also changes a non-cache local `/128` or another semantic route, the
+command conservatively refuses the new baseline. Thus this normalization does
+not eliminate every possible IPv6 churn failure or weaken route ownership checks.
 
 The smoke and batch checks can be repeated within each mode. After the smoke
 check passes, the app-specific caller is built into the same harness:

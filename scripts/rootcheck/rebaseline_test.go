@@ -757,7 +757,7 @@ func TestPostUninstallComparisonUsesLatestBaselineAndArchivesEveryAttempt(t *tes
 	s.Original, s.BaselineLabel = nextMode(s), "exit-node"
 	clean := cloneSnapshot(s.Original)
 	clean.LaunchExit = 113
-	clean.Paths = []pathState{{Path: "synthetic-managed-path"}}
+	clean.Paths = absentPathStates()
 	ops.snapshot = func(context.Context) (snapshot, error) { return clean, nil }
 	old := privateArtifacts(t, s)
 	for range 2 {
@@ -771,6 +771,7 @@ func TestPostUninstallComparisonUsesLatestBaselineAndArchivesEveryAttempt(t *tes
 		t.Fatalf("repeated snapshot overwrote history: %v, %v", files, err)
 	}
 	initial.LaunchExit = 113
+	initial.Paths = absentPathStates()
 	ops.snapshot = func(context.Context) (snapshot, error) { return initial, nil }
 	if err := s.expectOriginalWithOps(context.Background(), "after-uninstall", ops); err == nil {
 		t.Fatal("uninstall accepted initial routes instead of latest mode")

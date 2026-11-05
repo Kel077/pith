@@ -411,11 +411,24 @@ func rebaselineWithOps(parent context.Context, s *session, c api.Service, label 
 	return nil
 }
 
+// sameInterfaces compares topology for this IPv4-only harness. Interface has
+// no IPv6 prefix, lifetime, or temporary-address metadata, so it cannot classify
+// an address as stable or temporary. Preserve IPv6 availability and Router6,
+// but ignore individual IPv6 address values and counts. sameRoutes separately
+// remains strict, including any non-cache IPv6 host or prefix route changes.
 func sameInterfaces(a, b []api.Interface) bool {
 	keys := func(ifaces []api.Interface) []string {
 		result := make([]string, 0, len(ifaces))
 		for _, iface := range ifaces {
-			data, _ := json.Marshal(iface)
+			hasIPv6 := len(iface.IPv6) > 0
+			iface.IPv6 = nil
+			iface.IPv4 = slices.Clone(iface.IPv4)
+			slices.Sort(iface.IPv4)
+			// DNS ordering can express resolver priority, so retain it exactly.
+			data, _ := json.Marshal(struct {
+				Interface api.Interface
+				HasIPv6   bool
+			}{iface, hasIPv6})
 			result = append(result, string(data))
 		}
 		slices.Sort(result)

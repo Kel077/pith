@@ -17,12 +17,22 @@ LAN DNS servers get host routes so their answers can feed the DNS cache. Existin
 more-specific VPN/Tailscale routes and MagicDNS are preserved. Exact capture-route
 conflicts fail with `ErrRouteConflict`; a VPN default is reported as `WarnVPN`.
 
+Routing snapshots omit `RTF_WASCLONED` host routes and `RTF_LLINFO` neighbor
+cache entries. Ordinary traffic can add or expire those entries without changing
+the configured forwarding policy. Cloning parent routes, static host routes and
+VPN routes remain visible for conflict checks, saved system egress and cleanup.
+
 The tunnel uses the first available IPv4 `/30` and IPv6 ULA `/126` from bounded
 candidate lists. Both the routing table and assigned interface prefixes must be
 free of overlaps; scoped, local and rejecting routes all count as occupied.
 These candidates exclude the standard fake-IP and Tailscale ranges. If no subnet
 is available, startup fails before creating the utun. Its selected subnets are
 included in the capture journal.
+Currently cached remote addresses are read separately as additional address
+selection exclusions, so filtering the policy snapshot cannot make an observed
+remote address become a local tunnel address. They never enter the policy
+snapshot or authorize route deletion; uncached remote addresses behind a default
+route cannot be inferred from this observation.
 
 New TCP SYNs and UDP tuples become userspace endpoints. At the first packet,
 process attribution reads `pcblist_n`, prefers the effective/delegated PID, and

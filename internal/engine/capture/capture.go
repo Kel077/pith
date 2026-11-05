@@ -35,6 +35,13 @@ type Driver interface {
 	Delete(context.Context, netip.Prefix, string) error
 }
 
+// addressExclusionReader optionally observes transient occupied endpoints. They
+// only constrain tunnel address selection; they are not forwarding policy or
+// route ownership evidence. Unobserved remote addresses cannot be inferred here.
+type addressExclusionReader interface {
+	AddressExclusions() ([]netip.Prefix, error)
+}
+
 type Options struct {
 	IPv6      bool
 	Scopes    []netip.Prefix
@@ -102,7 +109,15 @@ func Prepare(ctx context.Context, opts Options) (*Capture, error) {
 		return nil, fmt.Errorf("read assigned interface prefixes: %w", err)
 	}
 	// A scoped test destination must not become part of the tunnel's own subnet.
-	plan.Addresses, err = SelectAddresses(before, append(assigned, opts.Scopes...), opts.IPv6)
+	exclusions := append(slices.Clone(assigned), opts.Scopes...)
+	if reader, ok := opts.Driver.(addressExclusionReader); ok {
+		occupied, err := reader.AddressExclusions()
+		if err != nil {
+			return nil, fmt.Errorf("read transient address exclusions: %w", err)
+		}
+		exclusions = append(exclusions, occupied...)
+	}
+	plan.Addresses, err = SelectAddresses(before, exclusions, opts.IPv6)
 	if err != nil {
 		return nil, err
 	}

@@ -347,7 +347,7 @@ func takeSnapshot(ctx context.Context) (snapshot, error) {
 	if err != nil {
 		return s, err
 	}
-	for _, path := range []string{helper.BinaryPath, helper.PlistPath, helper.DataDir, filepath.Join(helper.DataDir, "capture.json"), helper.SocketPath} {
+	for _, path := range managedPaths() {
 		p := pathState{Path: path}
 		info, err := os.Lstat(path)
 		switch {
@@ -378,12 +378,27 @@ func takeSnapshot(ctx context.Context) (snapshot, error) {
 	return s, nil
 }
 
+func managedPaths() [5]string {
+	return [5]string{helper.BinaryPath, helper.PlistPath, helper.DataDir, filepath.Join(helper.DataDir, "capture.json"), helper.SocketPath}
+}
+
 func (s snapshot) requireAbsent() error {
+	expected := managedPaths()
+	if len(s.Paths) != len(expected) {
+		return errors.New("absence verification requires a complete snapshot of the five managed paths")
+	}
+	seen := make(map[string]bool, len(expected))
 	for _, path := range s.Paths {
+		if !slices.Contains(expected[:], path.Path) || seen[path.Path] {
+			return errors.New("managed path snapshot contains an unexpected or duplicate path")
+		}
+		seen[path.Path] = true
 		if path.Present || path.Error != "" {
 			return fmt.Errorf("managed path already exists or cannot be inspected: %s; this harness never replaces an existing installation", path.Path)
 		}
 	}
+	// launchctl output includes mutable diagnostic text. Only service absence
+	// matters here; snapshot acquisition errors are returned by takeSnapshot.
 	if s.LaunchExit == 0 {
 		return errors.New("the managed launchd service already exists")
 	}
