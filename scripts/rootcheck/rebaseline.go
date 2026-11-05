@@ -187,6 +187,7 @@ func (s *session) startCapture(ctx context.Context, c api.Service, scene string,
 	if err := idleReviewedStatus(s, st); err != nil {
 		return err
 	}
+	s.rememberEnded(st)
 	return s.startWithIdentity(ctx, c, scene, st.LastCapture, ops)
 }
 
@@ -255,6 +256,10 @@ func collectCleanup(ctx context.Context, s *session, c api.Service, ops rootchec
 		resultErr = errors.Join(resultErr, statusErr, ops.verifyInstalled(s))
 		if statusErr == nil {
 			record.Status = st
+		}
+		if resultErr == nil {
+			s.rememberEnded(record.Status)
+			record.Binding = s.cleanupBinding()
 		}
 		record.Restored = sameCleanupBaseline(s.Original, record.After)
 		if !record.Restored {

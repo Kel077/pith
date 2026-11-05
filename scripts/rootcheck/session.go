@@ -70,6 +70,8 @@ type snapshot struct {
 	LaunchExit       int             `json:"launchdExit"`
 	BootSession      string          `json:"bootSession,omitempty"`
 	InterfaceIndices map[string]int  `json:"interfaceIndices,omitempty"`
+	// Complete assigned prefixes, including loopback and link-local addresses.
+	InterfaceAddresses map[string][]netip.Prefix `json:"interfaceAddresses,omitempty"`
 }
 
 func prepare(ctx context.Context, args []string) error {
@@ -357,8 +359,21 @@ func takeSnapshot(ctx context.Context) (snapshot, error) {
 		return s, err
 	}
 	s.InterfaceIndices = make(map[string]int, len(ifaces))
+	s.InterfaceAddresses = make(map[string][]netip.Prefix, len(ifaces))
 	for _, iface := range ifaces {
 		s.InterfaceIndices[iface.Name] = iface.Index
+		addresses, err := iface.Addrs()
+		if err != nil {
+			return s, err
+		}
+		s.InterfaceAddresses[iface.Name] = nil
+		for _, address := range addresses {
+			prefix, err := netip.ParsePrefix(address.String())
+			if err != nil {
+				return s, fmt.Errorf("read interface address: %w", err)
+			}
+			s.InterfaceAddresses[iface.Name] = append(s.InterfaceAddresses[iface.Name], prefix)
+		}
 	}
 	s.Routes, err = capture.Snapshot()
 	if err != nil {

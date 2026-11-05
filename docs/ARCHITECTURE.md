@@ -130,6 +130,10 @@ The acceptance tool distinguishes an external-only change from exact baseline
 restoration using complete helper capture identities and independent snapshots.
 Its explicit `rebaseline --accept-external-change` operates only while stopped;
 it does not refresh the running engine or establish runtime VPN compatibility.
+Reused names/indices require confirmed capture closure, absence of every recorded
+tunnel subnet, and a unique whole-VPN address/route migration from a disappeared
+baseline interface. The proof and independent address inventories stay in the
+private report; missing or contradictory evidence still forbids acceptance.
 
 ### Application proxies and fake addresses
 
@@ -171,10 +175,13 @@ previous boot can never authorize deleting current routes, even if an interface
 name and index were reused. Explicit emergency cleanup also verifies the boot
 identity and refuses legacy journals that cannot establish ownership.
 Authenticated status also exposes `LastCapture`, a copy of the most recently
-prepared journal identity. It remains after Stop or SafeStart failure and is
+prepared journal identity and selected subnets. It remains after Stop or SafeStart failure and is
 cleared on helper process restart. Controllers can retain these receipts to
 distinguish their captures from external changes; the field alone proves neither
-active routing nor successful cleanup and cannot authorize route deletion.
+active routing nor full baseline restoration and cannot authorize route deletion.
+Its additive `EndedAt` is set only after a successful device close and a subsequent
+snapshot with no owned capture routes. Failed or unobservable cleanup leaves it
+zero. Controllers retain this confirmation separately from immutable identity.
 
 Stop restores routes before waiting on relays or disk. TCP half-close is retained;
 shutdown aborts incomplete handshakes and waits for all workers. Hot rule/scene

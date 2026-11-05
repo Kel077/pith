@@ -63,6 +63,9 @@ func (e *Engine) startLocked(ctx context.Context, scene api.Scene, settings api.
 			}
 			if s.capture != nil {
 				result = errors.Join(result, s.capture.Close())
+				e.mu.Lock()
+				e.status.LastCapture = s.capture.Identity()
+				e.mu.Unlock()
 			}
 			if s.echo != nil {
 				s.echo.Close()
@@ -208,6 +211,9 @@ func (e *Engine) stopLocked() error {
 	<-s.routeDone
 	// Restore kernel routing before waiting for application relays or disk I/O.
 	err := s.capture.Close()
+	e.mu.Lock()
+	e.status.LastCapture = s.capture.Identity()
+	e.mu.Unlock()
 	s.echo.Close()
 	s.forward.Close()
 	err = errors.Join(err, s.existing.Close())

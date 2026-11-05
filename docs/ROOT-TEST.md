@@ -145,7 +145,7 @@ alternative removal authorization, not an automatic extra step.
 | 7. Optional observation | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --observe 90s` | No dialog. Runs the smoke checks, then holds the reviewed host capture for at most 90 seconds. See the manual cases below. | The harness records an observation window, not a pass for an unimplemented manual assertion. It polls helper status and stops on interruption, failure, or expiry. |
 | 8. Explicit stop | `"$PITH_TEST_BIN/rootcheck" stop --session "$PITH_SESSION"` | No dialog; authenticated IPC only after verifying the installation belongs to this session. Safe to repeat while this helper is installed. | Status is stopped at the reviewed version; route snapshot and utun inventory match the latest active baseline. A successful comparison is persisted as cleanup proof. If IPC is broken, use emergency cleanup instead. |
 | 8a. Optional next mode | While stopped, the user selects the approved Tailscale mode; then `"$PITH_TEST_BIN/rootcheck" rebaseline --session "$PITH_SESSION" --label tailnet` (or `vpn-off` / `exit-node`) | No dialog. Verifies the same idle installation and the preceding cleanup proof; takes new snapshots and makes three bounded HTTPS requests to the frozen target through system/A/B. Writes private review files only; it does not change VPN settings, capture scope, or routing. | Both reviewed adapters resolve and are up; helper identity/version remain unchanged; snapshots are stable across preflight. Only then does the new baseline become active, with smoke/pass state cleared. Repeat step 3 before any further case. A failed rebaseline leaves the previous active baseline and all history intact. |
-| 8b. Reviewed external change | `"$PITH_TEST_BIN/rootcheck" rebaseline --session "$PITH_SESSION" --label vpn-rebuilt --accept-external-change` | No dialog or routing change. Use only after reviewing an `external-change` cleanup report; this is not a general mismatch override. | Pith's recorded interfaces and exact capture prefixes are absent; every difference belongs to other interfaces; the same idle installation and stable preflight checks pass. Archive both the prior proof and current differences, then repeat smoke. The original failed check remains failed. |
+| 8b. Reviewed external change | `"$PITH_TEST_BIN/rootcheck" rebaseline --session "$PITH_SESSION" --label vpn-rebuilt --accept-external-change` | No dialog or routing change. Use only after reviewing an `external-change` cleanup report; this is not a general mismatch override. | Pith's exact capture prefixes are absent; every reused name/index has independent whole-VPN migration evidence; the same idle installation and stable preflight checks pass. Archive both the prior proof and current differences, then repeat smoke. The original failed check remains failed. |
 | 9. Final uninstall, once | `"$PITH_TEST_BIN/rootcheck" uninstall --session "$PITH_SESSION"` | Administrator dialog requests `Pith needs your password to remove its routing helper.` Enter the password. Attempts `Stop` on the verified installation, then independently boots out launchd, checks stale capture ownership, and removes managed files. It does not require working IPC or a matching IPC version. | Helper, service, socket, journal, and data directory are absent; the latest baseline's routes and utun inventory are restored. Shared parent directories and private session artifacts remain. A clearly different installation is refused before authorization; review ownership and the standalone emergency command instead. |
 
 macOS supplies the surrounding dialog title, buttons, and any cached
@@ -194,8 +194,10 @@ its diagnostic output text is archived rather than compared for equality.
 A VPN can rebuild its own tunnel while Pith is running. A mismatch alone does
 not prove that Pith left something behind, but it must never be silently ignored.
 The helper's authenticated `Status.LastCapture` reports its most recently
-prepared capture's boot identity, journal token, utun name/index and exact
-prefixes. It survives Stop and SafeStart failure within that helper process.
+prepared capture's boot identity, journal token, utun name/index, exact capture
+prefixes and selected tunnel subnets. `EndedAt` becomes nonzero only after its
+device closed successfully and a subsequent snapshot found no owned capture
+routes. It survives Stop and SafeStart failure within that helper process.
 The harness records each receipt, including failed Start attempts, in the private
 session history. A helper restart can clear its in-memory receipt; receipts
 already saved by the controller remain available. They never authorize deletion.
@@ -208,12 +210,37 @@ when all of the following hold:
 2. Capture ownership history is complete, with no pending/unobserved Start. Every
    receipt matches the frozen host prefixes and current boot. Any current helper
    receipt is already in this session's history.
-3. Neither a route nor an interface uses **any** utun name or index Pith recorded
-   in this session. Reuse by another VPN is conservatively ambiguous and rejected.
-   No exact capture prefix exists on any interface, including scoped routes.
+3. No exact capture prefix exists on any interface, including scoped routes.
+   A reused Pith name or index requires the independent whole-VPN migration
+   evidence below; an unused or unexplained leftover interface still fails.
 4. Complete, consistent interface-name/index inventories accompany both
    snapshots. Every added/removed route and changed interface belongs solely to
-   interfaces outside Pith's ownership history.
+   interfaces outside Pith's ownership or to a proven foreign migration.
+
+A new name/index reuse needs all of these additional observations:
+
+* The current helper's latest known capture has a nonzero `EndedAt` preceding
+  the independent snapshot. Every recorded capture that used the reused name or
+  index has a confirmed end. A cleared receipt after helper restart cannot prove
+  a new reuse, even though ordinary non-reuse cleanup remains possible.
+* Complete assigned-address inventories cover every interface, including loopback
+  and link-local addresses. No address or specific route uses any recorded Pith
+  tunnel subnet, and no route uses an exact capture prefix. Missing subnet or
+  address evidence cannot be reconstructed from a guessed tunnel name.
+* Exactly one disappeared baseline VPN matches the reused interface's complete
+  global assigned prefixes and routes after normalizing only interface name/index
+  and display label. It must be up and have at least one global address and route.
+  Different addresses, an additional route, a surviving source VPN, duplicate
+  candidate identities, or an unconfirmed earlier capture make reuse ambiguous.
+  Link-local addresses are retained and checked for Pith residue, but are not
+  stable migration identity. There is no broad IPv6-address-churn exception for
+  the global addresses used as migration evidence.
+
+The private report includes the matched source/destination name/index pairs,
+global prefixes, normalized route set, and complete original/after snapshots.
+After explicit acceptance, the new stopped baseline may retain that foreign
+interface: captures confirmed ended before this baseline do not taint it forever.
+A later capture using the same name/index must establish new evidence.
 
 This report has `restored: false`, `passed: false`, a separate external-change
 classification, and full route/interface/index differences. The command still

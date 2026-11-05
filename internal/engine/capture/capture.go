@@ -71,17 +71,26 @@ type Capture struct {
 	state     journal
 	active    atomic.Bool
 	closed    atomic.Bool
+	ended     atomic.Pointer[time.Time]
 	drained   chan struct{}
 	closeOnce sync.Once
 	closeErr  error
 }
 
-// Identity reports the immutable journal identity, including after Close. It is
-// safe to publish to the authenticated controller; it is not deletion authority.
+// Identity reports the immutable journal identity plus confirmed closure time.
+// It is safe for the authenticated controller; it is not deletion authority.
 func (c *Capture) Identity() *api.CaptureIdentity {
 	identity := &api.CaptureIdentity{BootSession: c.state.BootSession, Token: c.state.Token, Interface: c.Name, Index: c.state.Index}
 	for _, p := range c.state.Plan.Prefixes {
 		identity.Prefixes = append(identity.Prefixes, p.String())
+	}
+	for _, p := range []netip.Prefix{c.state.Plan.Addresses.IPv4, c.state.Plan.Addresses.IPv6} {
+		if p.IsValid() {
+			identity.TunnelSubnets = append(identity.TunnelSubnets, p.String())
+		}
+	}
+	if ended := c.ended.Load(); ended != nil {
+		identity.EndedAt = *ended
 	}
 	return identity
 }
@@ -264,6 +273,10 @@ func (c *Capture) closeLocked() error {
 			failures = append(failures, err)
 		}
 		c.closeErr = errors.Join(failures...)
+		if c.closeErr == nil {
+			ended := time.Now()
+			c.ended.Store(&ended)
+		}
 	})
 	return c.closeErr
 }

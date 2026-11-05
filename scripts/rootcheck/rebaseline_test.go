@@ -137,6 +137,12 @@ func cloneSnapshot(in snapshot) snapshot {
 			out.InterfaceIndices[name] = index
 		}
 	}
+	if in.InterfaceAddresses != nil {
+		out.InterfaceAddresses = make(map[string][]netip.Prefix, len(in.InterfaceAddresses))
+		for name, addresses := range in.InterfaceAddresses {
+			out.InterfaceAddresses[name] = slices.Clone(addresses)
+		}
+	}
 	return out
 }
 

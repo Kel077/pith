@@ -100,6 +100,7 @@ func cloneStatus(s api.Status) api.Status {
 	if s.LastCapture != nil {
 		identity := *s.LastCapture
 		identity.Prefixes = slices.Clone(identity.Prefixes)
+		identity.TunnelSubnets = slices.Clone(identity.TunnelSubnets)
 		s.LastCapture = &identity
 	}
 	if s.Error != nil {

@@ -39,10 +39,15 @@ func TestLastCaptureIdentitySurvivesCleanup(t *testing.T) {
 				t.Fatal(err)
 			}
 			after, _ := e.Status(ctx)
+			if len(id.TunnelSubnets) == 0 || id.EndedAt.IsZero() == fail || after.LastCapture.EndedAt.IsZero() {
+				t.Fatal("incorrect capture closure receipt", id, after.LastCapture)
+			}
+			id.EndedAt = after.LastCapture.EndedAt
 			if after.State != api.Stopped || !reflect.DeepEqual(after.LastCapture, id) {
 				t.Fatal("Stop lost capture history")
 			}
 			after.LastCapture.Prefixes[0] = "203.0.113.10/32"
+			after.LastCapture.TunnelSubnets[0] = "203.0.113.0/30"
 			after.LastCapture.Token = "changed-copy"
 			after, _ = e.Status(ctx)
 			if !reflect.DeepEqual(after.LastCapture, id) {
@@ -54,5 +59,27 @@ func TestLastCaptureIdentitySurvivesCleanup(t *testing.T) {
 				t.Fatal("successive captures shared an identity")
 			}
 		})
+	}
+}
+
+func TestUnverifiedCleanupDoesNotClaimAnEndedCapture(t *testing.T) {
+	e, d := newTestEngine(t, nil)
+	cfg := api.DefaultConfig()
+	ctx := context.Background()
+	if err := e.Start(ctx, cfg.Scenes[0], cfg.Settings); err != nil {
+		t.Fatal(err)
+	}
+	d.mu.Lock()
+	d.snapshotErr = errors.New("cleanup observation unavailable")
+	d.mu.Unlock()
+	if e.Stop(ctx) == nil {
+		t.Fatal("unverified cleanup succeeded")
+	}
+	d.mu.Lock()
+	d.snapshotErr = nil
+	d.mu.Unlock()
+	st, _ := e.Status(ctx)
+	if st.LastCapture == nil || !st.LastCapture.EndedAt.IsZero() {
+		t.Fatal("unverified cleanup claimed closure", st)
 	}
 }

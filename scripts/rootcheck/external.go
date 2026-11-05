@@ -35,6 +35,7 @@ type externalChange struct {
 	InterfacesRemoved []api.Interface `json:"interfacesRemoved,omitempty"`
 	IndicesAdded      map[string]int  `json:"indicesAdded,omitempty"`
 	IndicesRemoved    map[string]int  `json:"indicesRemoved,omitempty"`
+	Migrations        []vpnMigration  `json:"verifiedVPNMigrations,omitempty"`
 }
 
 func (s *session) validCapture(id *api.CaptureIdentity) bool {
@@ -60,7 +61,25 @@ func (s *session) knownCapture(id *api.CaptureIdentity) bool {
 	if id == nil {
 		return true
 	} // A restarted helper is idle with no in-memory history.
-	return slices.ContainsFunc(s.Ownership.Captures, func(old api.CaptureIdentity) bool { return reflect.DeepEqual(old, *id) })
+	return slices.ContainsFunc(s.Ownership.Captures, func(old api.CaptureIdentity) bool { return sameCapture(old, *id) })
+}
+
+func sameCapture(a, b api.CaptureIdentity) bool {
+	a.EndedAt, b.EndedAt = time.Time{}, time.Time{}
+	return reflect.DeepEqual(a, b)
+}
+
+// Retain confirmed closure across later captures. Only an authenticated idle
+// status with the exact immutable receipt may advance this historical fact.
+func (s *session) rememberEnded(st api.Status) {
+	if idleReviewedStatus(s, st) != nil || st.LastCapture == nil || st.LastCapture.EndedAt.IsZero() {
+		return
+	}
+	for i, old := range s.Ownership.Captures {
+		if sameCapture(old, *st.LastCapture) && old.EndedAt.IsZero() {
+			s.Ownership.Captures[i].EndedAt = st.LastCapture.EndedAt
+		}
+	}
 }
 
 func (s *session) startWithIdentity(ctx context.Context, c api.Service, scene string, previous *api.CaptureIdentity, ops rootcheckOps) error {
@@ -88,6 +107,7 @@ func (s *session) startWithIdentity(ctx context.Context, c api.Service, scene st
 	} else {
 		id := *st.LastCapture
 		id.Prefixes = slices.Clone(id.Prefixes)
+		id.TunnelSubnets = slices.Clone(id.TunnelSubnets)
 		s.Ownership.Captures = append(s.Ownership.Captures, id)
 	}
 	s.Ownership.Pending = false
@@ -99,16 +119,22 @@ func (s *session) startWithIdentity(ctx context.Context, c api.Service, scene st
 }
 
 func snapshotInventory(s snapshot) error {
-	if s.BootSession == "" || len(s.InterfaceIndices) != len(s.Interfaces) {
+	if s.BootSession == "" || len(s.InterfaceIndices) == 0 {
 		return errors.New("incomplete boot or interface-index evidence")
 	}
 	names, indices := map[string]bool{}, map[int]bool{}
+	for name, index := range s.InterfaceIndices {
+		if name == "" || index <= 0 || indices[index] {
+			return errors.New("ambiguous complete interface inventory")
+		}
+		indices[index] = true
+	}
 	for _, iface := range s.Interfaces {
 		index := s.InterfaceIndices[iface.Name]
-		if iface.Name == "" || index <= 0 || names[iface.Name] || indices[index] {
+		if iface.Name == "" || index <= 0 || names[iface.Name] {
 			return errors.New("ambiguous interface inventory")
 		}
-		names[iface.Name], indices[index] = true, true
+		names[iface.Name] = true
 	}
 	for _, route := range s.Routes {
 		if !route.Prefix.IsValid() || route.Index <= 0 || s.InterfaceIndices[route.Interface] != route.Index {
@@ -119,7 +145,7 @@ func snapshotInventory(s snapshot) error {
 }
 
 // externalDifferences never removes or adopts anything. It classifies only
-// changes wholly outside every capture identity recorded in this session.
+// changes outside capture ownership, with independent evidence for any reuse.
 func (s *session) externalDifferences(after snapshot, status api.Status) (*externalChange, error) {
 	if err := idleReviewedStatus(s, status); err != nil {
 		return nil, err
@@ -143,29 +169,40 @@ func (s *session) externalDifferences(after snapshot, status api.Status) (*exter
 		}
 		ownedNames[id.Interface], ownedIndices[id.Index] = true, true
 	}
+	beforeOK, afterOK, migrations, err := s.permittedReuse(after, status)
+	if err != nil {
+		return nil, err
+	}
 	for name, index := range after.InterfaceIndices {
-		if ownedNames[name] || ownedIndices[index] {
+		if (ownedNames[name] || ownedIndices[index]) && !afterOK[interfaceKey{name, index}] {
 			return nil, errors.New("a Pith capture interface or reused name/index remains")
 		}
 	}
 	scopes, _ := s.scopes()
 	for _, route := range after.Routes {
-		if ownedNames[route.Interface] || ownedIndices[route.Index] || slices.Contains(scopes, route.Prefix) {
+		if (ownedNames[route.Interface] || ownedIndices[route.Index]) && !afterOK[interfaceKey{route.Interface, route.Index}] || slices.Contains(scopes, route.Prefix) {
 			return nil, errors.New("a Pith interface route or exact capture prefix remains")
 		}
 	}
 	diff := &externalChange{RoutesAdded: routeDifference(after.Routes, s.Original.Routes), RoutesRemoved: routeDifference(s.Original.Routes, after.Routes), IndicesAdded: map[string]int{}, IndicesRemoved: map[string]int{}}
-	for _, route := range append(slices.Clone(diff.RoutesAdded), diff.RoutesRemoved...) {
-		if ownedNames[route.Interface] || ownedIndices[route.Index] || slices.Contains(scopes, route.Prefix) {
-			return nil, errors.New("route differences touch a capture identity or prefix")
+	diff.Migrations = migrations
+	for _, part := range []struct {
+		routes  []capture.Route
+		allowed map[interfaceKey]bool
+	}{{diff.RoutesAdded, afterOK}, {diff.RoutesRemoved, beforeOK}} {
+		for _, route := range part.routes {
+			if (ownedNames[route.Interface] || ownedIndices[route.Index]) && !part.allowed[interfaceKey{route.Interface, route.Index}] || slices.Contains(scopes, route.Prefix) {
+				return nil, errors.New("route differences touch an unproven capture identity or prefix")
+			}
 		}
 	}
 	for _, pair := range []struct {
 		from, to snapshot
 		out      *[]api.Interface
 		indices  map[string]int
+		allowed  map[interfaceKey]bool
 	}{
-		{after, s.Original, &diff.InterfacesAdded, diff.IndicesAdded}, {s.Original, after, &diff.InterfacesRemoved, diff.IndicesRemoved},
+		{after, s.Original, &diff.InterfacesAdded, diff.IndicesAdded, afterOK}, {s.Original, after, &diff.InterfacesRemoved, diff.IndicesRemoved, beforeOK},
 	} {
 		for _, iface := range pair.from.Interfaces {
 			unchanged := slices.ContainsFunc(pair.to.Interfaces, func(other api.Interface) bool {
@@ -174,7 +211,7 @@ func (s *session) externalDifferences(after snapshot, status api.Status) (*exter
 			if unchanged {
 				continue
 			}
-			if ownedNames[iface.Name] || ownedIndices[pair.from.InterfaceIndices[iface.Name]] {
+			if (ownedNames[iface.Name] || ownedIndices[pair.from.InterfaceIndices[iface.Name]]) && !pair.allowed[interfaceKey{iface.Name, pair.from.InterfaceIndices[iface.Name]}] {
 				return nil, errors.New("interface differences touch a past Pith identity")
 			}
 			*pair.out = append(*pair.out, iface)
