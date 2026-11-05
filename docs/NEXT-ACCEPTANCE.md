@@ -10,8 +10,8 @@ an engine-enforced deadline and frozen LAN-DNS routes. A separate
 SafeStart. All modes have synthetic coverage; the completed hardware coverage
 is recorded below. The external-change flag cannot widen an installation.
 The scoped UDP/DNS extension has passed hardware acceptance with its separate
-one-query smoke gate and bounded batch, as recorded below. The QUIC/HTTP/3 harness
-is implemented with synthetic and loopback tests, pending hardware acceptance.
+one-query smoke gate and bounded batch, as recorded below. The scoped QUIC/HTTP/3
+harness has also passed its reviewed hardware subset after the UDP lifetime fix.
 App-bundle fixtures and throughput still need their described harness extensions
 before approval.
 
@@ -20,11 +20,24 @@ HTTP/3 response because the same UDP tuple was split into a second unattributed
 system flow. A synthetic IPv4/IPv6 regression reproduces premature teardown on
 client ICMP port-unreachable after socket close; the original binding now lasts
 until normal idle, preserving queued tail datagrams. The failed run's triggering
-error was not retained, so that packet-level cause still needs hardware
-confirmation. Evidence failures now distinguish early closure, duplicate tuples
+error was not retained, so the triggering hardware packet was not directly
+observed. Evidence failures now distinguish early closure, duplicate tuples
 (including missing owners) and pending byte counts from HTTP/3 request failure.
-The coordinator verified clean uninstall. Repeat smoke and the complete QUIC
-batch before proceeding; do not count that failed batch as acceptance.
+The coordinator verified clean uninstall. That failed attempt remains distinct
+from the successful repeat recorded below.
+
+## Recorded QUIC hardware acceptance
+
+The coordinator reported successful hardware acceptance of `8dd603e`: TCP smoke,
+the single `--quic` HTTP/3 IP request through A, and all three `--quic-batch` cases
+(observable Initial SNI domain rule through A, IP rule through B, and IP rule
+through A with a fragmented Initial ClientHello). Verified server HTTP/3 responses
+and exact helper process/tuple/rule/interface/name/counter evidence passed.
+Uninstall restored the baseline and independent system-state checks were clean.
+Reports were reviewed privately and deleted. This covers the reviewed IPv4 QUIC
+v1/HTTP/3 subset, not ECH, migration, 0-RTT, HTTP retry or general multi-packet SNI
+reassembly. The repeat also exercises the corrected UDP binding lifetime; the
+synthetic regression separately covers IPv4 and IPv6 ICMP errors.
 
 ## Recorded full IPv4 hardware acceptance
 
@@ -136,7 +149,7 @@ to obtain a pass. Preserve failures and independent cleanup evidence separately.
 | --- | --- | --- | --- |
 | IPv6 first | Use `host-ipv6`: one explicitly selected global IPv6 `/128`, at most 60 seconds of capture; one system and one bound TLS request per adapter with an 8-second deadline. Its mandatory SafeStart proves the exact native IPv6 socket crossed capture. | Before capture, verify both the ordinary and selected adapter paths can actually reach the endpoint. During capture, verify process, IPv6 destination, rule/outcome, actual interface and bytes. Test block, a missing-interface fallback, and a new connection after hot reload. | A verified remote response and exact captured tuple are required; a working IPv4 fallback cannot count as IPv6 success. No public IPv6 on an adapter is a prerequisite failure/inconclusive case. Stop removes only the `/128` and owned tunnel; IPv4 routing and existing VPN routes stay unchanged. Any dual-stack connectivity claim also needs a separately reviewed IPv4 control endpoint and observation. |
 | UDP and DNS | Passed the reviewed two-resolver IPv4 hardware subset. One-query smoke, then at most 11/20 queries for one/two resolvers; two-second response deadlines, no retries or TCP fallback. | Match DNS IDs/questions and exact application tuple/PID/path against helper records, including rule/interface/outcome and payload counters. Check A/AAAA, stable pre-NAT source tuples, hot reload, block/fallback, reuse and replacement after the ten-second DNS idle timeout. Record TTLs without dialing answer addresses or widening capture. | Cache expiry, ordinary UDP's two-minute idle timeout, pre-existing connected UDP and unconnected listeners remain separate gaps. The latter has a known source-port limitation. Silent-peer timeout does not prove automatic interface failover; DNS replies cannot prove public NAT ports. |
-| QUIC | Implemented: one frozen public IPv4 `/32`, one HTTP/3 smoke request through A, then three sequential cases; ten seconds per exchange, bounded socket payload and packet counts. | Require verified TLS/ALPN and a real HTTP/3 response, exact UDP process/tuple/rule/interface/name records and counters. Test domain routing with observable SNI, IP routing through B, then IP routing through A with a fragmented ClientHello that lacks recoverable first-datagram SNI. | Hardware acceptance pending. The fragmented control is not ECH or multi-packet name recovery. No redirects, application retries, TCP fallback, unreviewed destination or plaintext/packet logging. Stop and verify routes/tunnel. See the [QUIC procedure](ROOT-TEST.md#bounded-quichttp3-stage). |
+| QUIC | Passed the reviewed IPv4 hardware subset: one frozen `/32`, one HTTP/3 smoke request through A, then three sequential cases; ten seconds per exchange, bounded socket payload and packet counts. | Require verified TLS/ALPN and a real HTTP/3 response, exact UDP process/tuple/rule/interface/name records and counters. Test domain routing with observable SNI, IP routing through B, then IP routing through A with a fragmented ClientHello that lacks recoverable first-datagram SNI. | The fragmented control is not ECH or multi-packet name recovery. No redirects, application retries, TCP fallback, unreviewed destination or plaintext/packet logging. Stop and verify routes/tunnel. See the [QUIC procedure](ROOT-TEST.md#bounded-quichttp3-stage). |
 | App bundle and helpers | One test bundle with a main executable, a nested helper/XPC service, and a separate control executable; each makes one bounded request to the frozen host. Then a separately reviewed WebKit and background URL-session fixture. | Correlate spawned PID, executable, outer bundle path/identifier, socket-owner PID and effective/delegated app with connection records. Apply one parent-app rule through A, then a block; repeat a control request outside the bundle. Ensure no preexisting pooled socket is mistaken for a new flow. | Main and nested helpers match the parent automatically. WebKit/URL-session traffic is attributed to the requesting app only when the kernel delegation evidence supports it. The control remains unmatched. End/wait for every fixture process and remove only the temporary fixtures. |
 | Throughput | A permitted dedicated endpoint and finite transfer budget; direct bound baseline first, then Pith on the same adapter. Use 5-second warmup and at most three 15-second samples per direction; cap total transferred bytes in the reviewed plan. | Measure server/client payload bytes and elapsed time independently of Pith counters; record CPU, memory, log volume, connection count and idle CPU after completion. Compare a rule-heavy scene separately from the minimal scene. | Claim the 500 Mbps target only if the direct link/server baseline can support it and sustained observed payload throughput meets it. Otherwise record a bottleneck or inconclusive target. Do not use an unrelated public speed service without permission or create an unlimited generator. |
 | Full IPv4 extensions after scoped stages | The core TCP and cleanup cases above have passed. DNS, mixed-protocol and VPN extensions still need separate approval and a helper-enforced lease of at most 120 seconds; one ordinary TCP request first, then a small bounded batch. Use the eight IPv4 split prefixes above; do not enable IPv6 capture in this stage. | Review all intended LAN-DNS host routes as well as every split prefix. Retain the TCP regression checks, and separately verify real observed DNS answers, mixed protocols and the selected VPN/tailnet/MagicDNS controls without scanning peers. | Prove each asserted flow crossed Pith and reached the expected external path. Stop on lost ordinary connectivity, routing loops, unexpected destination scope, conflicting ownership, or changed VPN state. After Stop and optional separately approved helper crash, verify no Pith split prefix, DNS host route or utun remains, and unrelated paths still work. |

@@ -422,7 +422,16 @@ dialog is needed for the DNS checks themselves.
 
 ## Bounded QUIC/HTTP/3 stage
 
-The QUIC harness has synthetic and real loopback HTTP/3 coverage. The first
+The coordinator reported successful hardware acceptance of `8dd603e`: TCP smoke,
+the single `--quic` request through A, and all three `--quic-batch` cases:
+observable Initial SNI domain routing through A, IP routing through B, and IP
+routing through A with a fragmented ClientHello. Verified HTTP/3 responses and
+helper tuple/process/rule/interface/name/counter evidence all passed. Uninstall
+restored the baseline; independent system checks were clean. Private reports were
+reviewed and deleted. This establishes the reviewed IPv4 QUIC v1/HTTP/3 subset,
+not ECH, migration, 0-RTT or arbitrary multi-packet SNI recovery.
+
+The first
 hardware attempt passed TCP and QUIC smoke, but failed the domain-rule batch
 case's post-response evidence check despite a verified HTTP/3 response. One UDP
 tuple had ended early and been recreated without owner/name on the system path.
@@ -432,8 +441,8 @@ the original binding before its queued tail is forwarded. The relay now consumes
 port-unreachable as a datagram error and keeps the session until normal idle;
 other terminal errors remain visible instead of being hidden by paired close.
 The old hardware report did not retain the triggering ICMP/error, so that exact
-packet is unconfirmed. Re-run smoke and batch after rebuilding; hardware batch
-acceptance remains pending.
+packet was not directly observed. The successful hardware repeat above exercises
+the fix, alongside the separate synthetic IPv4/IPv6 ICMP regression.
 
 Add an explicit `--quic-target '<reviewed IPv4:443>'`
 and `--quic-server-name '<reviewed certificate name>'` when preparing a new
