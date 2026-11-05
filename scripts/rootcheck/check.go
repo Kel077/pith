@@ -75,6 +75,8 @@ type checkReport struct {
 	Notes       []string               `json:"notes,omitempty"`
 	Hotspot     *hotspotObservation    `json:"hotspotRenewal,omitempty"`
 	SkippedDNS  []capture.DNSExclusion `json:"skippedDNS,omitempty"`
+	Connections []api.Connection       `json:"connections,omitempty"`
+	LogError    string                 `json:"connectionLogError,omitempty"`
 }
 
 func check(parent context.Context, s *session, c api.Service, opts checkOptions) (resultErr error) {
@@ -177,6 +179,15 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		defer cleanupCancel()
 		record, cleanupErr := collectCleanup(cleanupCtx, s, c, ops, "check")
 		report.After, report.Restored = record.After, record.Restored
+		// A failed Start may never enter Running or deliver its last event before
+		// subscription cancellation. Read the bounded log after Stop, including
+		// SafeStart's outbound error, independently of event delivery.
+		logCtx, logCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		report.Connections, err = c.Connections(logCtx, api.ConnectionQuery{Since: report.Started, Limit: 500})
+		logCancel()
+		if err != nil {
+			report.LogError = err.Error()
+		}
 		if cleanupErr != nil {
 			report.StopError = cleanupErr.Error()
 		}

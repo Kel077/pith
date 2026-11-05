@@ -33,6 +33,9 @@ type baselineService struct {
 	onStart   func()
 	onStop    func()
 	onStatus  func(int, *api.Status) error
+	logRows   []api.Connection
+	logErr    error
+	logQuery  api.ConnectionQuery
 }
 
 func (c *baselineService) Status(ctx context.Context) (api.Status, error) {
@@ -72,6 +75,11 @@ func (c *baselineService) Stop(ctx context.Context) error {
 
 func (c *baselineService) SaveConfig(context.Context, api.Config) error {
 	return c.configErr
+}
+
+func (c *baselineService) Connections(ctx context.Context, query api.ConnectionQuery) ([]api.Connection, error) {
+	c.logQuery = query
+	return c.logRows, errors.Join(c.logErr, ctx.Err())
 }
 
 func baselineFixture(t *testing.T) (*session, *baselineService, rootcheckOps) {

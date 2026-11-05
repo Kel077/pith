@@ -26,8 +26,26 @@ its public addresses, LAN addresses or DNS do not by themselves stop routing.
 
 `engine/capture` records the routing table, creates a WireGuard-Go utun, and
 journals its name, index, boot session, random ownership token and intended prefixes before
-installing any route. A ready gVisor netstack receives `0.0.0.0/1`, `128.0.0.0/1`
-and, when enabled, `::/1` and `8000::/1`. The system default is never replaced.
+installing any route. A ready gVisor netstack receives eight IPv4 prefixes:
+`1.0.0.0/8`, `2.0.0.0/7`, `4.0.0.0/6`, `8.0.0.0/5`, `16.0.0.0/4`,
+`32.0.0.0/3`, `64.0.0.0/2`, and `128.0.0.0/1`. When IPv6 is enabled, it also
+receives `100::/8`, `200::/7`, `400::/6`, `800::/5`, `1000::/4`, `2000::/3`,
+`4000::/2`, and `8000::/1`. `internal/captureprefix` supplies the same set to
+production planning and frozen test profiles. The system default is never replaced.
+
+The omitted `0.0.0.0/8` and `::/8` preserve Darwin's bound-socket default lookup.
+When no scoped route matches, XNU's `rt_lookup_common` falls back through
+`node_lookup_default`, which looks up the zero address without an explicit `/0`
+mask. `rn_lookup_args` performs longest-prefix matching: a capture route such as
+`0.0.0.0/1` or `::/1` hides the physical default in that lookup, and its utun
+index fails the socket's interface constraint. See Apple's
+[route.c](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/net/route.c)
+and [radix.c](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/net/radix.c).
+The split avoids adding physical-interface egress routes. All capture routes
+remain attached to the owned utun and disappear with it on process death.
+The omitted ranges stay under system routing, including special translation
+prefixes inside `::/8`; full capture does not apply rules to those destinations.
+
 LAN DNS servers get optional host routes so their answers can feed the DNS cache.
 If a DNS address already has a configured host route, including a gateway's
 macOS host route or a scoped copy, Pith preserves it and skips that DNS capture
@@ -36,7 +54,7 @@ retain the existing routes and reason. Queries using that route are not observed
 so domain rules need another observed name, such as TLS SNI, HTTP Host or QUIC
 SNI when sniffing is enabled. No gateway route is deleted or replaced to observe
 DNS. Existing more-specific VPN/Tailscale routes and MagicDNS are preserved.
-Both `/1` routes and explicitly requested scoped prefixes still fail with
+Every split prefix and explicitly requested scoped prefix still fails with
 `ErrRouteConflict` on an exact unscoped conflict; a VPN default is reported as
 `WarnVPN`.
 
@@ -98,7 +116,7 @@ Pith's rules and connection log. With an exit node or another full-tunnel VPN,
 unmatched captured connections use the effective route saved before capture.
 An explicitly selected physical interface can bypass that route if the VPN
 permits bound sockets. VPN policy or a kill switch can still refuse that access.
-An existing unscoped `/1` capture prefix is an `ErrRouteConflict`, including when
+An existing unscoped route equal to a planned capture prefix is an `ErrRouteConflict`, including when
 an exit-node implementation owns it. Pith refuses to replace it. Host-scoped
 development capture can test selected destinations without replacing the VPN's
 default or split routes, provided no exact host-route conflict exists.
@@ -196,7 +214,10 @@ SafeStart resolves a TLS endpoint before capture (default `api.ipify.org:443`).
 After activation it has ten seconds to complete a certificate-verified TLS
 handshake with an ordinary native socket and prove that exact socket crossed the
 tunnel. A failure returns `ErrNetworkLost`, removes capture and closes every
-relay. A captured DNS or tunnel fault similarly stops routing. The default routes
+relay. Startup failure publishes completed connection records even before a
+Running monitor exists; outbound errors remain in the log. The test harness
+also reads a bounded post-Stop log into its private report, independently of
+event delivery. A captured DNS or tunnel fault similarly stops routing. The default routes
 remain available throughout teardown. Kernel closure of the utun fd removes its
 routes on process death; the next idle helper discards only demonstrably stale
 ownership metadata and refuses ambiguous live-looking state. Metadata from a
@@ -251,7 +272,7 @@ of existing configured host routes are excluded from that frozen set, with the
 same diagnostics as production. The engine rejects mixed
 scoped/profile arguments, disabled SafeStart, IPv6 enablement, and changed DNS
 capture scope before creating a tunnel. Ordinary production capture planning is
-used, including both IPv4 `/1`s and LAN-DNS routes, then checked against that
+used, including all eight IPv4 split prefixes and LAN-DNS routes, then checked against that
 frozen route set. Changing the test mode or DNS capture requires a new reviewed
 installation rather than rebaseline or edited session data.
 
@@ -265,7 +286,7 @@ with fake drivers, not evidence that full capture has passed on hardware.
 The separate `host-ipv6` acceptance profile freezes exactly one public IPv6
 `/128`, a literal bracketed TLS endpoint, and a lease of at most 60 seconds.
 It uses the same independent deadline and teardown as the full IPv4 test profile,
-but supplies only that host prefix to scoped capture planning: no `/1`, IPv4 or
+but supplies only that host prefix to scoped capture planning: no full-capture, IPv4 or
 DNS capture routes are added. IPv6 and SafeStart must stay enabled. The native
 SafeStart socket targets that exact IPv6 literal and must appear in the tunnel;
 IPv4 fallback cannot satisfy it. Controller preflights and cases also force
@@ -275,7 +296,7 @@ alone is not an independent IPv4 connectivity test or full dual-stack acceptance
 
 See [building and packaging](BUILDING.md) and the consolidated
 [authorized root-test procedure](ROOT-TEST.md).
-Scoped TCP acceptance does not establish full `/1` capture, IPv6, UDP/QUIC,
+Scoped TCP acceptance does not establish full capture, IPv6, UDP/QUIC,
 delegated WebKit/nsurlsessiond attribution, runtime VPN reconstruction, or the
 500 Mbps throughput target. See the [next acceptance plan](NEXT-ACCEPTANCE.md).
 Replies from unconnected native UDP listeners are not covered by the existing

@@ -169,7 +169,7 @@ func (r *Router) dialDomain(ctx context.Context, d rules.Decision, proto api.Pro
 	}
 	var failures []error
 	attempt := func(name string, outcome api.Outcome, iface *api.Interface) (Result, bool, error) {
-		if name == "" {
+		if name == "" && !(iface == nil && r.Guard != nil) {
 			return Result{}, false, nil
 		}
 		if err := ctx.Err(); err != nil {
@@ -321,7 +321,13 @@ func (r *Router) dialDomain(ctx context.Context, d rules.Decision, proto api.Pro
 		}
 	}
 	if d.RuleID == "" || d.Fallback {
-		if result, done, err := attempt(r.System(remote.Addr()), api.System, nil); done {
+		// Resolve a guarded system binding only once, inside the attempt, and
+		// preserve its error instead of losing it through System's string API.
+		name := ""
+		if r.Guard == nil {
+			name = capture.SystemInterface(r.routes, remote.Addr())
+		}
+		if result, done, err := attempt(name, api.System, nil); done {
 			return result, err
 		}
 	}

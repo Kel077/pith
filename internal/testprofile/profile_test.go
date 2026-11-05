@@ -21,10 +21,12 @@ func TestFullProfileRejectsUnboundedOrAmbiguousCapture(t *testing.T) {
 		func(p *Profile) { p.Lease = -time.Second },
 		func(p *Profile) { p.Lease = 121 * time.Second },
 		func(p *Profile) { p.Target = "example.com:443" },
+		func(p *Profile) { p.Target = "0.0.0.1:443" },
 		func(p *Profile) { p.Target = "[2001:db8::1]:443" },
 		func(p *Profile) { p.Target = "100.64.0.1:443" },
 		func(p *Profile) { p.ServerName = "*.example.com" },
 		func(p *Profile) { p.DNSHosts = []netip.Addr{netip.MustParseAddr("127.0.0.1")} },
+		func(p *Profile) { p.DNSHosts = []netip.Addr{netip.MustParseAddr("0.0.0.53")} },
 		func(p *Profile) { p.DNSHosts = append(slices.Clone(p.DNSHosts), p.DNSHosts[0]) },
 	} {
 		p := valid

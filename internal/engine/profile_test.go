@@ -89,7 +89,7 @@ func TestFullProfileLeaseClosesCaptureWithoutControllerOrLifecycleLock(t *testin
 	if err := e.Start(context.Background(), cfg.Scenes[0], cfg.Settings); err != nil {
 		t.Fatal(err)
 	}
-	if e.run.capture.Plan.Scoped || len(e.run.capture.Plan.Prefixes) != 2 {
+	if e.run.capture.Plan.Scoped || len(e.run.capture.Plan.Prefixes) != 8 {
 		t.Fatal("test profile did not use full capture planning")
 	}
 	deadline := e.run.leaseUntil

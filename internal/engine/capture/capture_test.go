@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/Kel077/pith/internal/api"
+	"github.com/Kel077/pith/internal/captureprefix"
 	"golang.zx2c4.com/wireguard/tun"
 )
 
@@ -34,7 +35,7 @@ func TestPlansPreserveSpecificRoutesAndSystemEgress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []netip.Prefix{prefix("0.0.0.0/1"), prefix("128.0.0.0/1"), prefix("::/1"), prefix("8000::/1"), prefix("192.0.2.53/32")}
+	want := append(captureprefix.Full(true), prefix("192.0.2.53/32"))
 	if !reflect.DeepEqual(p.Prefixes, want) {
 		t.Fatal(p.Prefixes)
 	}
@@ -62,7 +63,7 @@ func TestRouteConflictsAndVPNDefault(t *testing.T) {
 	if got := SystemInterface(p.Before, addr("198.51.100.10")); got != "utun5" {
 		t.Fatal("lost VPN system route", got)
 	}
-	routes = append(routes, Route{Prefix: prefix("0.0.0.0/1"), Interface: "utun5", Index: 5})
+	routes = append(routes, Route{Prefix: prefix("1.0.0.0/8"), Interface: "utun5", Index: 5})
 	_, err = Build(routes, nil, false, nil)
 	var apiErr *api.Error
 	if !errors.As(err, &apiErr) || apiErr.Code != api.ErrRouteConflict {
@@ -76,7 +77,7 @@ func TestRouteConflictsAndVPNDefault(t *testing.T) {
 }
 
 func TestCapturePreservesProxyPoolAndExitNodePaths(t *testing.T) {
-	// A proxy-specific pool remains outside /1 capture. Egress translation tests
+	// A proxy-specific pool remains outside full capture. Egress translation tests
 	// cover only fake-IP flows that actually enter Pith, not this bypassed route.
 	routes := append(baseRoutes(), Route{Prefix: prefix("198.18.0.0/15"), Interface: "utun7", Index: 7})
 	routes[0].Interface = "utun8"
@@ -84,7 +85,7 @@ func TestCapturePreservesProxyPoolAndExitNodePaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(p.Before, routes) || len(p.Prefixes) != 2 {
+	if !reflect.DeepEqual(p.Before, routes) || len(p.Prefixes) != 8 {
 		t.Fatal("capture replaced or narrowed a proxy route")
 	}
 	if got := SystemInterface(p.Before, addr("198.18.0.7")); got != "utun7" {
@@ -95,7 +96,7 @@ func TestCapturePreservesProxyPoolAndExitNodePaths(t *testing.T) {
 	}
 	// A global split route is a conflict, but a separately reviewed host-scoped
 	// test can coexist. Neither plan is allowed to delete the existing split.
-	routes = append(routes, Route{Prefix: prefix("0.0.0.0/1"), Interface: "utun8", Index: 8})
+	routes = append(routes, Route{Prefix: prefix("1.0.0.0/8"), Interface: "utun8", Index: 8})
 	if _, err := Build(routes, nil, false, nil); api.Code(err) != api.ErrRouteConflict {
 		t.Fatal("replaced an exit node's global split route", err)
 	}
@@ -300,6 +301,17 @@ func fakeOptions(t *testing.T, d *fakeDriver) Options {
 	return Options{StatePath: filepath.Join(t.TempDir(), "capture.json"), Driver: d}
 }
 
+func captureOperations(prefixes []netip.Prefix) []string {
+	want := []string{"create", "configure"}
+	for _, prefix := range prefixes {
+		want = append(want, "add "+prefix.String())
+	}
+	for _, prefix := range slices.Backward(prefixes) {
+		want = append(want, "delete "+prefix.String())
+	}
+	return append(want, "close")
+}
+
 func TestPrepareActivateAndStopAreReversible(t *testing.T) {
 	d := &fakeDriver{routes: baseRoutes()}
 	before := slices.Clone(d.routes)
@@ -318,7 +330,7 @@ func TestPrepareActivateAndStopAreReversible(t *testing.T) {
 	if err := c.Activate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if d.adds != 2 {
+	if d.adds != 8 {
 		t.Fatal("incorrect capture routes", d.adds)
 	}
 	if err := c.Close(); err != nil {
@@ -333,17 +345,18 @@ func TestPrepareActivateAndStopAreReversible(t *testing.T) {
 	if _, err := os.Stat(opts.StatePath); !os.IsNotExist(err) {
 		t.Fatal("journal remained", err)
 	}
-	want := []string{"create", "configure", "add 0.0.0.0/1", "add 128.0.0.0/1", "delete 128.0.0.0/1", "delete 0.0.0.0/1", "close"}
+	want := captureOperations(captureprefix.Full(false))
 	if !reflect.DeepEqual(d.operations, want) {
 		t.Fatal(d.operations)
 	}
 }
 
 func TestEveryPartialActivationFailureClosesTunnel(t *testing.T) {
-	for _, fail := range []int{1, 2} {
+	for fail := 1; fail <= 16; fail++ {
 		d := &fakeDriver{routes: baseRoutes(), failAdd: fail}
 		before := slices.Clone(d.routes)
 		opts := fakeOptions(t, d)
+		opts.IPv6 = true
 		c, err := Prepare(context.Background(), opts)
 		if err != nil {
 			t.Fatal(err)
@@ -370,7 +383,7 @@ func TestConflictRaceNeverDeletesForeignRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreign := Route{Prefix: prefix("0.0.0.0/1"), Interface: "utun7", Index: 7}
+	foreign := Route{Prefix: prefix("1.0.0.0/8"), Interface: "utun7", Index: 7}
 	d.routes = append(d.routes, foreign)
 	if err := c.Activate(context.Background()); err == nil {
 		t.Fatal("concurrent VPN route ignored")
@@ -464,7 +477,7 @@ func TestReusedInterfaceNameIsNotDeleted(t *testing.T) {
 			t.Fatal("deleted route on reused utun name")
 		}
 	}
-	if !slices.ContainsFunc(d.routes, func(r Route) bool { return r.Index == 99 && r.Prefix == prefix("0.0.0.0/1") }) {
+	if !slices.ContainsFunc(d.routes, func(r Route) bool { return r.Index == 99 && r.Prefix == prefix("1.0.0.0/8") }) {
 		t.Fatal("foreign interface route removed")
 	}
 }

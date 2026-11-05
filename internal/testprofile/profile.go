@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Kel077/pith/internal/api"
+	"github.com/Kel077/pith/internal/captureprefix"
 )
 
 const (
@@ -39,6 +40,9 @@ func (p Profile) Validate() error {
 	if err != nil || target.String() != p.Target || target.Port() == 0 || target.Addr().Is4In6() || target.Addr().Zone() != "" || !target.Addr().IsGlobalUnicast() || target.Addr().IsPrivate() || netip.MustParsePrefix("100.64.0.0/10").Contains(target.Addr()) || target.Addr().Is6() != (p.Mode == HostIPv6) {
 		return errors.New("test profile requires a canonical literal public TLS endpoint in its selected address family")
 	}
+	if p.Mode == FullIPv4 && !captureprefix.Includes(target.Addr()) {
+		return errors.New("test endpoint is outside full capture")
+	}
 	name, err := api.ParseTarget(p.ServerName)
 	if err != nil || !name.IsDomain() || name.Subdomains || name.String() != p.ServerName {
 		return errors.New("test profile requires a plain lowercase TLS certificate name")
@@ -50,7 +54,7 @@ func (p Profile) Validate() error {
 		return errors.New("host-ipv6 cannot add DNS capture routes")
 	}
 	for i, addr := range p.DNSHosts {
-		if !addr.Is4() || !addr.IsGlobalUnicast() || netip.MustParsePrefix("100.64.0.0/10").Contains(addr) || slices.Contains(p.DNSHosts[:i], addr) {
+		if !addr.Is4() || !addr.IsGlobalUnicast() || !captureprefix.Includes(addr) || netip.MustParsePrefix("100.64.0.0/10").Contains(addr) || slices.Contains(p.DNSHosts[:i], addr) {
 			return errors.New("test DNS hosts must be distinct unicast IPv4 addresses outside shared address space")
 		}
 	}
@@ -65,7 +69,7 @@ func (p Profile) Prefixes() []netip.Prefix {
 		}
 		return []netip.Prefix{netip.PrefixFrom(target.Addr(), 128)}
 	}
-	result := []netip.Prefix{netip.MustParsePrefix("0.0.0.0/1"), netip.MustParsePrefix("128.0.0.0/1")}
+	result := captureprefix.Full(false)
 	for _, addr := range p.DNSHosts {
 		result = append(result, netip.PrefixFrom(addr, 32))
 	}

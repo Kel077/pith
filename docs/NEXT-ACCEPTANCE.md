@@ -54,6 +54,19 @@ The dedicated hotspot renewal flag remains `host-ipv4` only pending review of it
 full-capture/device timing. New modes are implemented separately and reviewed
 before use; their implementation order does not change the attended test order.
 
+Full IPv4 now freezes eight prefixes: `1.0.0.0/8`, `2.0.0.0/7`, `4.0.0.0/6`,
+`8.0.0.0/5`, `16.0.0.0/4`, `32.0.0.0/3`, `64.0.0.0/2`, and `128.0.0.0/1`.
+They leave `0.0.0.0/8` to the system. The corresponding production IPv6 split
+leaves `::/8` to the system, including translation prefixes inside that range.
+This preserves Darwin's bound-socket fallback through its zero-address route
+lookup; see [architecture and XNU sources](ARCHITECTURE.md#capturing-and-forwarding).
+Rebuild and prepare a new session after this change. Require an immediate
+SafeStart through the system adapter when it has an unscoped default but no
+scoped default: a successful bound request on a second adapter alone misses this
+regression. Repeat that condition in the later full-IPv6 stage. Fake-driver
+tests reproduce the old split's failure and the new split's success in both
+families; they do not establish a hardware pass.
+
 Run one request before each bounded batch. Stop at the first unexplained result;
 do not broaden capture, change DNS/pf, remove a VPN route, or retry indefinitely
 to obtain a pass. Preserve failures and independent cleanup evidence separately.
@@ -65,7 +78,7 @@ to obtain a pass. Preserve failures and independent cleanup evidence separately.
 | QUIC | One reviewed QUIC endpoint on frozen host routes; one handshake/request before at most 3 sequential cases, each with a 10-second deadline. | Require a server-confirmed QUIC exchange, UDP flow attribution, expected interface, rule and bytes. Compare an ordinary Initial carrying recoverable SNI with a fixture whose name cannot be sniffed. Verify IP rules in both cases. | Domain routing requires actual observed SNI or a valid DNS mapping; encrypted/ECH or unsupported fragmented Initials must not be described as successful sniffing. No TLS interception or logging application plaintext. Stop and verify routes/tunnel. |
 | App bundle and helpers | One test bundle with a main executable, a nested helper/XPC service, and a separate control executable; each makes one bounded request to the frozen host. Then a separately reviewed WebKit and background URL-session fixture. | Correlate spawned PID, executable, outer bundle path/identifier, socket-owner PID and effective/delegated app with connection records. Apply one parent-app rule through A, then a block; repeat a control request outside the bundle. Ensure no preexisting pooled socket is mistaken for a new flow. | Main and nested helpers match the parent automatically. WebKit/URL-session traffic is attributed to the requesting app only when the kernel delegation evidence supports it. The control remains unmatched. End/wait for every fixture process and remove only the temporary fixtures. |
 | Throughput | A permitted dedicated endpoint and finite transfer budget; direct bound baseline first, then Pith on the same adapter. Use 5-second warmup and at most three 15-second samples per direction; cap total transferred bytes in the reviewed plan. | Measure server/client payload bytes and elapsed time independently of Pith counters; record CPU, memory, log volume, connection count and idle CPU after completion. Compare a rule-heavy scene separately from the minimal scene. | Claim the 500 Mbps target only if the direct link/server baseline can support it and sustained observed payload throughput meets it. Otherwise record a bottleneck or inconclusive target. Do not use an unrelated public speed service without permission or create an unlimited generator. |
-| Full IPv4 `/1` capture last | Separate approval and helper-enforced lease of at most 120 seconds; one ordinary TCP request first, then a small bounded mixed-protocol batch. Capture `0.0.0.0/1` and `128.0.0.0/1`; do not enable IPv6 `/1` in this stage. | Review all intended LAN-DNS host routes as well as both `/1`s. Verify original default routes remain installed, real DNS answers, ordinary system egress, explicit A/B rules, block, SafeStart rollback, and native TCP continuity. Check selected existing VPN/tailnet/MagicDNS controls without scanning peers. | Prove each asserted flow crossed Pith and reached the expected external path. Stop on lost ordinary connectivity, routing loops, unexpected destination scope, conflicting ownership, or changed VPN state. After Stop and optional separately approved helper crash, verify no Pith `/1`, DNS host route or utun remains, and unrelated paths still work. |
+| Full IPv4 capture last | Separate approval and helper-enforced lease of at most 120 seconds; one ordinary TCP request first, then a small bounded mixed-protocol batch. Use the eight IPv4 split prefixes above; do not enable IPv6 capture in this stage. | Review all intended LAN-DNS host routes as well as every split prefix. Verify original default routes remain installed, real DNS answers, immediate system SafeStart, ordinary system egress, explicit A/B rules, block, SafeStart rollback, and native TCP continuity. Check selected existing VPN/tailnet/MagicDNS controls without scanning peers. | Prove each asserted flow crossed Pith and reached the expected external path. Stop on lost ordinary connectivity, routing loops, unexpected destination scope, conflicting ownership, or changed VPN state. After Stop and optional separately approved helper crash, verify no Pith split prefix, DNS host route or utun remains, and unrelated paths still work. |
 
 A proxy helper with a direct delegated kernel socket and an arbitrary loopback
 HTTP/SOCKS proxy are different cases. Add a controlled loopback-proxy negative
@@ -86,7 +99,7 @@ synthetic coverage for withdrawal, name/index reuse, replacement/shadowing of
 capture routes, observer failure, pending and established sockets, and VPN
 packets arriving before notifications. This is not hardware acceptance.
 
-**The next round must include a Tailscale self-restart during full IPv4 `/1`
+**The next round must include a Tailscale self-restart during full IPv4
 capture, without an exit node.** Review and authorize this as a separate fault
 stage with a helper lease of at most 120 seconds. Freeze one permitted tailnet
 endpoint, its MagicDNS name, the public control endpoint, the restart action and
@@ -131,7 +144,8 @@ unrelated control connection alive throughout. Restore the approved physical
 setup and verify cleanup against the accepted baseline. Record actual adapter
 names, public addresses and device actions only in the private session.
 
-Full IPv6 capture (`::/1` and `8000::/1`) is a later, separately approved extension
+Full IPv6 capture uses `100::/8`, `200::/7`, `400::/6`, `800::/5`, `1000::/4`,
+`2000::/3`, `4000::/2`, and `8000::/1`. It is a later, separately approved extension
 after `/128`, UDP/QUIC and full IPv4 stages. Verify both native IPv6 and dual-stack
 fallback explicitly; a functioning IPv4 path cannot conceal IPv6 loss.
 
@@ -140,6 +154,8 @@ fallback explicitly; a functioning IPv4 path cannot conceal IPv6 loss.
 After each stage: Stop, verify helper idle/version/installation identity, compare
 the accepted route and tunnel baseline, and save the separate test and cleanup
 results. External-only differences require manual review and explicit acceptance;
+failed-start reports retain a bounded connection log with outbound errors even
+when no Running event occurred. Inspect that evidence before another attempt;
 ambiguous Pith ownership or any capture residue forbids rebaseline. Use only the
 reviewed bootout plus ownership-checked journal cleanup when IPC cleanup fails.
 

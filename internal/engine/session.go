@@ -91,7 +91,9 @@ func (e *Engine) startLocked(ctx context.Context, scene api.Scene, settings api.
 			if s.existing != nil {
 				result = errors.Join(result, s.existing.Close())
 			}
-			e.store.Flush(true)
+			// Startup has no running telemetry monitor yet. Publish its final flows
+			// as well as persisting them, so SafeStart failures retain dial errors.
+			result = errors.Join(result, e.flush(true))
 			e.state(api.Status{State: api.Failed, Error: errorValue(result)})
 		}
 	}()
@@ -202,7 +204,7 @@ func (e *Engine) startLocked(ctx context.Context, scene api.Scene, settings api.
 		cancel()
 		stopVerify()
 		if err != nil {
-			return &api.Error{Code: api.ErrNetworkLost, Detail: err.Error()}
+			return &api.Error{Code: api.ErrNetworkLost, Detail: errors.Join(err, s.guard.Err()).Error()}
 		}
 	}
 	if err := ctx.Err(); err != nil {

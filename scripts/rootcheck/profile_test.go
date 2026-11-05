@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Kel077/pith/internal/api"
+	"github.com/Kel077/pith/internal/captureprefix"
 	"github.com/Kel077/pith/internal/engine/capture"
 	"github.com/Kel077/pith/internal/helper"
 	"github.com/Kel077/pith/internal/testprofile"
@@ -35,7 +36,7 @@ func fullProfileFixture(t *testing.T) *session {
 func TestFullProfileFreezesProductionDNSScope(t *testing.T) {
 	s := fullProfileFixture(t)
 	scopes, err := s.scopes()
-	if err != nil || !slices.Equal(scopes, []netip.Prefix{netip.MustParsePrefix("0.0.0.0/1"), netip.MustParsePrefix("128.0.0.0/1"), netip.MustParsePrefix("192.0.2.53/32")}) {
+	if err != nil || !slices.Equal(scopes, append(captureprefix.Full(false), netip.MustParsePrefix("192.0.2.53/32"))) {
 		t.Fatal("incorrect full scope", scopes, err)
 	}
 	if s.checkTimeout() != 110*time.Second {

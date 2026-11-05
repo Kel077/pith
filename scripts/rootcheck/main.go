@@ -42,7 +42,7 @@ authorization dialog. All other commands need that session directory.
 cancel expects the user to cancel the install dialog. install and uninstall
 request administrator authorization. check uses the reviewed installation mode
 (host-ipv4 by default), always stops on return, and never installs the helper.
-full-ipv4 is a distinct installation: both /1 routes plus frozen LAN DNS hosts,
+full-ipv4 is a distinct installation: eight split routes plus frozen LAN DNS hosts,
 IPv6 disabled, mandatory SafeStart, and a helper-enforced lease at most 120s.
 host-ipv6 is another distinct installation: one public IPv6 /128, mandatory
 IPv6 SafeStart and tcp6 requests, with a helper-enforced lease at most 60s.

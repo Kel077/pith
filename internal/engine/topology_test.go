@@ -65,10 +65,10 @@ func TestTopologySnapshotFaultsStopWithoutRewritingExternalRoutes(t *testing.T) 
 			d.mu.Lock()
 			switch mode {
 			case "capture-removed":
-				d.routes = slices.DeleteFunc(d.routes, func(r capture.Route) bool { return r.Prefix == netip.MustParsePrefix("0.0.0.0/1") })
+				d.routes = slices.DeleteFunc(d.routes, func(r capture.Route) bool { return r.Prefix == netip.MustParsePrefix("1.0.0.0/8") })
 			case "capture-replaced":
 				for i := range d.routes {
-					if d.routes[i].Prefix == netip.MustParsePrefix("0.0.0.0/1") {
+					if d.routes[i].Prefix == netip.MustParsePrefix("1.0.0.0/8") {
 						d.routes[i].Interface = "utun51"
 						d.routes[i].Index = 51
 					}
@@ -95,7 +95,7 @@ func TestTopologySnapshotFaultsStopWithoutRewritingExternalRoutes(t *testing.T) 
 }
 
 func TestCaptureEventsAndOwnershipObserverFailureStop(t *testing.T) {
-	for _, event := range []capture.Change{{Index: 42, Prefix: netip.MustParsePrefix("0.0.0.0/1")}, {Err: errors.New("route observer overflow")}} {
+	for _, event := range []capture.Change{{Index: 42, Prefix: netip.MustParsePrefix("1.0.0.0/8")}, {Err: errors.New("route observer overflow")}} {
 		t.Run("event", func(t *testing.T) { e, d := startTopology(t); d.changes <- event; waitTopologyStop(t, e, d) })
 	}
 }
@@ -156,7 +156,7 @@ func TestTopologyDialCancellationHasNoFallback(t *testing.T) {
 		result <- err
 	}()
 	<-started
-	d.changes <- capture.Change{Index: 42, Prefix: netip.MustParsePrefix("0.0.0.0/1")}
+	d.changes <- capture.Change{Index: 42, Prefix: netip.MustParsePrefix("1.0.0.0/8")}
 	select {
 	case err := <-result:
 		if err == nil {
@@ -197,7 +197,7 @@ func TestTopologyClosesEstablishedConnectionsAndRejectsLateDialResults(t *testin
 					t.Fatal(err)
 				}
 				defer result.Conn.Close()
-				d.changes <- capture.Change{Index: 42, Prefix: netip.MustParsePrefix("0.0.0.0/1")}
+				d.changes <- capture.Change{Index: 42, Prefix: netip.MustParsePrefix("1.0.0.0/8")}
 			}
 			peer.SetReadDeadline(time.Now().Add(time.Second))
 			if _, err := peer.Read(make([]byte, 1)); err == nil {

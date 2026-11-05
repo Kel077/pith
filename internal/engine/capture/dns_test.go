@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Kel077/pith/internal/api"
+	"github.com/Kel077/pith/internal/captureprefix"
 )
 
 func gatewayDNSRoutes() []Route {
@@ -29,7 +30,7 @@ func TestDNSCapturePreservesConfiguredGatewayHostRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatal("gateway DNS prevented full capture", err)
 	}
-	want := []netip.Prefix{prefix("0.0.0.0/1"), prefix("128.0.0.0/1"), prefix("192.0.2.53/32")}
+	want := append(captureprefix.Full(false), prefix("192.0.2.53/32"))
 	if !slices.Equal(p.Prefixes, want) || !slices.Equal(routes, before) || !slices.Equal(p.Before, before) {
 		t.Fatal("DNS exclusion changed required capture or existing routing", p)
 	}
@@ -45,7 +46,7 @@ func TestDNSCapturePreservesConfiguredGatewayHostRoutes(t *testing.T) {
 }
 
 func TestDNSExclusionDoesNotRelaxRequiredCaptureConflicts(t *testing.T) {
-	for _, owned := range []netip.Prefix{prefix("0.0.0.0/1"), prefix("128.0.0.0/1"), prefix("::/1"), prefix("8000::/1")} {
+	for _, owned := range captureprefix.Full(true) {
 		t.Run(owned.String(), func(t *testing.T) {
 			routes := append(gatewayDNSRoutes(), Route{Prefix: owned, Interface: "utun70", Index: 70})
 			if _, err := Build(routes, []netip.Addr{addr("192.0.2.1")}, true, nil); api.Code(err) != api.ErrRouteConflict {
@@ -94,7 +95,7 @@ func TestDNSGatewayIsNeverAddedOrDeletedDuringCapture(t *testing.T) {
 	if err := c.Close(); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"create", "configure", "add 0.0.0.0/1", "add 128.0.0.0/1", "delete 128.0.0.0/1", "delete 0.0.0.0/1", "close"}
+	want := captureOperations(captureprefix.Full(false))
 	if !slices.Equal(d.operations, want) || !slices.Equal(d.routes, before) {
 		t.Fatal("capture touched an existing gateway route", d.operations, d.routes)
 	}

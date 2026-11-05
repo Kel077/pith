@@ -14,7 +14,11 @@ routes and the requested test destinations. No candidate overlaps the standard
 fake-IP or Tailscale pools. Exhausting either enabled family returns
 `ErrRouteConflict` before any network change; the selected subnets are journaled.
 
-Full capture uses `0.0.0.0/1`, `128.0.0.0/1` and optionally `::/1`, `8000::/1`.
+Full capture uses the eight IPv4 prefixes in `internal/captureprefix` and,
+optionally, the corresponding eight IPv6 prefixes. They exclude `0.0.0.0/8` and
+`::/8` to preserve Darwin's zero-address default fallback for bound sockets; see
+[architecture and XNU references](../../../docs/ARCHITECTURE.md#capturing-and-forwarding).
+Every prefix is independently checked and journaled on the owned utun.
 LAN DNS servers receive host routes so their answers can be observed. Existing
 more specific routes stay effective; Tailscale's range and DNS inside a tunnel
 are not given overriding host routes. A pre-existing VPN default is saved for

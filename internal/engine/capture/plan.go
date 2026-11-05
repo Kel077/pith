@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/Kel077/pith/internal/api"
+	"github.com/Kel077/pith/internal/captureprefix"
 )
 
 type Route struct {
@@ -83,14 +84,11 @@ func Build(routes []Route, dns []netip.Addr, ipv6 bool, scopes []netip.Prefix) (
 			p.Prefixes = append(p.Prefixes, prefix.Masked())
 		}
 	} else {
-		p.Prefixes = []netip.Prefix{netip.MustParsePrefix("0.0.0.0/1"), netip.MustParsePrefix("128.0.0.0/1")}
-		if ipv6 {
-			p.Prefixes = append(p.Prefixes, netip.MustParsePrefix("::/1"), netip.MustParsePrefix("8000::/1"))
-		}
+		p.Prefixes = captureprefix.Full(ipv6)
 		seenDNS := make(map[netip.Addr]bool)
 		for _, addr := range dns {
 			addr = addr.Unmap().WithZone("")
-			if !addr.IsValid() || addr.IsLoopback() || addr.IsUnspecified() || addr.IsMulticast() || addr.IsLinkLocalUnicast() || addr.Is6() && !ipv6 || seenDNS[addr] {
+			if !captureprefix.Includes(addr) || addr.IsLoopback() || addr.IsUnspecified() || addr.IsMulticast() || addr.IsLinkLocalUnicast() || addr.Is6() && !ipv6 || seenDNS[addr] {
 				continue
 			}
 			seenDNS[addr] = true

@@ -7,7 +7,7 @@ harness as the installing user, never with `sudo` or as root.
 
 The first session captures only one explicitly selected public IPv4 `/32`
 HTTPS destination, plus an optional public IPv4 `/32` DNS destination. It does
-not install `/1` routes, alter DNS settings or pf, or replace the default route.
+not install full-capture routes, alter DNS settings or pf, or replace the default route.
 The helper starts idle. It creates one utun only when `check` calls `Start`.
 Every check has a three-minute deadline and an independent fifteen-second
 cleanup deadline. SIGINT and SIGTERM cancel the check and invoke cleanup.
@@ -130,14 +130,23 @@ With a newly built, reviewed helper and the same privately chosen variables:
 
 The session records `testProfile`, including mode, lease, literal TLS endpoint,
 certificate name, and the exact LAN-DNS addresses selected by production capture
-planning. Review both IPv4 `/1` routes and every DNS `/32` before authorization.
+planning. Review all eight IPv4 prefixes (`1.0.0.0/8`, `2.0.0.0/7`, `4.0.0.0/6`,
+`8.0.0.0/5`, `16.0.0.0/4`, `32.0.0.0/3`, `64.0.0.0/2`, `128.0.0.0/1`)
+and every DNS `/32` before authorization. They exclude `0.0.0.0/8` so Darwin's
+zero-address fallback still finds the original default for interface-bound
+sockets. Production IPv6 uses the corresponding eight prefixes excluding `::/8`;
+this profile still forbids IPv6. See the exact set and XNU `route.c`/`radix.c`
+references in [capture architecture](ARCHITECTURE.md#capturing-and-forwarding).
+Every prefix gets its own conflict check and belongs only to Pith's utun. Sessions
+from the former two-half plan require fresh preparation and reviewed installation;
+never edit an older session or reuse its helper checksum.
 An existing configured DNS host route, including a gateway's host route or a
 scoped copy, is preserved and excluded from the frozen DNS capture set. Review
 `dns-skips.json` and `session.json` for each skipped address, its reason and the
 existing routes; prepare also prints this warning. Check and rebaseline reports
 record the current exclusions. DNS queries retaining those routes are not
 observed, so domain rules need other observed names (TLS SNI, HTTP Host or QUIC
-SNI when sniffing is enabled). This does not relax `/1` conflicts or permit
+SNI when sniffing is enabled). This does not relax split-prefix conflicts or permit
 deleting, replacing or replaying gateway routes. If later DNS/route changes alter
 the frozen capture set, prepare and review a new installation.
 The helper receives explicit `--test-profile full-ipv4`, `--test-lease`, and
@@ -168,10 +177,12 @@ Only an authenticated `check` starts routing. Its smoke and existing TCP cases
 require actual captured process/target/rule/interface records. Production
 planning must still produce exactly the frozen prefixes before any utun is
 created. A changed LAN-DNS capture set refuses Start/check/rebaseline and needs
-a fresh reviewed installation. Stop removes only the two owned `/1`s, reviewed
+a fresh reviewed installation. Stop removes only the eight owned split prefixes, reviewed
 DNS host routes and owned utun. Defaults and external routes are never replayed
 or removed. The standalone emergency command uses the same journal ownership
-checks and needs no network or IPC.
+checks and needs no network or IPC. Journal recovery and emergency cleanup iterate
+the exact recorded prefix set; they neither assume two routes nor recreate a
+default route. Kernel utun closure removes every owned prefix after a crash.
 
 The first approved full-mode check must still be smoke. A later TCP batch,
 SafeStart failure, preservation, app/tool bypass, observation, or separately
@@ -201,7 +212,7 @@ Preparation performs exactly three IPv6 TLS requests to that frozen literal:
 ordinary system routing, bound A, and bound B. It first normalizes the literal's
 spelling to match connection logs. The helper receives the distinct
 `host-ipv6` profile and a lease of at most 60 seconds (the harness accepts 30 to
-60 seconds). No additional DNS target, LAN-DNS capture, IPv4 capture or IPv6 `/1`
+60 seconds). No additional DNS target, LAN-DNS capture, IPv4 capture or full IPv6 capture
 is permitted. Mapped IPv4 addresses, scoped literals, private/link-local addresses
 and domain-name endpoints are rejected. The tunnel still has its own selected
 local addresses; closing it removes those along with the single owned `/128`.
@@ -231,7 +242,7 @@ and tunnel baseline. Rebaseline cannot change the frozen IPv6 host or family.
 Privacy addresses within one IPv6 prefix may rotate; a changed assigned prefix
 during preflight must be reviewed rather than silently accepted as stable.
 
-This establishes IPv6 host-capture support, not IPv6 `/1`, UDP/QUIC, or full
+This establishes IPv6 host-capture support, not full IPv6 capture, UDP/QUIC, or full
 dual-stack acceptance. IPv4 policy equality is recorded, but an independent IPv4
 connectivity control requires its own reviewed endpoint and observation.
 
@@ -330,6 +341,12 @@ exit fails. Missing/invalid echoes fail when a preflight supplied one. A shared
 expected exit still cannot distinguish two paths by itself. The same policy
 applies to app-bypass requests; carrier NAT rotation does not by itself fail a
 correctly attributed connection.
+
+Every check also archives up to 500 connection records started during that check,
+queried after cleanup with an independent three-second bound. These retain
+outbound errors from SafeStart even when startup never reaches Running or its
+final event was not delivered. `connectionLogError` records an unavailable log;
+missing diagnostics never turn a failed probe or failed cleanup into a pass.
 
 ### Optional hotspot renewal during observation
 
@@ -516,7 +533,7 @@ observation automatically and treats an unexpected helper stop as a failure.
   synthetic interface; it does not prove timeout behavior on a live interface
   that drops packets. Do not infer IPv6, UDP/QUIC correctness or a throughput
   target from the TCP smoke result. A later IPv6 test must use only a reviewed
-  `/128`. Testing `/1` capture requires another explicit go-ahead after scoped
+  `/128`. Testing full capture requires another explicit go-ahead after scoped
   capture and cleanup have passed.
 
 The [next acceptance plan](NEXT-ACCEPTANCE.md) separates the broader capture,

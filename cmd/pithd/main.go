@@ -48,7 +48,7 @@ func run() error {
 		return err
 	})
 	var scopes []netip.Prefix
-	flag.Func("capture", "development: capture only this CIDR for at most five minutes (repeatable); empty captures both /1 routes", func(raw string) error {
+	flag.Func("capture", "development: capture only this CIDR for at most five minutes (repeatable); empty uses full split capture", func(raw string) error {
 		prefix, err := netip.ParsePrefix(raw)
 		if err != nil || prefix.Bits() == 0 {
 			return fmt.Errorf("invalid scoped capture CIDR %q", raw)
