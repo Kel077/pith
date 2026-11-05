@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,15 +15,23 @@ func (c *Client) InstallHelper(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if status, err := c.Status(ctx); err == nil && status.Helper.Running && !status.Helper.Outdated {
+	status, statusErr := c.Status(ctx)
+	if statusErr == nil && status.Helper.Running && !status.Helper.Outdated {
 		return nil
 	}
 	if c.opts.ResourcesDir == "" {
 		return fmt.Errorf("application resources directory is not set")
 	}
-	plan, err := helper.PlanInstall(filepath.Join(c.opts.ResourcesDir, "bin", "pithd"), uint32(os.Getuid()))
+	source, err := helperSource(c.opts.ResourcesDir)
 	if err != nil {
 		return err
+	}
+	plan, err := helper.PlanInstall(source, uint32(os.Getuid()))
+	if err != nil {
+		return err
+	}
+	if status.Helper.Installed {
+		plan.Prompt = helper.UpdatePrompt
 	}
 	if err := plan.Execute(ctx); err != nil {
 		return err
@@ -44,6 +53,18 @@ func (c *Client) InstallHelper(ctx context.Context) error {
 		}
 	}
 	return fmt.Errorf("helper installed but did not answer with the expected version")
+}
+
+// MyGo flattens platform resources in a bundle but exposes the source resources
+// directory under go run. Prefer the packaged path; fall back only if absent.
+func helperSource(resources string) (string, error) {
+	path := filepath.Join(resources, "bin", "pithd")
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		return path, err
+	}
+	path = filepath.Join(resources, "darwin-arm64", "bin", "pithd")
+	_, err := os.Stat(path)
+	return path, err
 }
 
 func (c *Client) UninstallHelper(ctx context.Context) error {

@@ -1,0 +1,26 @@
+# Connection history and traffic
+
+The store owns no background processes, goroutines or timers. The engine feeds
+payload byte counts and calls `Flush` on its one-second event tick. Byte events
+are coalesced per connection; opening and terminal snapshots are preserved.
+Open connections are checkpointed to JSONL at most every ten seconds, and closed
+connections immediately at the next flush. A forced flush synchronizes files.
+
+Daily `connections-YYYY-MM-DD.jsonl` files obey `LogDays`; zero deletes stored
+connection logs and keeps new records in memory only. JSONL can contain several
+snapshots for one ID. Recovery keeps the last snapshot, ignores incomplete JSON
+lines, and marks interrupted connections closed. The recent query ring holds
+5,000 closed connections plus active connections. A flood can use one additional
+pending ring before oldest records are discarded; aggregate traffic is retained.
+Clearing the log hides existing active entries while their traffic keeps counting.
+
+Traffic is independent of connection-log retention: ten minutes of seconds in
+memory, 24 hours of minutes and five years of daily totals on disk, per app and
+interface. `traffic.json` is atomically replaced and synchronized every fifteen
+seconds while dirty and on a forced flush. Queries subtract overlapping finer
+buckets, including after a restart. Recent UI queries retain second resolution;
+older results report their actual coarse boundary in `Traffic.Since`.
+
+Persistent data requires a private directory owned by the helper's effective
+UID. Data files are mode 0600 and opened without following symlinks; non-regular
+files are rejected. Unit tests use temporary directories and synthetic addresses.

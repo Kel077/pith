@@ -22,9 +22,16 @@ import (
 // and the previous launchd registration.
 type InstallPlan struct {
 	Script  string
+	Prompt  string
 	Changes []string
 	Undo    string
 }
+
+const (
+	InstallPrompt   = "Pith (橘核) needs your password to install its routing helper. 橘核需要您的密码来安装路由辅助程序。"
+	UpdatePrompt    = "Pith (橘核) needs your password to update its routing helper. 橘核需要您的密码来更新路由辅助程序。"
+	UninstallPrompt = "Pith (橘核) needs your password to remove its routing helper. 橘核需要您的密码来移除路由辅助程序。"
+)
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
 
@@ -93,7 +100,7 @@ func PlanInstall(source string, uid uint32) (InstallPlan, error) {
 		"/usr/bin/install -d -o root -g wheel -m 0755 /Library/PrivilegedHelperTools /Library/LaunchDaemons\n" +
 		"/bin/mv -f \"$stage/new-helper\" \"$binary\"\n/bin/mv -f \"$stage/new.plist\" \"$plist\"\n" +
 		"/bin/launchctl bootstrap system \"$plist\"\n"
-	return InstallPlan{Script: script, Changes: []string{BinaryPath, PlistPath, DataDir, SocketPath}, Undo: "UninstallHelper removes the service and helper data; a failed update restores the previous executable, plist and launchd registration."}, nil
+	return InstallPlan{Script: script, Prompt: InstallPrompt, Changes: []string{BinaryPath, PlistPath, DataDir, SocketPath}, Undo: "UninstallHelper removes the service and helper data; a failed update restores the previous executable, plist and launchd registration."}, nil
 }
 
 func PlanUninstall() InstallPlan {
@@ -104,7 +111,7 @@ func PlanUninstall() InstallPlan {
 		"/bin/rm -f " + shellQuote(BinaryPath) + " " + shellQuote(PlistPath) + "\n" +
 		"if [ -S " + shellQuote(SocketPath) + " ]; then /bin/rm -f " + shellQuote(SocketPath) + "; fi\n" +
 		"/bin/rm -rf " + shellQuote(DataDir) + "\n"
-	return InstallPlan{Script: script, Changes: []string{BinaryPath, PlistPath, DataDir, SocketPath}, Undo: "InstallHelper reinstalls the bundled helper; removed connection logs and traffic history are not restored."}
+	return InstallPlan{Script: script, Prompt: UninstallPrompt, Changes: []string{BinaryPath, PlistPath, DataDir, SocketPath}, Undo: "InstallHelper reinstalls the bundled helper; removed connection logs and traffic history are not restored."}
 }
 
 // A bounded grace period lets the old helper finish route cleanup before its
@@ -123,8 +130,7 @@ func (p InstallPlan) Execute(ctx context.Context) error {
 	}
 	// Pass one AppleScript argument, with a correctly escaped string literal;
 	// neither a shell nor AppleScript re-parses user paths as executable code.
-	program := "do shell script " + strconv.Quote(p.Script) + " with administrator privileges"
-	output, err := exec.CommandContext(ctx, "/usr/bin/osascript", "-e", program).CombinedOutput()
+	output, err := exec.CommandContext(ctx, "/usr/bin/osascript", "-e", p.appleScript()).CombinedOutput()
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -135,4 +141,8 @@ func (p InstallPlan) Execute(ctx context.Context) error {
 		return &api.Error{Code: api.ErrCanceled}
 	}
 	return fmt.Errorf("helper installation: %w: %s", err, strings.TrimSpace(string(output)))
+}
+
+func (p InstallPlan) appleScript() string {
+	return "do shell script " + strconv.Quote(p.Script) + " with administrator privileges with prompt " + strconv.Quote(p.Prompt)
 }
