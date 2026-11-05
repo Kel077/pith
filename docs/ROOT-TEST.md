@@ -43,7 +43,7 @@ such as TLS SNI, HTTP Host or QUIC SNI. This behavior allowed full capture to
 start without replacing the gateway route; it does not prove DNS interception.
 
 Still pending: full capture while Tailscale is connected (including restart),
-full IPv6, UDP/QUIC, app bundles/delegation and throughput. IPv6 host acceptance
+full IPv6, general UDP/QUIC, app bundles/delegation and throughput. IPv6 host acceptance
 is recorded below and in [the acceptance plan](NEXT-ACCEPTANCE.md#recorded-ipv6-host-hardware-acceptance).
 Raw reports were reviewed privately and deleted; only this sanitized outcome is
 retained. A skipped manual cancellation under delegated authorization is not a
@@ -342,8 +342,17 @@ connectivity control requires its own reviewed endpoint and observation.
 
 ## Bounded UDP/DNS stage
 
-This stage is implemented with synthetic and loopback tests; hardware acceptance
-is pending. It is an explicit extension of `host-ipv4` only. During preparation,
+The coordinator reported successful hardware acceptance of `c342de7`: TCP smoke,
+the one-query A-path DNS smoke and the complete two-resolver batch. The first
+resolver passed ten cases, including expiry and a new B-path session on the same
+application source port; the second passed eight. Real A/AAAA replies, DNS IDs,
+application/pre-NAT tuples, policy and payload counters supported those results.
+Uninstall restored the baseline. Independent inspection confirmed ordinary
+resolver routing, working system DNS, no owned residue and no sudo credential
+cache. Raw reports were reviewed privately and deleted. Cache expiry, general
+UDP services, pre-existing UDP, QUIC and public NAT ports remain outside this pass.
+
+This is an explicit extension of `host-ipv4` only. During preparation,
 freeze one or two distinct public IPv4 resolver literals on port 53 and one
 plain lowercase question name. There is no default resolver, echo fixture, or
 system DNS change. The reviewed capture consists of the TLS host plus those

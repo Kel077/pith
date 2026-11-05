@@ -9,8 +9,8 @@ an engine-enforced deadline and frozen LAN-DNS routes. A separate
 `/128`, requires global IPv6 on both adapters, and uses IPv6-only preflights and
 SafeStart. All modes have synthetic coverage; the completed hardware coverage
 is recorded below. The external-change flag cannot widen an installation.
-The scoped UDP/DNS extension is implemented with a separate one-query smoke
-gate and bounded batch; its hardware acceptance is pending. QUIC, app-bundle
+The scoped UDP/DNS extension has passed hardware acceptance with its separate
+one-query smoke gate and bounded batch, as recorded below. QUIC, app-bundle
 fixtures and throughput still need their described harness extensions before approval.
 
 ## Recorded full IPv4 hardware acceptance
@@ -46,6 +46,20 @@ This record does not cover full capture with Tailscale connected (including VPN
 restart), full IPv6 capture, UDP/QUIC, app bundles/delegated processes, or throughput.
 Tool attribution is not bundle acceptance. Raw reports were reviewed privately
 and deleted; no network identifiers or raw observations are reproduced here.
+
+## Recorded UDP/DNS hardware acceptance
+
+The coordinator also reported successful scoped UDP/DNS hardware acceptance of
+`c342de7`: TCP smoke, the single A-query `--udp-dns` smoke through adapter A,
+and the complete two-resolver `--udp-dns-batch`. The first resolver passed ten
+cases, including idle expiry and a new session through B on the same application
+source port; the second passed eight cases. The batch checked A/AAAA replies,
+nonce/tuple attribution, rule/interface/outcome, payload counters, reuse, hot
+reload, block priority and deterministic fallback. Uninstall restored the
+baseline; independent inspection confirmed ordinary resolver routing, working
+system DNS, no owned residue and no sudo credential cache. Reports were reviewed
+privately and deleted. This establishes the reviewed IPv4 UDP/DNS subset, not
+general UDP services, pre-existing UDP, cache expiry, QUIC or public NAT ports.
 
 ## Review and boundaries
 
@@ -108,7 +122,7 @@ to obtain a pass. Preserve failures and independent cleanup evidence separately.
 | Stage | Scope and execution budget | Required observations | Pass and cleanup |
 | --- | --- | --- | --- |
 | IPv6 first | Use `host-ipv6`: one explicitly selected global IPv6 `/128`, at most 60 seconds of capture; one system and one bound TLS request per adapter with an 8-second deadline. Its mandatory SafeStart proves the exact native IPv6 socket crossed capture. | Before capture, verify both the ordinary and selected adapter paths can actually reach the endpoint. During capture, verify process, IPv6 destination, rule/outcome, actual interface and bytes. Test block, a missing-interface fallback, and a new connection after hot reload. | A verified remote response and exact captured tuple are required; a working IPv4 fallback cannot count as IPv6 success. No public IPv6 on an adapter is a prerequisite failure/inconclusive case. Stop removes only the `/128` and owned tunnel; IPv4 routing and existing VPN routes stay unchanged. Any dual-stack connectivity claim also needs a separately reviewed IPv4 control endpoint and observation. |
-| UDP and DNS | Implemented for one or two frozen public IPv4 DNS hosts: one-query smoke, then at most 11/20 queries for one/two resolvers; two-second response deadlines, no retries or TCP fallback. | Match DNS IDs/questions and exact application tuple/PID/path against helper records, including rule/interface/outcome and payload counters. Check A/AAAA, stable pre-NAT source tuples, hot reload, block/fallback, reuse and replacement after the ten-second DNS idle timeout. Record TTLs without dialing answer addresses or widening capture. | Hardware acceptance pending. Cache expiry, ordinary UDP's two-minute idle timeout, pre-existing connected UDP and unconnected listeners remain separate gaps. The latter has a known source-port limitation. Silent-peer timeout does not prove automatic interface failover; DNS replies cannot prove public NAT ports. |
+| UDP and DNS | Passed the reviewed two-resolver IPv4 hardware subset. One-query smoke, then at most 11/20 queries for one/two resolvers; two-second response deadlines, no retries or TCP fallback. | Match DNS IDs/questions and exact application tuple/PID/path against helper records, including rule/interface/outcome and payload counters. Check A/AAAA, stable pre-NAT source tuples, hot reload, block/fallback, reuse and replacement after the ten-second DNS idle timeout. Record TTLs without dialing answer addresses or widening capture. | Cache expiry, ordinary UDP's two-minute idle timeout, pre-existing connected UDP and unconnected listeners remain separate gaps. The latter has a known source-port limitation. Silent-peer timeout does not prove automatic interface failover; DNS replies cannot prove public NAT ports. |
 | QUIC | One reviewed QUIC endpoint on frozen host routes; one handshake/request before at most 3 sequential cases, each with a 10-second deadline. | Require a server-confirmed QUIC exchange, UDP flow attribution, expected interface, rule and bytes. Compare an ordinary Initial carrying recoverable SNI with a fixture whose name cannot be sniffed. Verify IP rules in both cases. | Domain routing requires actual observed SNI or a valid DNS mapping; encrypted/ECH or unsupported fragmented Initials must not be described as successful sniffing. No TLS interception or logging application plaintext. Stop and verify routes/tunnel. |
 | App bundle and helpers | One test bundle with a main executable, a nested helper/XPC service, and a separate control executable; each makes one bounded request to the frozen host. Then a separately reviewed WebKit and background URL-session fixture. | Correlate spawned PID, executable, outer bundle path/identifier, socket-owner PID and effective/delegated app with connection records. Apply one parent-app rule through A, then a block; repeat a control request outside the bundle. Ensure no preexisting pooled socket is mistaken for a new flow. | Main and nested helpers match the parent automatically. WebKit/URL-session traffic is attributed to the requesting app only when the kernel delegation evidence supports it. The control remains unmatched. End/wait for every fixture process and remove only the temporary fixtures. |
 | Throughput | A permitted dedicated endpoint and finite transfer budget; direct bound baseline first, then Pith on the same adapter. Use 5-second warmup and at most three 15-second samples per direction; cap total transferred bytes in the reviewed plan. | Measure server/client payload bytes and elapsed time independently of Pith counters; record CPU, memory, log volume, connection count and idle CPU after completion. Compare a rule-heavy scene separately from the minimal scene. | Claim the 500 Mbps target only if the direct link/server baseline can support it and sustained observed payload throughput meets it. Otherwise record a bottleneck or inconclusive target. Do not use an unrelated public speed service without permission or create an unlimited generator. |
