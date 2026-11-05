@@ -95,5 +95,8 @@ func (c *Client) SaveConfig(ctx context.Context, cfg api.Config) error {
 		return err
 	}
 	defer dir.Close()
-	return dir.Sync()
+	if err := dir.Sync(); err != nil {
+		return err
+	}
+	return c.applyConfig(ctx, cfg)
 }
