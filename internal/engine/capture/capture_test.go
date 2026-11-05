@@ -75,6 +75,37 @@ func TestRouteConflictsAndVPNDefault(t *testing.T) {
 	}
 }
 
+func TestCapturePreservesProxyPoolAndExitNodePaths(t *testing.T) {
+	// A proxy-specific pool remains outside /1 capture. Egress translation tests
+	// cover only fake-IP flows that actually enter Pith, not this bypassed route.
+	routes := append(baseRoutes(), Route{Prefix: prefix("198.18.0.0/15"), Interface: "utun7", Index: 7})
+	routes[0].Interface = "utun8"
+	p, err := Build(routes, nil, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(p.Before, routes) || len(p.Prefixes) != 2 {
+		t.Fatal("capture replaced or narrowed a proxy route")
+	}
+	if got := SystemInterface(p.Before, addr("198.18.0.7")); got != "utun7" {
+		t.Fatal("fake destination lost its owning proxy route", got)
+	}
+	if got := SystemInterface(p.Before, addr("203.0.113.7")); got != "utun8" {
+		t.Fatal("unmatched public destination lost its VPN route", got)
+	}
+	// A global split route is a conflict, but a separately reviewed host-scoped
+	// test can coexist. Neither plan is allowed to delete the existing split.
+	routes = append(routes, Route{Prefix: prefix("0.0.0.0/1"), Interface: "utun8", Index: 8})
+	if _, err := Build(routes, nil, false, nil); api.Code(err) != api.ErrRouteConflict {
+		t.Fatal("replaced an exit node's global split route", err)
+	}
+	scope := prefix("203.0.113.7/32")
+	p, err = Build(routes, nil, false, []netip.Prefix{scope})
+	if err != nil || !reflect.DeepEqual(p.Prefixes, []netip.Prefix{scope}) || !reflect.DeepEqual(p.Before, routes) {
+		t.Fatal("host-scoped plan changed the VPN's routes", err)
+	}
+}
+
 func TestSystemRoutePreservesRejectAndLocalDestinations(t *testing.T) {
 	for _, terminal := range []Route{
 		{Prefix: prefix("198.51.100.0/24"), Interface: "lo0", Reject: true},

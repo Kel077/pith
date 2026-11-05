@@ -55,6 +55,43 @@ ICMP echo uses a native datagram ICMP socket through the saved system route and
 requires a real matching reply. It is outside the API's TCP/UDP rules and traffic
 series. Netstack is prevented from fabricating echo replies for remote hosts.
 
+## VPN and proxy coexistence
+
+Pith leaves more-specific routes in place. Tailscale's tailnet and MagicDNS
+therefore keep their existing path; those uncaptured connections are outside
+Pith's rules and connection log. With an exit node or another full-tunnel VPN,
+unmatched captured connections use the effective route saved before capture.
+An explicitly selected physical interface can bypass that route if the VPN
+permits bound sockets. VPN policy or a kill switch can still refuse that access.
+An existing unscoped `/1` capture prefix is an `ErrRouteConflict`, including when
+an exit-node implementation owns it. Pith refuses to replace it. Host-scoped
+development capture can test selected destinations without replacing the VPN's
+default or split routes, provided no exact host-route conflict exists.
+
+System proxy settings are not changed. If an app connects to a loopback HTTP or
+SOCKS proxy, that local socket normally stays outside capture; the proxy's own
+outbound connection belongs to its process. An app-specific rule does not turn
+off that app's proxy settings or recover the original app behind an arbitrary
+proxy. Direct app connections and the proxy's captured outbound connections
+remain subject to their respective rules.
+
+For a **captured** destination in `198.18.0.0/15`, a matched physical-interface
+route with an observed domain resolves that domain using only that interface's
+DNS servers and bound sockets. Fake answers are rejected. The original flow's
+immutable block rules are also checked against the real destination candidates.
+An allowed candidate may connect; if known blocked candidates remain after the
+allowed candidates fail, the flow is blocked instead of returning its fake IP
+to the proxy through fallback. System/VPN egress otherwise retains the original
+fake address, including unmatched flows. Without an observed domain, the flow
+uses its saved system path even when the route's normal fallback is disabled;
+the connection log explains that decision. A matching block still wins.
+
+These fake-IP rules do not add overriding capture routes. A proxy's more-specific
+fake-pool route can keep traffic entirely outside Pith. Custom fake-IP pools are
+not inferred from arbitrary tunnel routes: those routes can describe real private
+networks, including a tailnet. Compatibility tests cover synthetic route/flow
+cases; no particular proxy's TUN mode has been verified on hardware.
+
 ## Lifecycle and recovery
 
 SafeStart resolves a TLS endpoint before capture (default `api.ipify.org:443`).

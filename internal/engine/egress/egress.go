@@ -96,6 +96,7 @@ func (r *Router) Policy() *Policy { return r.policy.Load() }
 type Result struct {
 	Conn      net.Conn
 	Outcome   api.Outcome
+	RuleID    string
 	Interface string
 	Problem   string // includes a successful system bypass of an unknown fake IP
 }
@@ -106,15 +107,30 @@ func (r *Router) Dial(ctx context.Context, d rules.Decision, proto api.Protocol,
 	return r.DialDomain(ctx, d, proto, remote, "")
 }
 
+// DialFlow retains the flow's policy and attribution while resolving synthetic
+// destinations. Real addresses are checked only for blocks; they never select a
+// different route rule. Reload cannot change either decision for this flow.
+func (r *Router) DialFlow(ctx context.Context, policy *Policy, owner attribution.Attribution, proto api.Protocol, remote netip.AddrPort, domain string) (Result, error) {
+	d := policy.Match(owner, proto, remote, domain)
+	return r.dialDomain(ctx, d, proto, remote, domain, func(target netip.AddrPort) rules.Decision {
+		return policy.Match(owner, proto, target, domain)
+	})
+}
+
 // DialDomain translates known fake-IP destinations only when a route rule
 // explicitly selects a physical interface. System and VPN egress retain the
-// original address for the proxy that owns its mapping. A block always wins.
+// original address for the proxy that owns its mapping. Forwarded application
+// flows must use DialFlow so real destination block rules are checked as well.
 func (r *Router) DialDomain(ctx context.Context, d rules.Decision, proto api.Protocol, remote netip.AddrPort, domain string) (Result, error) {
+	return r.dialDomain(ctx, d, proto, remote, domain, nil)
+}
+
+func (r *Router) dialDomain(ctx context.Context, d rules.Decision, proto api.Protocol, remote netip.AddrPort, domain string, check func(netip.AddrPort) rules.Decision) (Result, error) {
 	if d.Action == api.Block {
-		return Result{Outcome: api.Blocked}, ErrBlocked
+		return Result{Outcome: api.Blocked, RuleID: d.RuleID}, ErrBlocked
 	}
 	if !remote.IsValid() || (proto != api.TCP && proto != api.UDP) {
-		return Result{Outcome: api.Unreachable}, errors.New("invalid outbound flow")
+		return Result{Outcome: api.Unreachable, RuleID: d.RuleID}, errors.New("invalid outbound flow")
 	}
 	fake := fakeIP(remote.Addr())
 	domain = domainName(domain)
@@ -128,17 +144,18 @@ func (r *Router) DialDomain(ctx context.Context, d rules.Decision, proto api.Pro
 	}
 	ifaces := *r.ifaces.Load()
 	var failures []error
-	attempt := func(name string, outcome api.Outcome, iface *api.Interface) (Result, bool) {
+	attempt := func(name string, outcome api.Outcome, iface *api.Interface) (Result, bool, error) {
 		if name == "" {
-			return Result{}, false
+			return Result{}, false, nil
 		}
 		if err := ctx.Err(); err != nil {
 			failures = append(failures, err)
-			return Result{}, false
+			return Result{}, false, nil
 		}
 		attemptCtx, cancel := context.WithTimeout(ctx, r.Timeout)
 		defer cancel()
 		targets := []netip.AddrPort{remote}
+		var blocked rules.Decision
 		if fake && iface != nil && !vpnInterface(*iface) {
 			resolve := r.Resolve
 			if resolve == nil {
@@ -147,12 +164,30 @@ func (r *Router) DialDomain(ctx context.Context, d rules.Decision, proto api.Pro
 			addresses, err := resolve(attemptCtx, *iface, domain)
 			if err != nil {
 				failures = append(failures, fmt.Errorf("%s DNS: %w", name, err))
-				return Result{}, false
+				return Result{}, false, nil
 			}
 			targets = realTargets(addresses, remote.Port())
 			if len(targets) == 0 {
 				failures = append(failures, fmt.Errorf("%s DNS returned no non-fake unicast address for %s", name, domain))
-				return Result{}, false
+				return Result{}, false, nil
+			}
+			if check != nil {
+				allowed := targets[:0]
+				for _, target := range targets {
+					if decision := check(target); decision.Action == api.Block {
+						if blocked.RuleID == "" {
+							blocked = decision
+						}
+					} else {
+						allowed = append(allowed, target)
+					}
+				}
+				targets = allowed
+			}
+			// Check every returned candidate before bounding connection attempts.
+			// A blocked answer beyond this budget still forbids unsafe fallback.
+			if len(targets) > 32 {
+				targets = targets[:32]
 			}
 		}
 		for i, target := range targets {
@@ -174,9 +209,15 @@ func (r *Router) DialDomain(ctx context.Context, d rules.Decision, proto api.Pro
 				failures = append(failures, fmt.Errorf("%s: %w", name, err))
 				continue
 			}
-			return Result{Conn: conn, Outcome: outcome, Interface: name, Problem: note}, true
+			return Result{Conn: conn, Outcome: outcome, RuleID: d.RuleID, Interface: name, Problem: note}, true, nil
 		}
-		return Result{}, false
+		if blocked.RuleID != "" {
+			// An allowed answer may connect, but once all such attempts fail do
+			// not return the original fake IP to a proxy that could choose a
+			// known blocked answer. This also stops later interface fallback.
+			return Result{Outcome: api.Blocked, RuleID: blocked.RuleID}, true, ErrBlocked
+		}
+		return Result{}, false, nil
 	}
 	for i, ref := range d.Via {
 		iface := ref.Resolve(ifaces)
@@ -187,17 +228,17 @@ func (r *Router) DialDomain(ctx context.Context, d rules.Decision, proto api.Pro
 		if i > 0 {
 			outcome = api.Fallback
 		}
-		if result, ok := attempt(iface.Name, outcome, iface); ok {
-			return result, nil
+		if result, done, err := attempt(iface.Name, outcome, iface); done {
+			return result, err
 		}
 	}
 	if d.RuleID == "" || d.Fallback {
-		if result, ok := attempt(r.System(remote.Addr()), api.System, nil); ok {
-			return result, nil
+		if result, done, err := attempt(r.System(remote.Addr()), api.System, nil); done {
+			return result, err
 		}
 	}
 	if len(failures) == 0 {
 		failures = append(failures, errors.New("no available route for this connection"))
 	}
-	return Result{Outcome: api.Unreachable, Problem: note}, errors.Join(failures...)
+	return Result{Outcome: api.Unreachable, RuleID: d.RuleID, Problem: note}, errors.Join(failures...)
 }

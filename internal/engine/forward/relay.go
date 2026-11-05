@@ -85,9 +85,8 @@ func (f *Forwarder) tcp(req *tcp.ForwarderRequest) {
 			return
 		}
 	}
-	d = policy.Match(a, api.TCP, remote, c.Domain)
-	c.RuleID = d.RuleID
-	result, dialErr := f.opts.Router.DialDomain(f.ctx, d, api.TCP, remote, c.Domain)
+	result, dialErr := f.opts.Router.DialFlow(f.ctx, policy, a, api.TCP, remote, c.Domain)
+	c.RuleID = result.RuleID
 	c.Outcome, c.Interface, c.Problem = result.Outcome, result.Interface, result.Problem
 	if dialErr != nil {
 		c.Problem = joinProblem(c.Problem, dialErr.Error())
@@ -211,9 +210,8 @@ func (f *Forwarder) udp(req *udp.ForwarderRequest) bool {
 				c.Domain = host
 			}
 		}
-		d := policy.Match(a, api.UDP, remote, c.Domain)
-		c.RuleID = d.RuleID
-		result, dialErr := f.opts.Router.DialDomain(f.ctx, d, api.UDP, remote, c.Domain)
+		result, dialErr := f.opts.Router.DialFlow(f.ctx, policy, a, api.UDP, remote, c.Domain)
+		c.RuleID = result.RuleID
 		c.Outcome, c.Interface, c.Problem = result.Outcome, result.Interface, result.Problem
 		if dialErr != nil {
 			c.Problem = joinProblem(c.Problem, dialErr.Error())

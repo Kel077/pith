@@ -147,3 +147,71 @@ func TestFakeIPUnknownDomainRecordsSystemBypass(t *testing.T) {
 		})
 	}
 }
+
+func TestFakeIPRelayLogsResolvedBlockFromOriginalPolicy(t *testing.T) {
+	for _, proto := range []api.Protocol{api.TCP, api.UDP} {
+		t.Run(string(proto), func(t *testing.T) {
+			fake := netip.MustParseAddrPort("198.18.0.7:443")
+			scene := api.Scene{ID: "test", Rules: []api.Rule{
+				{ID: "route", Enabled: true, Protocol: proto, Action: api.Route, Targets: []string{"example.com"}, Via: []api.InterfaceRef{{Name: "en0"}}, Fallback: true},
+				{ID: "real-block", Enabled: true, Protocol: proto, Action: api.Block, Targets: []string{"192.0.2.0/24"}, Apps: []api.AppRef{{Path: "/Applications/Example.app"}}},
+			}}
+			x := newFixture(t, func(context.Context, string, string, string) (net.Conn, error) {
+				t.Error("relay dialed a resolved block or system fallback")
+				return nil, errors.New("unexpected outbound connection")
+			}, scene)
+			original := x.router.Policy()
+			x.router.Resolve = func(context.Context, api.Interface, string) ([]netip.Addr, error) {
+				// A new rule snapshot must not affect the connection already being
+				// resolved, including its attribution-dependent real-address block.
+				scene.Rules[1].Enabled = false
+				if err := x.router.Reload(scene, api.DefaultSettings()); err != nil {
+					return nil, err
+				}
+				return []netip.Addr{netip.MustParseAddr("192.0.2.80")}, nil
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			var conn net.Conn
+			var err error
+			message := "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"
+			if proto == api.TCP {
+				conn, err = x.dialTCP(ctx, fake.String())
+			} else {
+				cacheFakeDomain(t, x, fake.Addr(), "example.com")
+				conn, err = gonet.DialUDP(x.app, nil, &tcpip.FullAddress{NIC: 1, Addr: tcpip.AddrFromSlice(fake.Addr().AsSlice()), Port: fake.Port()}, ipv4.ProtocolNumber)
+				message = "example UDP payload"
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			conn.SetDeadline(time.Now().Add(time.Second))
+			if _, err := io.WriteString(conn, message); err != nil {
+				t.Fatal(err)
+			}
+			if proto == api.TCP {
+				if _, err := conn.Read(make([]byte, 1)); err == nil || !strings.Contains(err.Error(), "reset") {
+					t.Fatal("blocked resolved TCP destination did not reset", err)
+				}
+			}
+			for {
+				rows := x.store.Connections(api.ConnectionQuery{})
+				if len(rows) != 0 {
+					if len(rows) != 1 || rows[0].RuleID != "real-block" || rows[0].Outcome != api.Blocked || rows[0].Remote != fake.String() || rows[0].Domain != "example.com" || rows[0].Ended.IsZero() || rows[0].Interface != "" || !strings.Contains(rows[0].Problem, "blocked") {
+						t.Fatal("lost resolved block or original flow identity", rows)
+					}
+					if x.router.Policy() == original {
+						t.Fatal("test did not replace the policy during resolution")
+					}
+					break
+				}
+				select {
+				case <-ctx.Done():
+					t.Fatal("resolved block was not logged")
+				case <-time.After(time.Millisecond):
+				}
+			}
+		})
+	}
+}

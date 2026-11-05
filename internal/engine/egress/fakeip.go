@@ -84,9 +84,6 @@ func realTargets(addresses []netip.Addr, port uint16) []netip.AddrPort {
 		}
 		seen[addr] = true
 		targets = append(targets, netip.AddrPortFrom(addr, port))
-		if len(targets) == 32 {
-			break
-		}
 	}
 	return targets
 }
