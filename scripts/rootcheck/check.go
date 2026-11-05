@@ -33,6 +33,8 @@ type checkOptions struct {
 	renewHotspot bool
 	udpDNS       bool
 	udpDNSBatch  bool
+	quic         bool
+	quicBatch    bool
 }
 
 type tlsEvidence struct {
@@ -51,6 +53,7 @@ type checkCase struct {
 	Connection    api.Connection `json:"connection"`
 	TLS           tlsEvidence    `json:"tls"`
 	DNS           []dnsEvidence  `json:"dns,omitempty"`
+	QUIC          *quicEvidence  `json:"quic,omitempty"`
 	ExpectedIP    string         `json:"expectedPublicIP,omitempty"`
 	ExitIPDrift   bool           `json:"exitIPDrift,omitempty"`
 	EvidenceNote  string         `json:"evidenceNote,omitempty"`
@@ -93,13 +96,13 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		return errors.New("check requires recorded cancellation or a managed skip, and this session's reviewed installation")
 	}
 	choices := 0
-	for _, selected := range []bool{opts.batch, opts.safeFailure, opts.preserve, opts.appBypass, opts.crash, opts.observe != 0, opts.udpDNS, opts.udpDNSBatch} {
+	for _, selected := range []bool{opts.batch, opts.safeFailure, opts.preserve, opts.appBypass, opts.crash, opts.observe != 0, opts.udpDNS, opts.udpDNSBatch, opts.quic, opts.quicBatch} {
 		if selected {
 			choices++
 		}
 	}
 	if choices > 1 || opts.observe < 0 || opts.observe > 90*time.Second {
-		return errors.New("choose one check mode: batch, safe-failure, preserve, app-bypass, crash, udp-dns, udp-dns-batch, or observe with a duration in (0,90s]")
+		return errors.New("choose one check mode: batch, safe-failure, preserve, app-bypass, crash, udp-dns, udp-dns-batch, quic, quic-batch, or observe with a duration in (0,90s]")
 	}
 	if opts.renewHotspot && opts.observe == 0 {
 		return errors.New("--renew-hotspot requires an explicit --observe duration")
@@ -116,6 +119,14 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		}
 		if opts.udpDNSBatch && !s.DNSPassed {
 			return errors.New("run --udp-dns successfully before --udp-dns-batch")
+		}
+	}
+	if opts.quic || opts.quicBatch {
+		if err := s.reviewedQUICPlan(); err != nil {
+			return err
+		}
+		if opts.quicBatch && !s.QUICPassed {
+			return errors.New("run --quic successfully before --quic-batch")
 		}
 	}
 	if opts.appBypass || opts.renewHotspot {
@@ -145,6 +156,10 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		report.Mode = "udp-dns"
 	} else if opts.udpDNSBatch {
 		report.Mode = "udp-dns-batch"
+	} else if opts.quic {
+		report.Mode = "quic"
+	} else if opts.quicBatch {
+		report.Mode = "quic-batch"
 	} else if opts.safeFailure {
 		report.Mode = "safe-failure"
 	} else if opts.preserve {
@@ -184,6 +199,9 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 	}
 	if choices == 0 || opts.udpDNS {
 		s.DNSPassed = false
+	}
+	if choices == 0 || opts.quic {
+		s.QUICPassed = false
 	}
 	// Read-only admission failures preserve the last cleanup proof, so an
 	// approved mode switch followed by an accidental check can still rebaseline.
@@ -227,6 +245,9 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		}
 		if resultErr == nil && opts.udpDNS {
 			s.DNSPassed = true
+		}
+		if resultErr == nil && opts.quic {
+			s.QUICPassed = true
 		}
 		// A test assertion and cleanup are separate results. A failed case must
 		// stay failed, but verified rollback remains valid evidence for rebaseline.
@@ -386,6 +407,14 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 	}
 	if opts.udpDNS || opts.udpDNSBatch {
 		if err := runDNSChecks(ctx, s, c, cfg, status, &report, opts.udpDNSBatch, liveDNSChecks()); err != nil {
+			return err
+		}
+		return collectTraffic(ctx, c, &report)
+	}
+	if opts.quic || opts.quicBatch {
+		if err := runQUICChecks(ctx, s, c, cfg, status, &report, opts.quicBatch, func(ctx context.Context, fragmented bool) (quicEvidence, error) {
+			return exchangeQUIC(ctx, s.QUICTarget, s.QUICServerName, fragmented, nil)
+		}); err != nil {
 			return err
 		}
 		return collectTraffic(ctx, c, &report)

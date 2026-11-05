@@ -43,6 +43,10 @@ type session struct {
 	DNSName         string                 `json:"dnsName,omitempty"`
 	DNSPlanSHA256   string                 `json:"dnsPlanSHA256,omitempty"`
 	DNSPassed       bool                   `json:"dnsPassed,omitempty"`
+	QUICTarget      string                 `json:"quicTarget,omitempty"`
+	QUICServerName  string                 `json:"quicServerName,omitempty"`
+	QUICPlanSHA256  string                 `json:"quicPlanSHA256,omitempty"`
+	QUICPassed      bool                   `json:"quicPassed,omitempty"`
 	Interfaces      [2]api.InterfaceRef    `json:"interfaces"`
 	Preflight       []preflight            `json:"preflight"`
 	TestProfile     *testprofile.Profile   `json:"testProfile,omitempty"`
@@ -103,6 +107,8 @@ func prepare(ctx context.Context, args []string) error {
 		return nil
 	})
 	fs.StringVar(&s.DNSName, "dns-name", "", "reviewed lowercase DNS question name; enables the explicit UDP/DNS stage")
+	fs.StringVar(&s.QUICTarget, "quic-target", "", "optional reviewed public HTTP/3 IPv4:443")
+	fs.StringVar(&s.QUICServerName, "quic-server-name", "", "reviewed HTTP/3 TLS certificate name")
 	mode := fs.String("capture-mode", "host-ipv4", "reviewed installation mode: host-ipv4, full-ipv4 or host-ipv6")
 	lease := fs.Duration("test-lease", 0, "profile lease: default/max 120s for full-ipv4, 60s for host-ipv6; minimum 30s")
 	if err := fs.Parse(args); err != nil {
@@ -217,6 +223,9 @@ func prepare(ctx context.Context, args []string) error {
 	if err := s.writeDNSPlan(); err != nil {
 		return err
 	}
+	if err := s.writeQUICPlan(); err != nil {
+		return err
+	}
 	if err := writeJSON(filepath.Join(s.Dir, "install-plan.json"), plan); err != nil {
 		return err
 	}
@@ -260,6 +269,9 @@ func (s *session) scopes() ([]netip.Prefix, error) {
 	if err := s.validateDNS(); err != nil {
 		return nil, err
 	}
+	if err := s.validateQUIC(); err != nil {
+		return nil, err
+	}
 	parsed, err := api.ParseTarget(s.ServerName)
 	if err != nil || !parsed.IsDomain() || parsed.Subdomains || parsed.String() != s.ServerName {
 		return nil, errors.New("server-name must be a plain, lowercase ASCII DNS name")
@@ -286,6 +298,13 @@ func (s *session) scopes() ([]netip.Prefix, error) {
 		p := netip.PrefixFrom(dns.Addr(), 32)
 		if !slices.Contains(prefixes, p) {
 			prefixes = append(prefixes, p)
+		}
+	}
+	if s.QUICTarget != "" {
+		endpoint, _ := netip.ParseAddrPort(s.QUICTarget)
+		prefix := netip.PrefixFrom(endpoint.Addr(), 32)
+		if !slices.Contains(prefixes, prefix) {
+			prefixes = append(prefixes, prefix)
 		}
 	}
 	return prefixes, nil

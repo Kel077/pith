@@ -135,6 +135,7 @@ mode-0600 files include:
 | `original.json` | Permanent initial pre-privilege interface inventory, route snapshot, launchd result, and the five managed paths |
 | `preflight.json` | Bound/unbound HTTPS status and public-IP echo, when the endpoint provides one |
 | `dns-plan.json` | Optional frozen resolver endpoints, question name, A/AAAA types, request counts, response/idle bounds and evidence limits; its checksum binds the automatic DNS stage |
+| `quic-plan.json` | Optional frozen HTTP/3 host/certificate name, request/packet/payload budgets and observable/fragmented Initial controls; its checksum binds the QUIC stage |
 | `install-plan.json`, `install.sh` | Exact scoped launchd arguments, fixed destinations, helper SHA-256 check, rollback, and authorization prompt |
 | `uninstall.sh` | Exact bootout, ownership-checked route cleanup, and managed-path removal |
 | `emergency-command.txt` | A standalone, single command that can be pasted into Terminal without IPC or the test executable |
@@ -418,6 +419,66 @@ non-DNS idle timeout, pre-existing connected UDP, and unconnected UDP listeners
 remain separate acceptance gaps. Uninstall and independently inspect all owned
 routes, tunnel, service and paths when this session ends; no additional password
 dialog is needed for the DNS checks themselves.
+
+## Bounded QUIC/HTTP/3 stage
+
+The QUIC harness has synthetic and real loopback HTTP/3 coverage; hardware
+acceptance remains pending. Add an explicit `--quic-target '<reviewed IPv4:443>'`
+and `--quic-server-name '<reviewed certificate name>'` when preparing a new
+`host-ipv4` session. It freezes one additional `/32` if that IP differs from the
+TLS/DNS targets. No name resolution or QUIC request occurs during preparation;
+the existing three TLS preflights and mandatory SafeStart still use the original
+frozen TLS target. Review `quic-plan.json`, every host route and the ordinary
+install/undo plan before authorization. Other installation profiles reject this
+extension. Rebaseline cannot change the endpoint or protocol budget.
+
+After installation and the default TCP smoke, first run one request:
+
+```sh
+"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --quic
+"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --quic-batch
+```
+
+The first command makes one HTTP/3 `GET /` with an IP rule through A. Its
+successful independent cleanup enables the second command, which makes exactly
+three requests: a domain rule through A with observable first-datagram SNI, an IP
+rule through B, and an IP rule through A with ClientHello split across Initial
+packets. Each request uses a fresh connected IPv4 UDP socket to the literal
+target, QUIC v1, verified TLS 1.3 and ALPN `h3`. The fragmented control uses a
+hybrid key share while retaining normal certificate validation and SNI; the
+recorded first datagram must actually lack a recoverable name. It is not an ECH
+test or a claim of multi-packet sniffing support. If a cached name or a changed
+packet layout defeats that control, the case fails rather than claiming it ran.
+
+There is one direct HTTP/3 request per case: no application retry, redirect
+following, HTTP proxy, DNS lookup, TCP fallback, migration or saved 0-RTT state.
+QUIC's own protocol retransmissions remain enabled within each ten-second
+deadline. Every exchange is capped at 64 KiB of sent UDP payload, 256 KiB of read
+UDP payload, 128 writes and 256 received datagrams. These limits count client
+socket payload, not network headers or packets queued/dropped by the kernel.
+Headers are limited to 16 KiB; only the first 16 KiB of the response body is read
+and hashed. The private report stores its size/hash, status and protocol, not
+the body, packet captures or TLS keys. A successful 2xx/3xx HTTP/3 response is
+required; a redirect response is recorded without following it.
+
+Every positive case also requires a new helper UDP record with the exact PID,
+executable, application tuple, target, rule, interface, outcome and expected
+observed name. The record must have an outbound pre-NAT tuple and at least the
+client-observed encrypted payload counts in both directions. The helper may
+count additional peer datagrams after the client closes; these are not exposed
+as a public NAT port or application payload measurement. Capture identity must
+remain Running. The report and independent Stop/baseline cleanup use the same
+failure path as the TCP and DNS stages; default smoke and rebaseline clear the
+QUIC smoke gate. Uninstall and independently inspect the owned routes and paths
+when the reviewed session ends.
+
+The acceptance tool uses MIT-licensed
+[quic-go v0.63.0](https://github.com/quic-go/quic-go/tree/v0.63.0) and
+[qpack v0.6.0](https://github.com/quic-go/qpack/tree/v0.6.0), with Go's BSD-licensed
+`x/crypto` dependency. They are not imported by the shipped app/helper. Direct
+`ClientConn.RoundTrip` avoids the general transport's retry branch; see the
+[HTTP/3 client API](https://quic-go.net/docs/http3/client/) and
+[pinned transport implementation](https://github.com/quic-go/quic-go/blob/v0.63.0/http3/transport.go).
 
 ## Ordered execution
 
