@@ -97,18 +97,26 @@ func (a *App) routingCapsule(c *ui.Context) {
 // pageHeader is the top of a page: its title, a line under it, and its
 // actions on the right.
 func pageHeader(c *ui.Context, title, subtitle string, actions func()) {
-	ui.Row(c).Padding(8, 32, 18).Gap(10).AlignItems(ui.End).Shrink(0).Children(func() {
+	ui.Row(c).Padding(8, 32, 18).Gap(10).AlignItems(ui.Center).Shrink(0).Children(func() {
 		ui.Column(c).Grow(1).Gap(4).MinWidth(0).Children(func() {
 			ui.Text(c, title).FontSize(28).FontWeight(700).LetterSpacing(-0.4).SingleLine()
 			if subtitle != "" {
 				ui.Text(c, subtitle).TextColor(c.Theme().TextMuted).SingleLine()
 			}
 		})
+		// The actions stand in a box as high as the highest of any page's,
+		// centered on it, and so does the title: every page's title stands
+		// at one height, whatever its actions, or none.
+		box := ui.Row(c).Height(headerActionsHeight).Gap(10).AlignItems(ui.Center).Shrink(0)
 		if actions != nil {
-			actions()
+			box.Children(actions)
 		}
 	})
 }
+
+// headerActionsHeight is the height of the box of a page's actions: room
+// for the highest of them, Activity's capsule of views.
+const headerActionsHeight = 44
 
 // stateText says in a word whether routing runs.
 func (a *App) stateText() string {
