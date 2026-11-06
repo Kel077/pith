@@ -123,6 +123,52 @@ flowchart LR
 - **接管全部流量的 VPN**（比如 Tailscale 的出口节点）还没有和橘核一起测过。
 - **iCloud 专用代理**会让 Safari 经过 Apple 的中继服务器上网，橘核只看得到中继，看不到真正访问的网站，所以域名规则和 IP 规则管不到 Safari 的浏览。想按网站给 Safari 分流，就关掉专用代理。
 
+## 断网了怎么办
+
+打开分流后如果马上断网，橘核会自己撤回。如果还是上不了网：
+
+1. **在菜单栏关掉「分流」**，不需要密码。开着「退出后继续分流」时，光退出橘核是不够的。
+2. **卸载后台助手**：「设置 → 后台助手 → 卸载…」，输入管理员密码。连接记录和流量统计会一起删掉，规则还在。
+3. **橘核没反应时**，先退出它，再把下面这段粘贴到「终端」里运行。它会要你输入管理员密码（输入时屏幕上不显示），只停掉橘核的后台助手，撤回它加进路由表的内容，再删掉它的文件。
+
+<details>
+<summary>在终端里卸载后台助手</summary>
+
+```sh
+sudo /bin/sh <<'PITH_REMOVE'
+set -eu
+service='system/io.github.kel077.pith.helper'
+binary='/Library/PrivilegedHelperTools/io.github.kel077.pith.helper'
+plist='/Library/LaunchDaemons/io.github.kel077.pith.helper.plist'
+data='/Library/Application Support/Pith'
+socket='/var/run/io.github.kel077.pith.helper.sock'
+
+for path in "$binary" "$plist" "$data"; do
+  [ ! -L "$path" ] || { echo 'Refusing a symlink installation path.' >&2; exit 1; }
+done
+if /bin/launchctl print "$service" >/dev/null 2>&1; then
+  /bin/launchctl bootout "$service"
+fi
+attempt=0
+while [ -S "$socket" ] && [ "$attempt" -lt 60 ]; do
+  /bin/sleep 0.1
+  attempt=$((attempt+1))
+done
+if [ -f "$data/capture.json" ]; then
+  "$binary" --cleanup
+fi
+/bin/rm -f "$binary" "$plist"
+if [ -S "$socket" ]; then
+  /bin/rm -f "$socket"
+fi
+/bin/rm -rf "$data"
+PITH_REMOVE
+```
+
+如果它报错，就停在那里，并[提一个 issue](https://github.com/Kel077/pith/issues/new?template=bug.yml)：剩下的文件记录着橘核改过什么，是排查的依据。不要自己手动删路由。
+
+</details>
+
 ## 隐私
 
 橘核只看连接要去哪：地址、端口，以及从 TLS SNI、HTTP Host 或 DNS 里认出的主机名。传输的内容它一概不碰，不解密，也不装证书。规则、连接记录和流量统计都只存在你自己的 Mac 上，记录保留几天由你在设置里定。橘核不会自己往外发任何数据；只有你在「网络」页手动点测试时，才会访问 [ipify](https://www.ipify.org) 查公网 IP。填了热点的管理密码以后，「网络」页开着的时候，橘核会读取热点自己的管理页面，这只在你的局域网里进行。
