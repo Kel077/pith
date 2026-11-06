@@ -7,6 +7,7 @@ package ui
 import (
 	"cmp"
 	"context"
+	"net/netip"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -78,7 +79,8 @@ type App struct {
 	loaded    bool
 	loadErr   error // the configuration could not be read: nothing is saved over it
 	status    api.Status
-	ifaces    []api.Interface
+	ifaces    []api.Interface // shown: allIfaces without Pith's own tunnel
+	allIfaces []api.Interface
 	conns     []*api.Connection // newest first
 	byID      map[uint64]*api.Connection
 	traffic   api.Traffic
@@ -315,12 +317,16 @@ func (a *App) apply(ev api.Event) {
 func (a *App) setStatus(st api.Status) {
 	a.status = st
 	a.routing.Store(st.State == api.Running)
+	if shown := withoutOwnTunnel(a.allIfaces, st); len(shown) != len(a.ifaces) {
+		a.ifaces, a.colors = shown, nil
+	}
 	a.updateTray()
 	a.resume()
 }
 
 func (a *App) setIfaces(ifs []api.Interface) {
-	a.ifaces = ifs
+	a.allIfaces = ifs
+	a.ifaces = withoutOwnTunnel(ifs, a.status)
 	a.colors = nil
 	// Another device may sit behind an interface now: ask again.
 	clear(a.hotspot.none)
@@ -702,6 +708,41 @@ func refOf(i *api.Interface) api.InterfaceRef {
 }
 
 // ---- errors -----------------------------------------------------------------
+
+// withoutOwnTunnel leaves out the tunnel Pith captures through: it isn't a
+// network to show or to route through. It is the capture's interface by
+// name, carrying an address from the capture's own tunnel subnets, so an
+// unrelated tunnel that reuses the name stays.
+func withoutOwnTunnel(ifs []api.Interface, st api.Status) []api.Interface {
+	c := st.LastCapture
+	if c == nil || c.Interface == "" {
+		return ifs
+	}
+	var subnets []netip.Prefix
+	for _, s := range c.TunnelSubnets {
+		if p, err := netip.ParsePrefix(s); err == nil {
+			subnets = append(subnets, p)
+		}
+	}
+	own := func(i api.Interface) bool {
+		if i.Name != c.Interface {
+			return false
+		}
+		if len(subnets) == 0 {
+			return c.EndedAt.IsZero()
+		}
+		for _, s := range slices.Concat(i.IPv4, i.IPv6) {
+			if addr, err := netip.ParseAddr(s); err == nil && slices.ContainsFunc(subnets, func(p netip.Prefix) bool { return p.Contains(addr) }) {
+				return true
+			}
+		}
+		return false
+	}
+	if !slices.ContainsFunc(ifs, own) {
+		return ifs
+	}
+	return slices.DeleteFunc(slices.Clone(ifs), own)
+}
 
 // helperUntrusted tells whether the backend found a helper it can't verify,
 // which it neither uses nor reports as stopped.
