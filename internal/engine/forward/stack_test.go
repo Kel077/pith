@@ -86,7 +86,7 @@ type fixtureStack struct {
 	device *memoryTUN
 }
 
-func newFixture(t *testing.T, dial egress.DialFunc, scene api.Scene, configure ...func(*Options)) *fixtureStack {
+func newFixture(t testing.TB, dial egress.DialFunc, scene api.Scene, configure ...func(*Options)) *fixtureStack {
 	t.Helper()
 	app := stack.New(stack.Options{NetworkProtocols: []stack.NetworkProtocolFactory{ipv4.NewProtocol, ipv6.NewProtocol}, TransportProtocols: []stack.TransportProtocolFactory{tcp.NewProtocol, udp.NewProtocol}})
 	link := channel.New(1024, 1500, "")

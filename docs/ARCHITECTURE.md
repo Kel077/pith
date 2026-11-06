@@ -501,6 +501,9 @@ alone is not an independent IPv4 connectivity test or full dual-stack acceptance
 
 See [building and packaging](BUILDING.md) and the consolidated
 [authorized root-test procedure](ROOT-TEST.md).
+The [root-free relay performance investigation](PERFORMANCE.md) measures
+interface-query, packet-allocation and MTU candidates without changing production
+behavior; its memory-stack ceilings are not native-utun throughput claims.
 Scoped TCP acceptance does not establish full capture, IPv6, UDP/QUIC,
 delegated WebKit/nsurlsessiond attribution, runtime VPN reconstruction, or the
 500 Mbps throughput target. See the [next acceptance plan](NEXT-ACCEPTANCE.md).
