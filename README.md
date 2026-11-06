@@ -56,7 +56,7 @@ go run ./cmd/pith -mock    # the interface on simulated data, nothing installed
 
 **2 · Add a rule.** On **Rules**, choose **Add Rule**: the apps, the destinations (domains, IP addresses or ranges), and the interfaces to try, in order.
 
-**3 · Turn routing on** from the menu bar or the sidebar. New connections follow the rules at once, and **Activity** shows where each one went.
+**3 · Turn routing on** from the menu bar, or with the switch at the top right of the window. New connections follow the rules at once, and **Activity** shows where each one went.
 
 ## How it fits together
 
@@ -70,7 +70,7 @@ flowchart LR
   app["Pith<br/>menu bar and window"] <-- "Unix socket" --> pithd
 ```
 
-While routing is on, the helper captures new connections through a utun interface and a user-space network stack, finds the app each belongs to from the kernel's socket tables, and the domain from TLS SNI, the HTTP Host or DNS. It then makes the connection again, bound to the interface the rules choose, and relays the bytes. Turning routing off removes everything it added to the routing table. Pith needs no Apple developer account or system extension: macOS asks once for the password that installs the helper.
+While routing is on, the helper captures new connections through a utun interface and a user-space network stack, finds the app each belongs to from the kernel's socket tables, and the domain from TLS SNI, the HTTP Host or DNS. It then makes the connection again, bound to the interface the rules choose, and relays the bytes. Turning routing off removes everything it added to the routing table. Pith needs no Apple developer account or system extension. macOS asks for your password only to install, update or remove the helper; an update of the app alone, with the same helper, asks for nothing.
 
 ## What it does
 
@@ -80,13 +80,13 @@ Each rule reads like a sentence: these apps, going to these places, leave throug
 
 | | |
 | :-- | :-- |
-| **Apps** | Any app, or the apps you pick. An app's helpers, and the system services that connect for it (WebKit, nsurlsessiond), match too |
+| **Apps** | Any app, or the apps you pick. An app's helpers match too, and so do system processes that connect for it, such as Safari's WebKit networking process |
 | **Destinations** | Domains (with or without their subdomains), IP addresses and CIDR ranges, IPv4 and IPv6; paste a list to add many |
 | **Interfaces** | An ordered list: the next one is tried when one can't connect, and then macOS's routing if you allow it |
 | **Block** | Block rules always win; otherwise the first matching rule from the top decides. Drag to reorder |
 | **Checks** | A rule that an earlier one fully covers says it never applies; **Check** tells which rule a connection would match, and where it would go now |
 
-Changes apply to new connections as soon as you save them; connections already open keep their route.
+Changes apply as soon as you save them. An open connection that the new rules send elsewhere, or block, is closed, and its app connects again under the new rules; the others keep going.
 
 ### Scenes
 
@@ -117,13 +117,13 @@ Some hotspots also show their signal and can change their public IP. Only these,
 | :-- | :-- | :-- |
 | Inseego 5G MiFi M2000 | The bars, and 5G or LTE | Also the band in use (n41, n71…), the signal and the carrier, and **Change hotspot IP** |
 
-**Change hotspot IP** has the hotspot reconnect to its carrier for a new public IP. Pith keeps the admin password in your keychain. Any other hotspot, other Inseego models included, still works for routing as an ordinary interface, without these extras.
+**Change hotspot IP** has the hotspot reconnect to its carrier, which usually gives it a new public IP. Pith keeps the admin password in your keychain. Any other hotspot, other Inseego models included, still works for routing as an ordinary interface, without these extras.
 
 ### Also
 
-- **Local proxies**: SOCKS5 ports on 127.0.0.1, each going out through one interface, never another; for apps and browsers that take a proxy, with routing on or off.
-- **Safe start**: if the Mac loses the internet right after routing starts, Pith undoes it.
-- **Resume on launch**, **keep routing after quitting**, **open at login**, and the download speed in the menu bar.
+- **Local proxies**: SOCKS5 ports on 127.0.0.1, TCP only, each going out through one interface. When that interface is down, connections through its port fail instead of using another. For apps and browsers that take a proxy, with routing on or off.
+- **Safe start**, on by default: if the Mac loses the internet right after routing starts, Pith undoes it.
+- **Resume routing on launch**, **Keep routing after quitting**, **Open at login**, and the download speed in the menu bar.
 - **Import and export** a scene's rules, or back up everything.
 - **English and Simplified Chinese**, light and dark.
 
@@ -135,7 +135,7 @@ Some hotspots also show their signal and can change their public IP. Only these,
 
 ## If you lose the internet
 
-If the Mac loses the internet right after routing starts, Pith undoes it by itself. If you're still offline:
+If the Mac loses the internet right after routing starts, Safe start undoes it by itself. If you're still offline:
 
 1. **Turn Routing off** in the menu bar. This takes no password. Quitting Pith isn't enough while **Keep routing after quitting** is on.
 2. **Remove the helper**: Settings → Helper → **Uninstall…**, with your administrator password. This also deletes the connection log and traffic totals; your rules stay.
@@ -176,7 +176,9 @@ If it reports an error, or you're still offline once the helper is removed, stop
 
 ## Privacy
 
-Pith reads where connections go — addresses, ports, and host names from TLS SNI, the HTTP Host or DNS — and never what they carry: no decryption, no certificates installed. Rules, the connection log and traffic totals stay on your Mac, and the log keeps as many days as Settings says. Pith sends nothing anywhere by itself; only a test you start on the Network page contacts [ipify](https://www.ipify.org) to learn an interface's public address. With a hotspot's admin password, Pith reads the hotspot's own admin page, on your local network, while the Network page is open.
+Pith reads where connections go: addresses, ports, and host names from TLS SNI, the HTTP Host or DNS. It never reads what they carry, decrypts nothing and installs no certificate. Rules, the connection log and traffic totals stay on your Mac, and the log keeps as many days as Settings says.
+
+Pith connects to the internet on its own in one case: with Safe start on, each time routing starts, the helper opens one TLS connection to api.ipify.org to check the Mac is still online, and sends no request over it. Everything else is something you start: a test on the Network page asks [ipify](https://www.ipify.org) for an interface's public address, and reaching a server connects to the one you enter. With a hotspot's admin password, Pith reads the hotspot's own admin page, on your local network, while the Network page is open.
 
 ## Documentation
 
