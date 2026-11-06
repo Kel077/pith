@@ -16,6 +16,26 @@ The helper also limits each scoped routing run to five minutes, so a killed
 test client cannot leave routing active indefinitely. The helper remains
 installed and idle until the explicit uninstall step.
 
+## Recorded local SOCKS5 result
+
+Unprivileged hardware acceptance at `b8b3628` passed with TUN capture disabled
+and no running helper. Pith owned two listeners, both restricted to IPv4
+loopback: one mapped to wired Ethernet and the other to a cellular hotspot.
+HTTPS requests using `curl --socks5-hostname` exercised proxy-side name resolution
+through each selected interface's DNS. The wired public-exit echo matched the
+direct wired control; the cellular echo used a different carrier exit.
+
+Unplugging the hotspot removed its interface. A new request through its proxy
+failed immediately with SOCKS reply `0x03` (network unreachable), without falling
+back to Ethernet; the wired proxy remained usable. Reconnecting the hotspot
+restored its proxy automatically, still through the cellular exit, while the
+wired proxy remained unaffected. The cellular public address changed during
+recovery; that expected address drift was not treated as a routing failure.
+
+This result does not cover concurrent TUN capture or changing a port's exit
+while a test stream is open. Those remain hardware acceptance items in the
+[local proxy plan](NEXT-ACCEPTANCE.md#local-socks5-acceptance).
+
 ## Recorded helper identity result
 
 Helper identity and replacement were verified on hardware at `54a2881` in a

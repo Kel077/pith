@@ -92,8 +92,11 @@ counter updates continue without a helper stream. `client.Close` cancels setup,
 closes all local listeners/streams and joins subscriptions without stopping TUN.
 App exit closes every proxy socket regardless of KeepRouting; no proxy daemon is
 installed. Protocol, DNS, lifecycle, cancellation and interface-reuse tests use
-loopback or injected state. Physical-interface and concurrent-TUN acceptance
-remain separately reviewed hardware checks.
+loopback or injected state. Hardware acceptance at `b8b3628` verified separate
+wired/cellular exits, disconnect failure without fallback and automatic recovery,
+with TUN disabled and no running helper. Concurrent TUN operation and remapping
+an open stream remain unverified; see the
+[recorded scope](ROOT-TEST.md#recorded-local-socks5-result).
 
 ## Capturing and forwarding
 
