@@ -115,6 +115,9 @@ func (a *App) stateText() string {
 		return locales.Stopping()
 	case a.status.State == api.Running:
 		return locales.RoutingNow()
+	case helperUntrusted(a.status):
+		// Not "stopped": Pith can't tell what an unverified helper does.
+		return locales.CantVerifyHelper()
 	case a.status.State == api.Failed:
 		return locales.StoppedByAnError()
 	}

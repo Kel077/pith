@@ -18,6 +18,7 @@ import (
 
 	"github.com/Kel077/pith/internal/api"
 	"github.com/Kel077/pith/internal/mock"
+	"github.com/Kel077/pith/locales"
 )
 
 var (
@@ -142,6 +143,20 @@ func TestSnapshots(t *testing.T) {
 		tt.Frame()
 		save(t, tt.Image(), "panel-"+mode)
 
+		// A helper Pith can't verify: Settings, and the panel.
+		a, _ = testApp(t, mock.Options{Sample: true, HelperInstalled: true, HelperUntrusted: true})
+		a.page = "settings"
+		tt = ui.NewTester(a.WindowView, 1040, 1240) // down to the helper
+		tt.SetDark(dark)
+		tt.SetScale(2)
+		tt.Frame()
+		save(t, tt.Image(), "untrusted-"+mode)
+		tt = ui.NewTester(a.PanelView, PanelWidth, a.PanelHeight())
+		tt.SetDark(dark)
+		tt.SetScale(2)
+		tt.Frame()
+		save(t, tt.Image(), "untrusted-panel-"+mode)
+
 		// The rule editor, and the checker.
 		a, _ = testApp(t, mock.Options{Sample: true, HelperInstalled: true, Running: true})
 		a.openEditor("home", 2)
@@ -258,6 +273,26 @@ func TestToggle(t *testing.T) {
 	st, _ := svc.Status(context.Background())
 	if st.State != api.Running {
 		t.Errorf("after installing, state %s", st.State)
+	}
+}
+
+// An unverified helper is never shown as stopped, and turning routing on
+// asks for no password: the fix is an explicit reinstall in Settings.
+func TestUntrustedHelper(t *testing.T) {
+	a, svc := testApp(t, mock.Options{Sample: true, HelperInstalled: true, HelperUntrusted: true})
+	if got := a.stateText(); got != locales.CantVerifyHelper() {
+		t.Errorf("state %q", got)
+	}
+	if n := a.notices(); len(n) == 0 || n[0].text != locales.PithCanTVerifyItsHelper() {
+		t.Errorf("notices %+v", n)
+	}
+	a.toggle()
+	if a.install.open {
+		t.Error("turning routing on with an unverified helper asks for a password")
+	}
+	a.installHelper("")
+	if st, _ := svc.Status(context.Background()); st.Error != nil || !st.Helper.Running {
+		t.Errorf("after reinstalling, %+v", st)
 	}
 }
 

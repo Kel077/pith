@@ -703,6 +703,12 @@ func refOf(i *api.Interface) api.InterfaceRef {
 
 // ---- errors -----------------------------------------------------------------
 
+// helperUntrusted tells whether the backend found a helper it can't verify,
+// which it neither uses nor reports as stopped.
+func helperUntrusted(s api.Status) bool {
+	return s.Error != nil && s.Error.Code == api.ErrHelperUntrusted
+}
+
 // errorText explains an error of the backend to the user.
 func errorText(err error) string {
 	var detail string
@@ -715,6 +721,8 @@ func errorText(err error) string {
 		msg = locales.TheHelperIsNotInstalled()
 	case api.ErrHelperOutdated:
 		msg = locales.TheHelperNeedsAnUpdate()
+	case api.ErrHelperUntrusted:
+		msg = locales.PithCanTVerifyItsHelper()
 	case api.ErrCanceled:
 		msg = locales.Canceled()
 	case api.ErrInvalidConfig:

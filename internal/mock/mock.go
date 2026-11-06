@@ -23,6 +23,7 @@ import (
 type Options struct {
 	Sample          bool // a configuration with scenes and rules, rather than DefaultConfig
 	HelperInstalled bool
+	HelperUntrusted bool      // installed, but Pith can't verify it (needs HelperInstalled)
 	Running         bool      // routing the selected scene from the start (needs HelperInstalled)
 	Seed            uint64    // of the simulation's randomness
 	Now             time.Time // the clock's start; zero: the real clock
@@ -80,7 +81,11 @@ func New(o Options) *Service {
 		s.cfg = SampleConfig()
 	}
 	s.status = api.Status{State: api.Stopped, Helper: api.HelperStatus{Installed: o.HelperInstalled, Running: o.HelperInstalled, Version: "0.1.0"}}
-	if o.Running && o.HelperInstalled {
+	if o.HelperUntrusted && o.HelperInstalled {
+		// As the client reports a helper it can't verify: neither ready nor
+		// stopped, and no version taken from the unverified peer.
+		s.status = api.Status{State: api.Failed, Error: &api.Error{Code: api.ErrHelperUntrusted}, Helper: api.HelperStatus{Installed: true}}
+	} else if o.Running && o.HelperInstalled {
 		s.startLocked(s.cfg.Selected)
 	}
 	if o.Live {
@@ -170,6 +175,9 @@ func (s *Service) InstallHelper(ctx context.Context) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.untrustedLocked() {
+		s.status = api.Status{State: api.Stopped}
+	}
 	s.status.Helper = api.HelperStatus{Installed: true, Running: true, Version: "0.1.0"}
 	s.publishStatusLocked()
 	return nil
@@ -178,16 +186,27 @@ func (s *Service) InstallHelper(ctx context.Context) error {
 func (s *Service) UninstallHelper(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.stopLocked()
+	if s.untrustedLocked() {
+		s.status = api.Status{State: api.Stopped}
+	} else {
+		s.stopLocked()
+	}
 	s.status.Helper = api.HelperStatus{}
 	s.publishStatusLocked()
 	return nil
+}
+
+// untrustedLocked tells whether the helper is one Pith can't verify.
+func (s *Service) untrustedLocked() bool {
+	return s.status.Error != nil && s.status.Error.Code == api.ErrHelperUntrusted
 }
 
 func (s *Service) Start(ctx context.Context, sceneID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch {
+	case s.untrustedLocked():
+		return &api.Error{Code: api.ErrHelperUntrusted}
 	case !s.status.Helper.Installed:
 		return &api.Error{Code: api.ErrHelperMissing}
 	case s.scene(sceneID) == nil:
@@ -200,6 +219,9 @@ func (s *Service) Start(ctx context.Context, sceneID string) error {
 func (s *Service) Stop(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.untrustedLocked() {
+		return &api.Error{Code: api.ErrHelperUntrusted}
+	}
 	s.stopLocked()
 	return nil
 }

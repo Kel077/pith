@@ -2402,18 +2402,6 @@ func (msgs Messages) UpdateTheHelper() string {
 	return Catalog.Format(msgs.locale, "updateTheHelper", nil)
 }
 
-// HelperOutdatedVersion says "Version {version} is outdated."
-// in the language the app shows.
-func HelperOutdatedVersion(version string) string {
-	return In(i18n.Locale()).HelperOutdatedVersion(version)
-}
-
-// HelperOutdatedVersion says "Version {version} is outdated."
-// in the language of msgs.
-func (msgs Messages) HelperOutdatedVersion(version string) string {
-	return Catalog.Format(msgs.locale, "helperOutdatedVersion", map[string]any{"version": version})
-}
-
 // WhenNoneOfThemConnectsUse says "When none of them connects, use the system's network"
 // in the language the app shows.
 func WhenNoneOfThemConnectsUse() string { return In(i18n.Locale()).WhenNoneOfThemConnectsUse() }
@@ -2674,20 +2662,86 @@ func (msgs Messages) HelperNotInstalled() string {
 	return Catalog.Format(msgs.locale, "helperNotInstalled", nil)
 }
 
-// HelperOutdated says "Outdated"
+// HelperOutdated says "Needs update"
 // in the language the app shows.
 //
-// The helper's state in a word, in Settings: older than the app. Its
-// version follows.
+// The helper's state in a word, in Settings: it doesn't match this version
+// of the app and must be updated.
 func HelperOutdated() string { return In(i18n.Locale()).HelperOutdated() }
 
-// HelperOutdated says "Outdated"
+// HelperOutdated says "Needs update"
 // in the language of msgs.
 //
-// The helper's state in a word, in Settings: older than the app. Its
-// version follows.
+// The helper's state in a word, in Settings: it doesn't match this version
+// of the app and must be updated.
 func (msgs Messages) HelperOutdated() string {
 	return Catalog.Format(msgs.locale, "helperOutdated", nil)
+}
+
+// CantVerifyHelper says "Can't verify helper"
+// in the language the app shows.
+//
+// The routing state in the window's corner, the panel and Settings when
+// Pith can't confirm the installed helper is the one it ships. Not a
+// stopped state.
+func CantVerifyHelper() string { return In(i18n.Locale()).CantVerifyHelper() }
+
+// CantVerifyHelper says "Can't verify helper"
+// in the language of msgs.
+//
+// The routing state in the window's corner, the panel and Settings when
+// Pith can't confirm the installed helper is the one it ships. Not a
+// stopped state.
+func (msgs Messages) CantVerifyHelper() string {
+	return Catalog.Format(msgs.locale, "cantVerifyHelper", nil)
+}
+
+// PithCanTVerifyItsHelper says "Pith can't confirm the installed helper is the one it ships, so it won't use it. Reinstall the helper in Settings, or…"
+// in the language the app shows.
+//
+// A notice, an error and a tooltip when Pith can't verify its helper. Pith
+// neither uses it nor asks for a password by itself.
+func PithCanTVerifyItsHelper() string { return In(i18n.Locale()).PithCanTVerifyItsHelper() }
+
+// PithCanTVerifyItsHelper says "Pith can't confirm the installed helper is the one it ships, so it won't use it. Reinstall the helper in Settings, or…"
+// in the language of msgs.
+//
+// A notice, an error and a tooltip when Pith can't verify its helper. Pith
+// neither uses it nor asks for a password by itself.
+func (msgs Messages) PithCanTVerifyItsHelper() string {
+	return Catalog.Format(msgs.locale, "pithCanTVerifyItsHelper", nil)
+}
+
+// Reinstall says "Reinstall"
+// in the language the app shows.
+//
+// A button in Settings that installs the helper again, replacing one Pith
+// can't verify. macOS asks for an administrator's password.
+func Reinstall() string { return In(i18n.Locale()).Reinstall() }
+
+// Reinstall says "Reinstall"
+// in the language of msgs.
+//
+// A button in Settings that installs the helper again, replacing one Pith
+// can't verify. macOS asks for an administrator's password.
+func (msgs Messages) Reinstall() string {
+	return Catalog.Format(msgs.locale, "reinstall", nil)
+}
+
+// ItDoesnTMatchThisVersion says "It doesn't match this version of Pith. Update it to route."
+// in the language the app shows.
+//
+// Tooltip of the helper's state in Settings when it must be replaced to
+// match this version of the app.
+func ItDoesnTMatchThisVersion() string { return In(i18n.Locale()).ItDoesnTMatchThisVersion() }
+
+// ItDoesnTMatchThisVersion says "It doesn't match this version of Pith. Update it to route."
+// in the language of msgs.
+//
+// Tooltip of the helper's state in Settings when it must be replaced to
+// match this version of the app.
+func (msgs Messages) ItDoesnTMatchThisVersion() string {
+	return Catalog.Format(msgs.locale, "itDoesnTMatchThisVersion", nil)
 }
 
 // HelperNotAnswering says "Not answering"

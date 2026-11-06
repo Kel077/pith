@@ -138,19 +138,19 @@ func (a *App) settingsView(c *ui.Context) {
 							if primaryCapsule(c, "install", icDownload, locales.Install()).Focusable().Clicked() {
 								a.installHelper("")
 							}
+						case helperUntrusted(a.status):
+							ui.Row(c).Gap(8).Children(func() {
+								if primaryCapsule(c, "reinstall", icRefresh, locales.Reinstall()).Focusable().Clicked() {
+									a.installHelper("")
+								}
+								a.uninstallButton(c)
+							})
 						case h.Outdated:
 							if primaryCapsule(c, "update", icRefresh, locales.Update()).Focusable().Clicked() {
 								a.installHelper("")
 							}
 						default:
-							if glassCapsuleButton(c, "uninstall", icTrash, locales.Uninstall()).Focusable().Clicked() {
-								a.confirm = &confirmation{
-									title:  locales.UninstallTheHelper(),
-									action: locales.Uninstall2(),
-									danger: true,
-									do:     a.uninstallHelper,
-								}
-							}
+							a.uninstallButton(c)
 						}
 					})
 				})
@@ -229,6 +229,18 @@ func settingsSelect(c *ui.Context, chosen *string, options []string) ui.Element 
 		Material(glass.Glass{}).Border(1, rim(c.Theme()))
 }
 
+// uninstallButton asks before removing the helper.
+func (a *App) uninstallButton(c *ui.Context) {
+	if glassCapsuleButton(c, "uninstall", icTrash, locales.Uninstall()).Focusable().Clicked() {
+		a.confirm = &confirmation{
+			title:  locales.UninstallTheHelper(),
+			action: locales.Uninstall2(),
+			danger: true,
+			do:     a.uninstallHelper,
+		}
+	}
+}
+
 // helperState says in a word or two whether the helper is there and
 // answers, with its version, and in full in a tooltip.
 func (a *App) helperState(c *ui.Context, h api.HelperStatus) {
@@ -237,6 +249,8 @@ func (a *App) helperState(c *ui.Context, h api.HelperStatus) {
 	switch {
 	case !h.Installed:
 		text, col, hollow = locales.HelperNotInstalled(), t.TextMuted, true
+	case helperUntrusted(a.status):
+		text, col = locales.CantVerifyHelper(), t.Danger
 	case h.Outdated:
 		text, col = locales.HelperOutdated(), t.Warning
 	case !h.Running:
@@ -255,8 +269,10 @@ func (a *App) helperText(h api.HelperStatus) string {
 	switch {
 	case !h.Installed:
 		return locales.NotInstalledRoutingNeedsItMacos()
+	case helperUntrusted(a.status):
+		return locales.PithCanTVerifyItsHelper()
 	case h.Outdated:
-		return locales.HelperOutdatedVersion(h.Version)
+		return locales.ItDoesnTMatchThisVersion()
 	case !h.Running:
 		return locales.InstalledNotAnswering()
 	}

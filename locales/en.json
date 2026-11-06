@@ -436,14 +436,6 @@
   "untilQuitting": "Until quitting",
   "update": "Update…",
   "updateTheHelper": "Update the helper",
-  "helperOutdatedVersion": "Version {version} is outdated.",
-  "@helperOutdatedVersion": {
-    "placeholders": {
-      "version": {
-        "type": "String"
-      }
-    }
-  },
   "whenNoneOfThemConnectsUse": "When none of them connects, use the system's network",
   "whenNoneOfTheseConnectThe": "When none of these connect, the connection goes as macOS routes it",
   "youCanRemoveItInSettings": "You can remove it in Settings at any time.",
@@ -569,9 +561,25 @@
   "@helperNotInstalled": {
     "description": "The helper's state in a word, in Settings."
   },
-  "helperOutdated": "Outdated",
+  "helperOutdated": "Needs update",
   "@helperOutdated": {
-    "description": "The helper's state in a word, in Settings: older than the app. Its version follows."
+    "description": "The helper's state in a word, in Settings: it doesn't match this version of the app and must be updated."
+  },
+  "cantVerifyHelper": "Can't verify helper",
+  "@cantVerifyHelper": {
+    "description": "The routing state in the window's corner, the panel and Settings when Pith can't confirm the installed helper is the one it ships. Not a stopped state."
+  },
+  "pithCanTVerifyItsHelper": "Pith can't confirm the installed helper is the one it ships, so it won't use it. Reinstall the helper in Settings, or reinstall Pith.",
+  "@pithCanTVerifyItsHelper": {
+    "description": "A notice, an error and a tooltip when Pith can't verify its helper. Pith neither uses it nor asks for a password by itself."
+  },
+  "reinstall": "Reinstall",
+  "@reinstall": {
+    "description": "A button in Settings that installs the helper again, replacing one Pith can't verify. macOS asks for an administrator's password."
+  },
+  "itDoesnTMatchThisVersion": "It doesn't match this version of Pith. Update it to route.",
+  "@itDoesnTMatchThisVersion": {
+    "description": "Tooltip of the helper's state in Settings when it must be replaced to match this version of the app."
   },
   "helperNotAnswering": "Not answering",
   "@helperNotAnswering": {

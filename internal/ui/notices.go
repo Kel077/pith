@@ -24,7 +24,21 @@ type notice struct {
 // notices are what the rules page and the panel show above everything.
 func (a *App) notices() []notice {
 	var out []notice
-	if a.status.State == api.Failed && a.status.Error != nil {
+	if helperUntrusted(a.status) {
+		// No "Try again" and no password prompt: the fix is an explicit
+		// reinstall in Settings, or of Pith itself.
+		out = append(out, notice{
+			text:   locales.PithCanTVerifyItsHelper(),
+			danger: true,
+			action: locales.Settings(),
+			do: func() {
+				a.page = "settings"
+				if a.OpenWindow != nil {
+					a.OpenWindow()
+				}
+			},
+		})
+	} else if a.status.State == api.Failed && a.status.Error != nil {
 		out = append(out, notice{
 			text:   locales.RoutingStopped() + errorText(a.status.Error),
 			danger: true,
