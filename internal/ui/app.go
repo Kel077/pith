@@ -590,7 +590,7 @@ func (a *App) updateTray() {
 	}
 	title := ""
 	if a.isRunning() && a.cfg.Settings.MenuBarSpeed {
-		title = "↓" + rate(a.status.ReceiveRate)
+		title = "↓" + trayRate(a.status.ReceiveRate)
 	}
 	state := string(a.status.State) + "|" + title
 	if state == a.trayState {

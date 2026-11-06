@@ -2,6 +2,8 @@ package ui
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Kel077/pith/locales"
@@ -32,6 +34,20 @@ func byteSize(n uint64) string {
 
 // rate writes bytes a second: 0 B/s, 1.2 MB/s.
 func rate(n uint64) string { return byteSize(n) + "/s" }
+
+// trayRate writes a rate for the menu bar at one width, as "  12.3 MB/s":
+// always MB/s with one decimal, padded to five places with figure spaces
+// (U+2007), as wide as the menu bar font's digits. A changing rate then
+// never resizes the item and shifts the items beside it. Past 999.9 MB/s
+// it turns to GB/s, the one change of width.
+func trayRate(n uint64) string {
+	v, unit := float64(n)/1e6, "MB/s"
+	if v >= 999.95 {
+		v, unit = v/1000, "GB/s"
+	}
+	s := strconv.FormatFloat(v, 'f', 1, 64)
+	return strings.Repeat(" ", max(0, 5-len(s))) + s + " " + unit
+}
 
 // clock writes a time of today as 14:03:22, of other days with the date.
 func clock(t, now time.Time) string {
