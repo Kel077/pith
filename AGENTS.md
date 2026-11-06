@@ -43,8 +43,8 @@ of both owners.
 
 | Area | Owner |
 | :-- | :-- |
-| `cmd/pith`, `internal/ui`, `internal/mock`, `internal/hotspot`, `internal/keychain`, `locales`, `resources`, `mygo.json`, `docs/DESIGN.md`, the READMEs | Claude: the interface, its design, integration, hotspots |
-| `cmd/pithd`, `internal/client`, `internal/engine/…`, `internal/helper`, `internal/rules`, `internal/netif`, `internal/rib`, `internal/captureprefix`, `internal/testprofile`, `scripts`, `Makefile`, `.github`, `docs/ARCHITECTURE.md`, `docs/ROOT-TEST.md`, `docs/NEXT-ACCEPTANCE.md` | Astra: the engine, the helper, data, builds, CI |
+| `cmd/pith`, `internal/ui`, `internal/mock`, `internal/hotspot`, `internal/keychain`, `locales`, `resources`, `mygo.json`, `docs/DESIGN.md`, the READMEs, `CONTRIBUTING.md`, `CHANGELOG.md`, `.github/ISSUE_TEMPLATE` | Claude: the interface, its design, integration, hotspots, releases |
+| `cmd/pithd`, `internal/client`, `internal/engine/…`, `internal/helper`, `internal/rules`, `internal/netif`, `internal/rib`, `internal/captureprefix`, `internal/testprofile`, `scripts`, `Makefile`, `.github/workflows`, `SECURITY.md`, `docs/ARCHITECTURE.md`, `docs/ROOT-TEST.md`, `docs/NEXT-ACCEPTANCE.md`, `docs/PERFORMANCE.md` | Astra: the engine, the helper, data, builds, CI |
 | `internal/api` | both, by agreement |
 
 ## Git
@@ -54,6 +54,10 @@ of both owners.
   own, which is merged into `main` at milestones.
 - Commit small and often, in English, in the imperative, prefixed by area:
   `engine: …`, `helper: …`, `api: …`, `ui: …`, `docs: …`.
+- Push `main` at milestones, not after every commit: each push runs the
+  macOS CI.
+- Only maintainers open pull requests, and the repository allows no one
+  else to. Outside contributions arrive as issues.
 - Never force-push or rewrite history.
 - Never commit secrets, logs, packet captures, or a real network's
   addresses, interface names or host names.
