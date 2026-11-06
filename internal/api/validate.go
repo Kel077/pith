@@ -11,16 +11,17 @@ import (
 type ErrorCode string
 
 const (
-	ErrHelperMissing  ErrorCode = "helper_missing"  // InstallHelper first
-	ErrHelperOutdated ErrorCode = "helper_outdated" // InstallHelper updates it
-	ErrCanceled       ErrorCode = "canceled"        // the user canceled macOS's password dialog
-	ErrInvalidConfig  ErrorCode = "invalid_config"  // Detail says what
-	ErrNoScene        ErrorCode = "no_scene"        // no scene has that ID
-	ErrRouteConflict  ErrorCode = "route_conflict"  // another app holds routes Pith needs (Detail: which)
-	ErrNetworkLost    ErrorCode = "network_lost"    // SafeStart undid a start that cut the internet
-	ErrUnsupported    ErrorCode = "unsupported"     // Pith can't control that device
-	ErrWrongPassword  ErrorCode = "wrong_password"  // a device refused the password Pith has, or Pith has none
-	ErrInternal       ErrorCode = "internal"
+	ErrHelperMissing   ErrorCode = "helper_missing"   // InstallHelper first
+	ErrHelperOutdated  ErrorCode = "helper_outdated"  // InstallHelper updates it
+	ErrHelperUntrusted ErrorCode = "helper_untrusted" // helper or bundled identity cannot be verified; never ready, stopped or missing
+	ErrCanceled        ErrorCode = "canceled"         // the user canceled macOS's password dialog
+	ErrInvalidConfig   ErrorCode = "invalid_config"   // Detail says what
+	ErrNoScene         ErrorCode = "no_scene"         // no scene has that ID
+	ErrRouteConflict   ErrorCode = "route_conflict"   // another app holds routes Pith needs (Detail: which)
+	ErrNetworkLost     ErrorCode = "network_lost"     // SafeStart undid a start that cut the internet
+	ErrUnsupported     ErrorCode = "unsupported"      // Pith can't control that device
+	ErrWrongPassword   ErrorCode = "wrong_password"   // a device refused the password Pith has, or Pith has none
+	ErrInternal        ErrorCode = "internal"
 )
 
 // Error is an error of the backend with a code the interface translates.
