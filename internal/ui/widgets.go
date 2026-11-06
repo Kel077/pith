@@ -43,25 +43,18 @@ func textIconButton(c *ui.Context, ic *ui.SVG, label string) ui.Element {
 	})
 }
 
-// primaryIconButton is the accent button with an icon before its label.
-func primaryIconButton(c *ui.Context, ic *ui.SVG, label string) ui.Element {
-	return ui.PrimaryButton(c, "").Label(label).Children(func() {
-		ui.Icon(c, ic)
-		ui.Text(c, label).SingleLine()
-	})
-}
-
 // muted is secondary text.
 func muted(c *ui.Context, s string) ui.Element {
 	return ui.Text(c, s).TextColor(c.Theme().TextMuted)
 }
 
-// emptyState fills a page that has nothing to show yet.
+// emptyState fills a page that has nothing to show yet: its icon on a
+// disc of glass, quiet, which leaves the tangerine to the action under it.
 func emptyState(c *ui.Context, ic *ui.SVG, title, body string, actions func()) {
 	t := c.Theme()
 	ui.Column(c).Grow(1).Center().Gap(10).Padding(40).Children(func() {
-		ui.Box(c).Size(64, 64).Radius(999).Material(glass.Glass{Tint: t.Accent.Alpha(0.14)}).Border(1, rim(t)).Center().Children(func() {
-			ui.Icon(c, ic).FontSize(28).TextColor(t.Accent)
+		ui.Box(c).Size(64, 64).Radius(999).Material(glass.Glass{}).Border(1, rim(t)).Center().Children(func() {
+			ui.Icon(c, ic).FontSize(28).TextColor(t.TextMuted)
 		})
 		ui.Text(c, title).FontSize(18).FontWeight(600).MarginY(4)
 		if body != "" {
@@ -193,14 +186,25 @@ func appName(app api.AppRef) string {
 	return strings.TrimSuffix(base, ".app")
 }
 
-// appStack shows up to three apps' icons, overlapping a little.
+// appStack shows the icons of up to three apps in a square of side size,
+// so that a column of them is as wide whatever the number of apps: one
+// app's icon fills the square, and two or three, smaller, overlap down
+// its diagonal, the first in front.
 func (a *App) appStack(c *ui.Context, apps []api.AppRef, size float32) {
-	ui.Row(c).Shrink(0).Children(func() {
-		for i, app := range apps[:min(len(apps), 3)] {
-			e := a.appIconView(c, app, size)
-			if i > 0 {
-				e.Margin(0, 0, 0, -size*0.3)
-			}
+	n := min(len(apps), 3)
+	if n == 1 {
+		a.appIconView(c, apps[0], size)
+		return
+	}
+	icon := size * 0.72
+	if n == 3 {
+		icon = size * 0.64
+	}
+	step := (size - icon) / float32(n-1)
+	ui.Box(c).Size(size, size).Shrink(0).Children(func() {
+		for i := n - 1; i >= 0; i-- { // the last first, behind the others
+			at := step * float32(i)
+			a.appIconView(c, apps[i], icon).Absolute().Left(at).Top(at)
 		}
 	})
 }

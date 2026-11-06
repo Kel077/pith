@@ -53,10 +53,11 @@ func (a *App) rulesView(c *ui.Context) {
 		})
 	}
 	if a.isRunning() && a.status.SceneID != sc.ID {
-		paneRow(c).Margin(0, 32, 12).Padding(10, 10, 10, 16).Gap(10).Children(func() {
+		// Its icon and text stand where the notices' do, above it.
+		paneRow(c).Margin(0, 32, 12).Padding(10, 10, 10, 14).Gap(10).Children(func() {
 			ui.Icon(c, icInfo).TextColor(t.TextMuted)
 			muted(c, locales.OtherSceneRunning(sceneName(a.scene(a.status.SceneID)))).Grow(1)
-			if ui.Button(c, locales.SwitchToScene(sceneName(sc))).Clicked() {
+			if glassCapsuleButton(c, "switch-scene", nil, locales.SwitchToScene(sceneName(sc))).Clicked() {
 				a.start(sc.ID)
 			}
 		})
@@ -65,7 +66,7 @@ func (a *App) rulesView(c *ui.Context) {
 	if len(sc.Rules) == 0 {
 		emptyState(c, icRules, locales.NoRulesYet(), "",
 			func() {
-				if primaryIconButton(c, icPlus, locales.AddRule()).Clicked() {
+				if primaryCapsule(c, "empty-add-rule", icPlus, locales.AddRule()).Clicked() {
 					a.openEditor(id, -1)
 				}
 			})
@@ -102,10 +103,10 @@ func (a *App) loadErrorView(c *ui.Context) {
 	emptyState(c, icAlert, locales.YourRulesCanTBeRead(),
 		errorText(a.loadErr)+" "+locales.PithSavesNothingOverTheFile(),
 		func() {
-			if ui.Button(c, locales.TryAgain()).Clicked() {
+			if glassCapsuleButton(c, "try-again", nil, locales.TryAgain()).Clicked() {
 				a.reload()
 			}
-			if ui.Button(c, locales.StartOver()).Clicked() {
+			if glassCapsuleButton(c, "start-over", nil, locales.StartOver()).Clicked() {
 				a.confirm = &confirmation{
 					title:  locales.StartOverWithNoRules(),
 					action: locales.StartOverConfirm(),
@@ -274,6 +275,8 @@ func (a *App) ruleRow(c *ui.Context, sceneID string, i int, r *api.Rule) {
 			body.Opacity(0.45)
 		}
 		body.Children(func() {
+			// The icons are as wide whatever their number, so that the
+			// rules' names line up.
 			if len(r.Apps) > 0 {
 				a.appStack(c, r.Apps, 28)
 			} else {

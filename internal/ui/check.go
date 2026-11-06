@@ -56,8 +56,9 @@ func (a *App) checkerView(c *ui.Context) {
 	sheet(c, &k.open, 580, func() {
 		sheetTitle(c, locales.CheckAConnection()).Margin(0, 0, 12)
 
+		lw := editorLabelWidth(c, locales.Scene(), locales.App(), locales.Destination(), locales.Protocol())
 		sheetScroll(c, func() {
-			editorRow(c, locales.Scene(), "", func() {
+			editorRow(c, lw, locales.Scene(), "", func() {
 				names := make([]string, len(a.cfg.Scenes))
 				chosen := ""
 				seen := map[string]int{}
@@ -82,13 +83,10 @@ func (a *App) checkerView(c *ui.Context) {
 					}
 				})
 			})
-			editorRow(c, locales.App(), "", func() {
+			editorRow(c, lw, locales.App(), "", func() {
 				ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 					if k.app.Path != "" {
-						a.removableChip(c, func() {
-							a.appIconView(c, k.app, 18)
-							ui.Text(c, appName(k.app)).SingleLine().AlignSelf(ui.Baseline) // the label lines up with it
-						}, func() { k.app = api.AppRef{} })
+						a.appChip(c, k.app, func() { k.app = api.AppRef{} })
 					} else {
 						ui.Text(c, locales.AnyApp()).TextColor(t.TextMuted).Padding(0, 4, 0, 2)
 					}
@@ -99,13 +97,13 @@ func (a *App) checkerView(c *ui.Context) {
 					a.appPickerPopover(c, pick, &k.picker, func(app api.AppRef) { k.app = app })
 				})
 			})
-			editorRow(c, locales.Destination(), "", func() {
+			editorRow(c, lw, locales.Destination(), "", func() {
 				if sheetInput(c, ui.TextInput(c.Key("check-target"), &k.target)).Placeholder(locales.ADomainAnIpAddressOr()).AutoFocus().Submitted() {
 					a.runCheck()
 				}
 				sheetInput(c, ui.TextInput(c.Key("check-address"), &k.address)).Placeholder(locales.ActualIpOptionalElseLookedUp())
 			})
-			editorRow(c, locales.Protocol(), "", func() {
+			editorRow(c, lw, locales.Protocol(), "", func() {
 				ui.Row(c).Children(func() {
 					editorSegmented(c, "protocol", locales.Protocol(), &k.protocol, []string{"TCP", "UDP"}, nil, nil)
 				})

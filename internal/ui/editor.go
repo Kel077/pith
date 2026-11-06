@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -123,14 +124,14 @@ func (a *App) editorView(c *ui.Context) {
 			return ps
 		}
 
+		// Every label the form may show, so that its controls don't move as
+		// rows come and go.
+		lw := editorLabelWidth(c, locales.Apps(), locales.Destinations(), locales.Protocol(), locales.Action(), locales.Interfaces(), locales.Note())
 		sheetScroll(c, func() {
-			editorRow(c, locales.Apps(), locales.LeaveEmptyForEveryAppAn(), func() {
+			editorRow(c, lw, locales.Apps(), locales.LeaveEmptyForEveryAppAn(), func() {
 				ui.Row(c).Gap(6).Wrap().AlignItems(ui.Center).Children(func() {
 					for k, app := range e.rule.Apps {
-						a.removableChip(c, func() {
-							a.appIconView(c, app, 18)
-							ui.Text(c, appName(app)).SingleLine().AlignSelf(ui.Baseline) // the label lines up with it
-						}, func() { e.rule.Apps = slices.Delete(e.rule.Apps, k, k+1) })
+						a.appChip(c, app, func() { e.rule.Apps = slices.Delete(e.rule.Apps, k, k+1) })
 					}
 					if len(e.rule.Apps) == 0 {
 						ui.Text(c, locales.EveryApp()).TextColor(t.TextMuted).Padding(0, 4, 0, 2)
@@ -148,7 +149,7 @@ func (a *App) editorView(c *ui.Context) {
 				})
 			})
 
-			editorRow(c, locales.Destinations(), locales.TargetPlaceholder(), func() {
+			editorRow(c, lw, locales.Destinations(), locales.TargetPlaceholder(), func() {
 				if len(e.targets) > 0 {
 					ui.Row(c).Gap(6).Wrap().AlignItems(ui.Center).Children(func() {
 						for k, s := range e.targets {
@@ -195,13 +196,13 @@ func (a *App) editorView(c *ui.Context) {
 				})
 			})
 
-			editorRow(c, locales.Protocol(), "", func() {
+			editorRow(c, lw, locales.Protocol(), "", func() {
 				ui.Row(c).Children(func() {
 					editorSegmented(c, "protocol", locales.Protocol(), &e.protocol, []string{locales.TcpAndUdp(), "TCP", "UDP"}, nil, nil)
 				})
 			})
 
-			editorRow(c, locales.Action(), "", func() {
+			editorRow(c, lw, locales.Action(), "", func() {
 				ui.Row(c).Children(func() {
 					editorSegmented(c, "action", locales.Action(), &e.action, []string{locales.RouteThrough(), locales.Block()},
 						[]*ui.SVG{icArrow, icBlock}, []string{"", locales.NewMatchingConnectionsAreRefusedConnections()})
@@ -209,18 +210,18 @@ func (a *App) editorView(c *ui.Context) {
 			})
 
 			if e.action == 0 {
-				editorRow(c, locales.Interfaces(), locales.TriedFromTheTopTheNext(), func() {
+				editorRow(c, lw, locales.Interfaces(), locales.TriedFromTheTopTheNext(), func() {
 					a.viaEditor(c, e, len(show("via")) > 0)
 					ui.Checkbox(c, &e.rule.Fallback, locales.WhenNoneOfThemConnectsUse())
 				})
 			}
 
-			editorRow(c, locales.Note(), "", func() {
+			editorRow(c, lw, locales.Note(), "", func() {
 				sheetInput(c, ui.TextInput(c.Key("note"), &e.rule.Note)).Placeholder(locales.OptionalEGNas())
 			})
 
 			if e.tried && len(problems) > 0 {
-				ui.Row(c).Gap(6).Margin(6, 0, 0, editorLabelWidth+16).Children(func() {
+				ui.Row(c).Gap(6).Margin(6, 0, 0, lw+editorLabelGap).Children(func() {
 					ui.Icon(c, icAlert).FontSize(14).TextColor(t.Danger)
 					ui.Text(c, problemText(problems[0])).TextColor(t.Danger).FontSize(12)
 				})
@@ -254,24 +255,24 @@ func (a *App) editorView(c *ui.Context) {
 }
 
 // subdomainToggle is the chip's switch of whether a domain includes its
-// subdomains: a small pill, lit in the accent while it does. It reports a
-// click.
+// subdomains: a small pill, filled while it does and outlined while it
+// doesn't, in the quiet tones of a tag, the accent being for actions. It
+// keeps its size either way, and reports a click.
 func subdomainToggle(c *ui.Context, k int, on bool) bool {
 	t := c.Theme()
 	label := locales.Subdomains()
 	pill := ui.Row(c.Key(fmt.Sprint("sub-", k))).Padding(2, 8).Radius(999).Cursor(ui.CursorPointer).Label(label)
 	if on {
-		pill.Background(t.Accent.Alpha(0.14)).Tooltip(locales.IncludesItsSubdomainsClickForThis())
+		fill := t.TextMuted.Alpha(0.12)
+		if t.Dark {
+			fill = t.TextMuted.Alpha(0.2)
+		}
+		pill.Background(fill).Border(1, ui.Transparent).Tooltip(locales.IncludesItsSubdomainsClickForThis())
 	} else {
 		pill.Border(1, subtle(t, 0.14)).Tooltip(locales.ThisDomainAloneClickToInclude())
 	}
 	pill.Children(func() {
-		text := ui.Text(c, label).FontSize(11).FontWeight(500).SingleLine()
-		if on {
-			text.TextColor(t.Accent)
-		} else {
-			text.TextColor(t.TextMuted)
-		}
+		ui.Text(c, label).FontSize(11).FontWeight(500).TextColor(t.TextMuted).SingleLine()
 	})
 	return pill.Clicked()
 }
@@ -313,11 +314,13 @@ func (a *App) viaEditor(c *ui.Context, e *editor, missing bool) {
 	if missing {
 		box.Border(1, t.Danger.Alpha(0.7))
 	}
+	// Each row: the ordinal, in a column of its own, then the chip.
+	const inset, ordinal, gap = 14, 12, 10
 	box.Children(func() {
 		for k, v := range e.rule.Via {
 			i := a.iface(v)
-			ui.Row(c.Key("via-"+strconv.Itoa(k)+"-"+v.Name)).Gap(10).Padding(7, 8, 7, 14).Children(func() {
-				ui.Text(c, strconv.Itoa(k+1)).FontSize(12).FontWeight(600).TextColor(t.TextMuted).Width(12)
+			ui.Row(c.Key("via-"+strconv.Itoa(k)+"-"+v.Name)).Gap(gap).Padding(7, 8, 7, inset).Children(func() {
+				ui.Text(c, strconv.Itoa(k+1)).FontSize(12).FontWeight(600).TextColor(t.TextMuted).Width(ordinal)
 				a.ifaceChip(c, v)
 				state := locales.NotConnected()
 				if i != nil && i.Up {
@@ -337,7 +340,8 @@ func (a *App) viaEditor(c *ui.Context, e *editor, missing bool) {
 				}
 			})
 		}
-		ui.Row(c).Padding(7, 8).Gap(10).Children(func() {
+		// The button stands in the chips' column, under them.
+		ui.Row(c).Padding(7, 8, 7, inset+ordinal+gap).Gap(gap).Children(func() {
 			editorAddButton(c, "add-interface", locales.AddInterface()).Menu(func(m *ui.Menu) {
 				for _, i := range a.visibleIfaces() {
 					ref := refOf(i)
@@ -360,15 +364,29 @@ func (a *App) viaEditor(c *ui.Context, e *editor, missing bool) {
 	})
 }
 
-// editorLabelWidth is the width of the labels of a sheet's form.
-const editorLabelWidth = 76
+// editorLabelGap is the room between the labels of a sheet's form and
+// their controls.
+const editorLabelGap = 16
 
-// editorRow is a row of a sheet's form: its label on the left, level with
-// the first line of its control, which tip, if any, explains on hover.
-func editorRow(c *ui.Context, label, tip string, body func()) {
+// editorLabelWidth is the width of the column of the labels of a sheet's
+// form: that of the widest of labels, as the language shown writes them,
+// so that the controls stand as near their labels in every language.
+func editorLabelWidth(c *ui.Context, labels ...string) float32 {
+	var w float32
+	for _, l := range labels {
+		lw, _ := c.MeasureText(0, ui.Span{Text: l})
+		w = max(w, lw)
+	}
+	return float32(math.Ceil(float64(w)))
+}
+
+// editorRow is a row of a sheet's form: its label on the left, in a
+// column labelWidth wide (editorLabelWidth), level with the first line of
+// its control, which tip, if any, explains on hover.
+func editorRow(c *ui.Context, labelWidth float32, label, tip string, body func()) {
 	t := c.Theme()
-	ui.Row(c).Gap(16).AlignItems(ui.Baseline).PaddingY(7).Children(func() {
-		l := ui.Text(c, label).Width(editorLabelWidth).TextColor(t.TextMuted).Shrink(0)
+	ui.Row(c).Gap(editorLabelGap).AlignItems(ui.Baseline).PaddingY(7).Children(func() {
+		l := ui.Text(c, label).MinWidth(labelWidth).TextColor(t.TextMuted).Shrink(0)
 		if tip != "" {
 			l.Tooltip(tip)
 		}
@@ -453,6 +471,18 @@ func sheetQuietDanger(c *ui.Context, key string, ic *ui.SVG, label string) ui.El
 		ui.Text(c, label).FontWeight(500).TextColor(t.Danger).SingleLine()
 	})
 	return b
+}
+
+// appChip shows an app as a chip that removes it: its icon, and its name
+// centered on it. The name's line is as high as the icon, and aligned by
+// its baseline, which makes that baseline the chip's: the label of the
+// form's row, and the chips and buttons beside it, line up with it.
+func (a *App) appChip(c *ui.Context, app api.AppRef, remove func()) {
+	const icon = 18
+	a.removableChip(c, func() {
+		a.appIconView(c, app, icon)
+		ui.Text(c, appName(app)).SingleLine().FixedLineHeight(icon).AlignSelf(ui.Baseline)
+	}, remove)
 }
 
 // removableChip is a soft pill with a button that removes it.
