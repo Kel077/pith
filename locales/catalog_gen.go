@@ -288,11 +288,11 @@ func (msgs Messages) ByRuleNumber(number int) string {
 	return Catalog.Format(msgs.locale, "byRuleNumber", map[string]any{"number": number})
 }
 
-// CanTConnectNoInterfaceOf says "Can't connect: no interface of its rule is up"
+// CanTConnectNoInterfaceOf says "Can’t connect: no interface of its rule is up"
 // in the language the app shows.
 func CanTConnectNoInterfaceOf() string { return In(i18n.Locale()).CanTConnectNoInterfaceOf() }
 
-// CanTConnectNoInterfaceOf says "Can't connect: no interface of its rule is up"
+// CanTConnectNoInterfaceOf says "Can’t connect: no interface of its rule is up"
 // in the language of msgs.
 func (msgs Messages) CanTConnectNoInterfaceOf() string {
 	return Catalog.Format(msgs.locale, "canTConnectNoInterfaceOf", nil)
@@ -882,11 +882,11 @@ func (msgs Messages) ItOnlyRoutesWhileYouTurn() string {
 	return Catalog.Format(msgs.locale, "itOnlyRoutesWhileYouTurn", nil)
 }
 
-// ItsRuleSFirstInterfaceDidn says "Its rule's first interface didn't connect"
+// ItsRuleSFirstInterfaceDidn says "Its rule’s first interface didn’t connect"
 // in the language the app shows.
 func ItsRuleSFirstInterfaceDidn() string { return In(i18n.Locale()).ItsRuleSFirstInterfaceDidn() }
 
-// ItsRuleSFirstInterfaceDidn says "Its rule's first interface didn't connect"
+// ItsRuleSFirstInterfaceDidn says "Its rule’s first interface didn’t connect"
 // in the language of msgs.
 func (msgs Messages) ItsRuleSFirstInterfaceDidn() string {
 	return Catalog.Format(msgs.locale, "itsRuleSFirstInterfaceDidn", nil)
@@ -952,11 +952,11 @@ func (msgs Messages) LanguageSystem() string {
 	return Catalog.Format(msgs.locale, "languageSystem", nil)
 }
 
-// LeaveEmptyForEveryAppAn says "Leave empty for every app. An app's helpers and the system services that work for it match too."
+// LeaveEmptyForEveryAppAn says "Leave empty for every app. An app’s helpers and the system services that work for it match too."
 // in the language the app shows.
 func LeaveEmptyForEveryAppAn() string { return In(i18n.Locale()).LeaveEmptyForEveryAppAn() }
 
-// LeaveEmptyForEveryAppAn says "Leave empty for every app. An app's helpers and the system services that work for it match too."
+// LeaveEmptyForEveryAppAn says "Leave empty for every app. An app’s helpers and the system services that work for it match too."
 // in the language of msgs.
 func (msgs Messages) LeaveEmptyForEveryAppAn() string {
 	return Catalog.Format(msgs.locale, "leaveEmptyForEveryAppAn", nil)
@@ -1238,21 +1238,21 @@ func (msgs Messages) NoNetworkIsConnected() string {
 	return Catalog.Format(msgs.locale, "noNetworkIsConnected", nil)
 }
 
-// NoRuleMatchedTheSystemS says "No rule matched: the system's network"
+// NoRuleMatchedTheSystemS says "No rule matched: the system’s network"
 // in the language the app shows.
 func NoRuleMatchedTheSystemS() string { return In(i18n.Locale()).NoRuleMatchedTheSystemS() }
 
-// NoRuleMatchedTheSystemS says "No rule matched: the system's network"
+// NoRuleMatchedTheSystemS says "No rule matched: the system’s network"
 // in the language of msgs.
 func (msgs Messages) NoRuleMatchedTheSystemS() string {
 	return Catalog.Format(msgs.locale, "noRuleMatchedTheSystemS", nil)
 }
 
-// NoRuleMatchesTheSystemS says "no rule matches: the system's routing"
+// NoRuleMatchesTheSystemS says "no rule matches: the system’s routing"
 // in the language the app shows.
 func NoRuleMatchesTheSystemS() string { return In(i18n.Locale()).NoRuleMatchesTheSystemS() }
 
-// NoRuleMatchesTheSystemS says "no rule matches: the system's routing"
+// NoRuleMatchesTheSystemS says "no rule matches: the system’s routing"
 // in the language of msgs.
 func (msgs Messages) NoRuleMatchesTheSystemS() string {
 	return Catalog.Format(msgs.locale, "noRuleMatchesTheSystemS", nil)
@@ -1278,11 +1278,11 @@ func (msgs Messages) NoTrafficInThisPeriod() string {
 	return Catalog.Format(msgs.locale, "noTrafficInThisPeriod", nil)
 }
 
-// NoneOfItsRuleSInterfaces says "None of its rule's interfaces connected"
+// NoneOfItsRuleSInterfaces says "None of its rule’s interfaces connected"
 // in the language the app shows.
 func NoneOfItsRuleSInterfaces() string { return In(i18n.Locale()).NoneOfItsRuleSInterfaces() }
 
-// NoneOfItsRuleSInterfaces says "None of its rule's interfaces connected"
+// NoneOfItsRuleSInterfaces says "None of its rule’s interfaces connected"
 // in the language of msgs.
 func (msgs Messages) NoneOfItsRuleSInterfaces() string {
 	return Catalog.Format(msgs.locale, "noneOfItsRuleSInterfaces", nil)
@@ -1386,11 +1386,11 @@ func (msgs Messages) OffQuittingPithStopsRouting() string {
 	return Catalog.Format(msgs.locale, "offQuittingPithStopsRouting", nil)
 }
 
-// OnlyWhatPithRoutedTheBytes says "Only what Pith routed: the bytes apps sent and received, without the network's own overhead."
+// OnlyWhatPithRoutedTheBytes says "Only what Pith routed: the bytes apps sent and received, without the network’s own overhead."
 // in the language the app shows.
 func OnlyWhatPithRoutedTheBytes() string { return In(i18n.Locale()).OnlyWhatPithRoutedTheBytes() }
 
-// OnlyWhatPithRoutedTheBytes says "Only what Pith routed: the bytes apps sent and received, without the network's own overhead."
+// OnlyWhatPithRoutedTheBytes says "Only what Pith routed: the bytes apps sent and received, without the network’s own overhead."
 // in the language of msgs.
 func (msgs Messages) OnlyWhatPithRoutedTheBytes() string {
 	return Catalog.Format(msgs.locale, "onlyWhatPithRoutedTheBytes", nil)
@@ -2246,11 +2246,11 @@ func (msgs Messages) TheHelperNeedsAnUpdate() string {
 	return Catalog.Format(msgs.locale, "theHelperNeedsAnUpdate", nil)
 }
 
-// TheseSettingsCanTBeSaved says "These settings can't be saved."
+// TheseSettingsCanTBeSaved says "These settings can’t be saved."
 // in the language the app shows.
 func TheseSettingsCanTBeSaved() string { return In(i18n.Locale()).TheseSettingsCanTBeSaved() }
 
-// TheseSettingsCanTBeSaved says "These settings can't be saved."
+// TheseSettingsCanTBeSaved says "These settings can’t be saved."
 // in the language of msgs.
 func (msgs Messages) TheseSettingsCanTBeSaved() string {
 	return Catalog.Format(msgs.locale, "theseSettingsCanTBeSaved", nil)
@@ -2286,11 +2286,11 @@ func (msgs Messages) Traffic() string {
 	return Catalog.Format(msgs.locale, "traffic", nil)
 }
 
-// TriedFromTheTopTheNext says "Tried from the top: the next one when one can't connect."
+// TriedFromTheTopTheNext says "Tried from the top: the next one when one can’t connect."
 // in the language the app shows.
 func TriedFromTheTopTheNext() string { return In(i18n.Locale()).TriedFromTheTopTheNext() }
 
-// TriedFromTheTopTheNext says "Tried from the top: the next one when one can't connect."
+// TriedFromTheTopTheNext says "Tried from the top: the next one when one can’t connect."
 // in the language of msgs.
 func (msgs Messages) TriedFromTheTopTheNext() string {
 	return Catalog.Format(msgs.locale, "triedFromTheTopTheNext", nil)
@@ -2436,11 +2436,11 @@ func (msgs Messages) UpdateTheHelper() string {
 	return Catalog.Format(msgs.locale, "updateTheHelper", nil)
 }
 
-// WhenNoneOfThemConnectsUse says "When none of them connects, use the system's network"
+// WhenNoneOfThemConnectsUse says "When none of them connects, use the system’s network"
 // in the language the app shows.
 func WhenNoneOfThemConnectsUse() string { return In(i18n.Locale()).WhenNoneOfThemConnectsUse() }
 
-// WhenNoneOfThemConnectsUse says "When none of them connects, use the system's network"
+// WhenNoneOfThemConnectsUse says "When none of them connects, use the system’s network"
 // in the language of msgs.
 func (msgs Messages) WhenNoneOfThemConnectsUse() string {
 	return Catalog.Format(msgs.locale, "whenNoneOfThemConnectsUse", nil)
@@ -2466,11 +2466,11 @@ func (msgs Messages) YouCanRemoveItInSettings() string {
 	return Catalog.Format(msgs.locale, "youCanRemoveItInSettings", nil)
 }
 
-// YourRulesCanTBeRead says "Your rules can't be read"
+// YourRulesCanTBeRead says "Your rules can’t be read"
 // in the language the app shows.
 func YourRulesCanTBeRead() string { return In(i18n.Locale()).YourRulesCanTBeRead() }
 
-// YourRulesCanTBeRead says "Your rules can't be read"
+// YourRulesCanTBeRead says "Your rules can’t be read"
 // in the language of msgs.
 func (msgs Messages) YourRulesCanTBeRead() string {
 	return Catalog.Format(msgs.locale, "yourRulesCanTBeRead", nil)
@@ -2712,7 +2712,7 @@ func (msgs Messages) HelperOutdated() string {
 	return Catalog.Format(msgs.locale, "helperOutdated", nil)
 }
 
-// CantVerifyHelper says "Can't verify helper"
+// CantVerifyHelper says "Can’t verify helper"
 // in the language the app shows.
 //
 // The routing state in the window's corner, the panel and Settings when
@@ -2720,7 +2720,7 @@ func (msgs Messages) HelperOutdated() string {
 // stopped state.
 func CantVerifyHelper() string { return In(i18n.Locale()).CantVerifyHelper() }
 
-// CantVerifyHelper says "Can't verify helper"
+// CantVerifyHelper says "Can’t verify helper"
 // in the language of msgs.
 //
 // The routing state in the window's corner, the panel and Settings when
@@ -2730,14 +2730,14 @@ func (msgs Messages) CantVerifyHelper() string {
 	return Catalog.Format(msgs.locale, "cantVerifyHelper", nil)
 }
 
-// PithCanTVerifyItsHelper says "Pith can't confirm the installed helper is the one it ships, so it won't use it. Reinstall the helper in Settings, or…"
+// PithCanTVerifyItsHelper says "Pith can’t confirm the installed helper is the one it ships, so it won’t use it. Reinstall the helper in Settings…"
 // in the language the app shows.
 //
 // A notice, an error and a tooltip when Pith can't verify its helper. Pith
 // neither uses it nor asks for a password by itself.
 func PithCanTVerifyItsHelper() string { return In(i18n.Locale()).PithCanTVerifyItsHelper() }
 
-// PithCanTVerifyItsHelper says "Pith can't confirm the installed helper is the one it ships, so it won't use it. Reinstall the helper in Settings, or…"
+// PithCanTVerifyItsHelper says "Pith can’t confirm the installed helper is the one it ships, so it won’t use it. Reinstall the helper in Settings…"
 // in the language of msgs.
 //
 // A notice, an error and a tooltip when Pith can't verify its helper. Pith
@@ -2762,14 +2762,14 @@ func (msgs Messages) Reinstall() string {
 	return Catalog.Format(msgs.locale, "reinstall", nil)
 }
 
-// ItDoesnTMatchThisVersion says "It doesn't match this version of Pith. Update it to route."
+// ItDoesnTMatchThisVersion says "It doesn’t match this version of Pith. Update it to route."
 // in the language the app shows.
 //
 // Tooltip of the helper's state in Settings when it must be replaced to
 // match this version of the app.
 func ItDoesnTMatchThisVersion() string { return In(i18n.Locale()).ItDoesnTMatchThisVersion() }
 
-// ItDoesnTMatchThisVersion says "It doesn't match this version of Pith. Update it to route."
+// ItDoesnTMatchThisVersion says "It doesn’t match this version of Pith. Update it to route."
 // in the language of msgs.
 //
 // Tooltip of the helper's state in Settings when it must be replaced to
@@ -2794,14 +2794,14 @@ func (msgs Messages) HelperNotAnsweringState() string {
 	return Catalog.Format(msgs.locale, "helperNotAnsweringState", nil)
 }
 
-// TheHelperIsnTAnswering says "The helper isn't answering. Pith keeps trying; if it doesn't come back, repair it in Settings."
+// TheHelperIsnTAnswering says "The helper isn’t answering. Pith keeps trying; if it doesn’t come back, repair it in Settings."
 // in the language the app shows.
 //
 // A notice and error message when the installed helper doesn't answer. Try
 // Again asks at once, without a password.
 func TheHelperIsnTAnswering() string { return In(i18n.Locale()).TheHelperIsnTAnswering() }
 
-// TheHelperIsnTAnswering says "The helper isn't answering. Pith keeps trying; if it doesn't come back, repair it in Settings."
+// TheHelperIsnTAnswering says "The helper isn’t answering. Pith keeps trying; if it doesn’t come back, repair it in Settings."
 // in the language of msgs.
 //
 // A notice and error message when the installed helper doesn't answer. Try
@@ -3052,11 +3052,11 @@ func (msgs Messages) Roaming() string {
 	return Catalog.Format(msgs.locale, "roaming", nil)
 }
 
-// PithCanTControlThisDevice says "Pith can't control this device."
+// PithCanTControlThisDevice says "Pith can’t control this device."
 // in the language the app shows.
 func PithCanTControlThisDevice() string { return In(i18n.Locale()).PithCanTControlThisDevice() }
 
-// PithCanTControlThisDevice says "Pith can't control this device."
+// PithCanTControlThisDevice says "Pith can’t control this device."
 // in the language of msgs.
 func (msgs Messages) PithCanTControlThisDevice() string {
 	return Catalog.Format(msgs.locale, "pithCanTControlThisDevice", nil)

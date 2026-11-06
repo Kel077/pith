@@ -45,7 +45,7 @@
       }
     }
   },
-  "canTConnectNoInterfaceOf": "Can't connect: no interface of its rule is up",
+  "canTConnectNoInterfaceOf": "Can’t connect: no interface of its rule is up",
   "cancel": "Cancel",
   "canceled": "Canceled.",
   "check": "Check",
@@ -170,7 +170,7 @@
   },
   "itNeverReadsWhatAppsSend": "It never reads what apps send: no decryption, nothing uploaded.",
   "itOnlyRoutesWhileYouTurn": "It only routes while you turn routing on.",
-  "itsRuleSFirstInterfaceDidn": "Its rule's first interface didn't connect",
+  "itsRuleSFirstInterfaceDidn": "Its rule’s first interface didn’t connect",
   "deleteSceneBody": "{count, plural, =0 {It has no rules.} one {Its rule goes with it.} other {Its # rules go with it.}}",
   "@deleteSceneBody": {
     "placeholders": {
@@ -184,7 +184,7 @@
   "keepTheConnectionLog": "Keep the connection log",
   "language": "Language",
   "languageSystem": "System",
-  "leaveEmptyForEveryAppAn": "Leave empty for every app. An app's helpers and the system services that work for it match too.",
+  "leaveEmptyForEveryAppAn": "Leave empty for every app. An app’s helpers and the system services that work for it match too.",
   "macosSendsConnectionsNoRuleMatches": "macOS sends connections no rule matches here",
   "matchesButAnotherRuleDecides": "Matches, but another rule decides",
   "matchesDecides": "Matches — decides",
@@ -247,11 +247,11 @@
   "noConnectionsYet": "No connections yet.",
   "noInternet": "No internet",
   "noNetworkIsConnected": "No network is connected.",
-  "noRuleMatchedTheSystemS": "No rule matched: the system's network",
-  "noRuleMatchesTheSystemS": "no rule matches: the system's routing",
+  "noRuleMatchedTheSystemS": "No rule matched: the system’s network",
+  "noRuleMatchesTheSystemS": "no rule matches: the system’s routing",
   "noRulesYet": "No rules yet",
   "noTrafficInThisPeriod": "No traffic in this period.",
-  "noneOfItsRuleSInterfaces": "None of its rule's interfaces connected",
+  "noneOfItsRuleSInterfaces": "None of its rule’s interfaces connected",
   "notADomainIpAddressOr": "Not a domain, IP address or range",
   "notConnected": "Not connected",
   "notConnectedLower": "not connected",
@@ -264,7 +264,7 @@
   },
   "note": "Note",
   "offQuittingPithStopsRouting": "Off: quitting Pith stops routing.",
-  "onlyWhatPithRoutedTheBytes": "Only what Pith routed: the bytes apps sent and received, without the network's own overhead.",
+  "onlyWhatPithRoutedTheBytes": "Only what Pith routed: the bytes apps sent and received, without the network’s own overhead.",
   "connectionOpen": "Open",
   "appOpenCount": "{count} open",
   "@appOpenCount": {
@@ -418,11 +418,11 @@
   },
   "theHelperIsNotInstalled": "The helper is not installed.",
   "theHelperNeedsAnUpdate": "The helper needs an update.",
-  "theseSettingsCanTBeSaved": "These settings can't be saved.",
+  "theseSettingsCanTBeSaved": "These settings can’t be saved.",
   "thisDomainAloneClickToInclude": "This domain alone: click to include its subdomains",
   "time": "Time",
   "traffic": "Traffic",
-  "triedFromTheTopTheNext": "Tried from the top: the next one when one can't connect.",
+  "triedFromTheTopTheNext": "Tried from the top: the next one when one can’t connect.",
   "tryAgain": "Try Again",
   "turnOnDomains": "Turn On",
   "turnOnRouting": "Turn On",
@@ -444,10 +444,10 @@
   "untilQuitting": "Until quitting",
   "update": "Update…",
   "updateTheHelper": "Update the helper",
-  "whenNoneOfThemConnectsUse": "When none of them connects, use the system's network",
+  "whenNoneOfThemConnectsUse": "When none of them connects, use the system’s network",
   "whenNoneOfTheseConnectThe": "When none of these connect, the connection goes as macOS routes it",
   "youCanRemoveItInSettings": "You can remove it in Settings at any time.",
-  "yourRulesCanTBeRead": "Your rules can't be read",
+  "yourRulesCanTBeRead": "Your rules can’t be read",
   "resolvedTo": "Resolved to {addresses}",
   "@resolvedTo": {
     "placeholders": {
@@ -573,11 +573,11 @@
   "@helperOutdated": {
     "description": "The helper's state in a word, in Settings: it doesn't match this version of the app and must be updated."
   },
-  "cantVerifyHelper": "Can't verify helper",
+  "cantVerifyHelper": "Can’t verify helper",
   "@cantVerifyHelper": {
     "description": "The routing state in the window's corner, the panel and Settings when Pith can't confirm the installed helper is the one it ships. Not a stopped state."
   },
-  "pithCanTVerifyItsHelper": "Pith can't confirm the installed helper is the one it ships, so it won't use it. Reinstall the helper in Settings, or reinstall Pith.",
+  "pithCanTVerifyItsHelper": "Pith can’t confirm the installed helper is the one it ships, so it won’t use it. Reinstall the helper in Settings, or reinstall Pith.",
   "@pithCanTVerifyItsHelper": {
     "description": "A notice, an error and a tooltip when Pith can't verify its helper. Pith neither uses it nor asks for a password by itself."
   },
@@ -585,7 +585,7 @@
   "@reinstall": {
     "description": "A button in Settings that installs the helper again, replacing one Pith can't verify. macOS asks for an administrator's password."
   },
-  "itDoesnTMatchThisVersion": "It doesn't match this version of Pith. Update it to route.",
+  "itDoesnTMatchThisVersion": "It doesn’t match this version of Pith. Update it to route.",
   "@itDoesnTMatchThisVersion": {
     "description": "Tooltip of the helper's state in Settings when it must be replaced to match this version of the app."
   },
@@ -593,7 +593,7 @@
   "@helperNotAnsweringState": {
     "description": "The routing state in the window's corner and the panel when the installed helper doesn't answer. What it routes is unknown, so not a stopped state."
   },
-  "theHelperIsnTAnswering": "The helper isn't answering. Pith keeps trying; if it doesn't come back, repair it in Settings.",
+  "theHelperIsnTAnswering": "The helper isn’t answering. Pith keeps trying; if it doesn’t come back, repair it in Settings.",
   "@theHelperIsnTAnswering": {
     "description": "A notice and error message when the installed helper doesn't answer. Try Again asks at once, without a password."
   },
@@ -666,7 +666,7 @@
     }
   },
   "roaming": "Roaming",
-  "pithCanTControlThisDevice": "Pith can't control this device.",
+  "pithCanTControlThisDevice": "Pith can’t control this device.",
   "theHotspotRefusedItsPassword": "The hotspot refused its admin password.",
   "localProxies": "Local proxies",
   "@localProxies": {
