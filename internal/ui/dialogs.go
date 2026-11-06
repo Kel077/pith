@@ -184,11 +184,16 @@ func onSheet(c *ui.Context, b ui.Element) ui.Element {
 // sheetPrimary is the main action of a sheet: the tangerine capsule,
 // faded while it can't be taken.
 func sheetPrimary(c *ui.Context, key, label string, disabled bool) ui.Element {
-	b := primaryCapsule(c, key, nil, label).Padding(8, 20).Center().Focusable().Disabled(disabled)
 	if disabled {
-		b.Opacity(0.5).Cursor(ui.CursorDefault)
+		// As macOS shows a default button that can't be pressed yet: a quiet
+		// capsule with dim text, rather than tangerine faded past reading.
+		t := c.Theme()
+		b := ui.Row(c.Key(key)).Padding(8, 20).Radius(999).Center().Label(label).Disabled(true).
+			Background(subtle(t, 0.06)).Border(1, subtle(t, 0.08))
+		b.Children(func() { ui.Text(c, label).FontWeight(600).TextColor(t.TextMuted).SingleLine() })
+		return b
 	}
-	return b
+	return primaryCapsule(c, key, nil, label).Padding(8, 20).Center().Focusable()
 }
 
 // sheetDangerGradient is the fill of an action that destroys something:

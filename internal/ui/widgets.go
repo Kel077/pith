@@ -151,6 +151,8 @@ func tagChip(c *ui.Context, ic *ui.SVG, s string, col ui.Color) ui.Element {
 	fill := col.Alpha(0.12)
 	if t.Dark {
 		fill = col.Alpha(0.2)
+		// On the dark background its own shade reads dim: a lighter one.
+		col = col.Mix(ui.Hex("#ffffff"), 0.3)
 	}
 	return ui.Row(c).Gap(5).Padding(3, 9, 3, 8).Radius(999).Background(fill).Shrink(0).Children(func() {
 		if ic != nil {
