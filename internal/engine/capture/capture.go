@@ -55,8 +55,9 @@ type Options struct {
 	DNS              []netip.Addr
 	ExpectedPrefixes []netip.Prefix // optional frozen test scope; checked before creating any utun
 	StatePath        string
-	Driver           Driver       // nil: the native macOS implementation
-	Diagnostic       func(string) // bounded address-free ownership evidence
+	Driver           Driver                             // nil: the native macOS implementation
+	Diagnostic       func(string)                       // bounded address-free ownership evidence
+	Trace            func(string, time.Duration, error) // in-memory lifecycle steps; never blocks cleanup on disk I/O
 }
 
 type journal struct {
@@ -260,38 +261,55 @@ func (c *Capture) closeLocked() error {
 		c.active.Store(false)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		current, err := c.opts.Driver.Snapshot()
+		started := time.Now()
+		c.trace("capture.close.snapshot-before.begin", started, nil)
+		current, err := c.closeSnapshot(ctx)
+		c.trace("capture.close.snapshot-before", started, err)
 		var failures []error
-		if err != nil {
-			failures = append(failures, err)
-		} else {
+		// An unavailable pre-close view cannot authorize route deletion. Close our
+		// own device immediately instead; a fresh post-close view must prove cleanup.
+		if err == nil {
 			for i := len(c.Plan.Prefixes) - 1; i >= 0; i-- {
 				prefix := c.Plan.Prefixes[i]
 				if slices.ContainsFunc(current, func(r Route) bool {
 					return !r.Scoped && r.Interface == c.Name && r.Index == c.state.Index && r.Prefix == prefix
 				}) {
-					if err := c.opts.Driver.Delete(ctx, prefix, c.Name); err != nil {
-						failures = append(failures, err)
+					started := time.Now()
+					phase := fmt.Sprintf("capture.close.delete-%d", i)
+					c.trace(phase+".begin", started, nil)
+					err := c.opts.Driver.Delete(ctx, prefix, c.Name)
+					c.trace(phase, started, err)
+					if err != nil {
+						failures = append(failures, fmt.Errorf("delete capture route %d: %w", i, err))
 					}
 				}
 			}
 		}
-		if err := c.Device.Close(); err != nil {
+		started = time.Now()
+		c.trace("capture.close.device.begin", started, nil)
+		err = c.Device.Close()
+		c.trace("capture.close.device", started, err)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("close capture device: %w", err))
+		}
+		started = time.Now()
+		c.trace("capture.close.events.begin", started, nil)
+		<-c.drained
+		c.trace("capture.close.events", started, nil)
+		// Closing a tunnel itself changes the RIB. A single 250 ms native read
+		// deadline is not proof of residue; verify within a separate bounded window.
+		if err := c.verifyClosed(); err != nil {
 			failures = append(failures, err)
 		}
-		<-c.drained
-		// A failed kernel/device close leaves the journal for explicit recovery.
-		after, err := c.opts.Driver.Snapshot()
-		if err != nil {
-			failures = append(failures, err)
-		} else if ownsRoutes(c.state, after) {
-			failures = append(failures, fmt.Errorf("Pith capture routes remain after closing %s", c.Name))
-		} else if state, err := readState(c.opts.StatePath); err == nil && state.Token == c.state.Token {
-			if err := os.Remove(c.opts.StatePath); err != nil {
+		// Retain the journal on any unresolved close, deletion or observation fault.
+		if len(failures) == 0 {
+			if state, err := readState(c.opts.StatePath); err == nil && state.Token == c.state.Token {
+				if err := os.Remove(c.opts.StatePath); err != nil {
+					failures = append(failures, err)
+				}
+			} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 				failures = append(failures, err)
 			}
-		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-			failures = append(failures, err)
 		}
 		c.closeErr = errors.Join(failures...)
 		if c.closeErr == nil {
@@ -300,6 +318,57 @@ func (c *Capture) closeLocked() error {
 		}
 	})
 	return c.closeErr
+}
+
+func (c *Capture) trace(phase string, started time.Time, err error) {
+	if c.opts.Trace != nil {
+		c.opts.Trace(phase, time.Since(started), err)
+	}
+}
+
+func (c *Capture) closeSnapshot(ctx context.Context) ([]Route, error) {
+	if reader, ok := c.opts.Driver.(interface {
+		SnapshotContext(context.Context) ([]Route, error)
+	}); ok {
+		return reader.SnapshotContext(ctx)
+	}
+	return c.opts.Driver.Snapshot()
+}
+
+func (c *Capture) verifyClosed() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var last error
+	for attempt := 1; ; attempt++ {
+		started := time.Now()
+		phase := fmt.Sprintf("capture.close.verify-%d", attempt)
+		c.trace(phase+".begin", started, nil)
+		after, err := c.closeSnapshot(ctx)
+		if err == nil && slices.ContainsFunc(after, func(r Route) bool {
+			// A disappearing interface can lose its name between the RIB and link
+			// reads. Missing identity withholds proof, but a known different index
+			// or name identifies an external lifetime and must remain untouched.
+			matching := r.Index == c.state.Index && (r.Interface == c.Name || r.Interface == "") || r.Index == 0 && r.Interface == c.Name
+			return !r.Scoped && matching && slices.Contains(c.Plan.Prefixes, r.Prefix)
+		}) {
+			err = errors.New("owned capture routes remain after device close")
+		}
+		if ctx.Err() != nil {
+			err = errors.Join(ctx.Err(), err)
+		}
+		c.trace(phase, started, err)
+		if err == nil {
+			return nil
+		}
+		last = err
+		timer := time.NewTimer(50 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return fmt.Errorf("verify capture closure: %w", errors.Join(ctx.Err(), last))
+		case <-timer.C:
+		}
+	}
 }
 
 func ownsRoutes(state journal, routes []Route) bool {

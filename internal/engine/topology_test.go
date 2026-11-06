@@ -32,8 +32,9 @@ func startTopology(t *testing.T) (*Engine, *testDriver) {
 
 func waitTopologyStop(t *testing.T, e *Engine, d *testDriver) {
 	t.Helper()
-	// One polling interval plus the bounded ownership-observation window.
-	deadline := time.After(5 * time.Second)
+	// One polling interval, ownership observation and post-close verification,
+	// plus scheduling margin. The owned device closes before final verification.
+	deadline := time.After(7 * time.Second)
 	for {
 		status, _ := e.Status(context.Background())
 		if status.State == api.Failed {

@@ -65,6 +65,8 @@ func (e *Engine) startLocked(ctx context.Context, scene api.Scene, settings api.
 	}
 	defer func() {
 		if result != nil {
+			e.traceLifecycle("start.rollback.begin", 0, result)
+			defer e.saveLifecycle()
 			s.stopLease()
 			s.cancel()
 			if s.guard != nil {
@@ -96,6 +98,7 @@ func (e *Engine) startLocked(ctx context.Context, scene api.Scene, settings api.
 			// as well as persisting them, so SafeStart failures retain dial errors.
 			result = errors.Join(result, e.flush(true))
 			e.state(api.Status{State: api.Failed, Error: errorValue(result)})
+			e.traceLifecycle("start.rollback.complete", 0, result)
 		}
 	}()
 	if err := e.store.SetLogDays(settings.LogDays); err != nil {
@@ -125,7 +128,7 @@ func (e *Engine) startLocked(ctx context.Context, scene api.Scene, settings api.
 	if e.opts.TestProfile != nil {
 		expected = e.opts.TestProfile.Prefixes()
 	}
-	s.capture, err = capture.Prepare(ctx, capture.Options{IPv6: settings.IPv6, Scopes: e.opts.Scopes, DNS: dns, ExpectedPrefixes: expected, StatePath: filepath.Join(e.opts.DataDir, "capture.json"), Driver: e.opts.Driver, Diagnostic: e.routeDiagnostic})
+	s.capture, err = capture.Prepare(ctx, capture.Options{IPv6: settings.IPv6, Scopes: e.opts.Scopes, DNS: dns, ExpectedPrefixes: expected, StatePath: filepath.Join(e.opts.DataDir, "capture.json"), Driver: e.opts.Driver, Diagnostic: e.routeDiagnostic, Trace: e.traceLifecycle})
 	if err != nil {
 		return err
 	}
@@ -224,7 +227,7 @@ func (e *Engine) startLocked(ctx context.Context, scene api.Scene, settings api.
 	return nil
 }
 
-func (e *Engine) stopLocked() error {
+func (e *Engine) stopLocked(cause error) error {
 	e.mu.Lock()
 	s := e.run
 	if s == nil {
@@ -238,26 +241,39 @@ func (e *Engine) stopLocked() error {
 	e.status.State = api.Stopping
 	e.publishLocked(api.Event{Status: statusPointer(e.status)})
 	e.mu.Unlock()
-	s.cancel()
-	s.stopLease()
-	s.guard.Revoke(errors.New("routing stopped"))
-	<-s.routeDone
+	started := time.Now()
+	e.traceLifecycle("stop.begin", 0, nil)
+	defer e.saveLifecycle()
+	e.lifecycleStep("stop.observers", func() error {
+		s.cancel()
+		s.stopLease()
+		s.guard.Revoke(errors.New("routing stopped"))
+		<-s.routeDone
+		return nil
+	})
 	// Restore kernel routing before waiting for application relays or disk I/O.
-	err := s.capture.Close()
+	err := e.lifecycleStep("stop.capture", s.capture.Close)
 	e.mu.Lock()
 	e.status.LastCapture = s.capture.Identity()
 	e.mu.Unlock()
-	s.echo.Close()
-	s.forward.Close()
-	err = errors.Join(err, s.existing.Close())
-	<-s.done
-	err = errors.Join(err, e.flush(true))
+	e.saveLifecycle()
+	e.lifecycleStep("stop.echo", func() error { s.echo.Close(); return nil })
+	e.lifecycleStep("stop.forwarder", func() error { s.forward.Close(); return nil })
+	err = errors.Join(err, e.lifecycleStep("stop.native-sockets", s.existing.Close))
+	e.lifecycleStep("stop.monitor", func() error { <-s.done; return nil })
+	err = errors.Join(err, e.lifecycleStep("stop.telemetry", func() error { return e.flush(true) }))
 	status := api.Status{State: api.Stopped}
-	if err != nil {
+	if cause != nil {
+		// Publish the fault and cleanup result together, never a temporary
+		// internal-error status while automatic fault teardown is still finishing.
+		status.State = api.Failed
+		status.Error = &api.Error{Code: api.ErrNetworkLost, Detail: errors.Join(cause, err).Error()}
+	} else if err != nil {
 		status.State = api.Failed
 		status.Error = errorValue(err)
 	}
 	e.state(status)
+	e.traceLifecycle("stop.complete", time.Since(started), err)
 	return err
 }
 
@@ -426,6 +442,6 @@ func (e *Engine) failSession(s *session, err error) {
 	if e.run != s {
 		return
 	}
-	cleanup := e.stopLocked()
-	e.state(api.Status{State: api.Failed, Error: &api.Error{Code: api.ErrNetworkLost, Detail: errors.Join(err, cleanup).Error()}})
+	e.traceLifecycle("fault", 0, err)
+	_ = e.stopLocked(err)
 }

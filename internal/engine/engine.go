@@ -43,16 +43,18 @@ type Options struct {
 }
 
 type Engine struct {
-	opts        Options
-	store       *telemetry.Store
-	lifecycle   sync.Mutex
-	mu          sync.Mutex
-	status      api.Status
-	run         *session
-	subs        map[chan api.Event]struct{}
-	done        chan struct{}
-	closed      bool
-	scopedLease time.Duration
+	opts          Options
+	store         *telemetry.Store
+	lifecycle     sync.Mutex
+	mu            sync.Mutex
+	status        api.Status
+	run           *session
+	subs          map[chan api.Event]struct{}
+	done          chan struct{}
+	closed        bool
+	scopedLease   time.Duration
+	diagnosticsMu sync.Mutex
+	diagnostics   []lifecycleRecord
 }
 
 func New(opts Options) (*Engine, error) {
@@ -91,6 +93,7 @@ func New(opts Options) (*Engine, error) {
 		return nil, err
 	}
 	e := &Engine{opts: opts, store: store, status: api.Status{State: api.Stopped}, subs: make(map[chan api.Event]struct{}), done: make(chan struct{})}
+	e.loadLifecycle()
 	if len(opts.Scopes) > 0 {
 		// A development controller can disappear without sending Stop. Never
 		// leave scoped test capture running indefinitely in the idle daemon.
@@ -183,7 +186,7 @@ func (e *Engine) Start(ctx context.Context, scene api.Scene, settings api.Settin
 		return e.reloadLocked(scene, settings)
 	}
 	if e.run != nil {
-		if err := e.stopLocked(); err != nil {
+		if err := e.stopLocked(nil); err != nil {
 			return err
 		}
 	}
@@ -211,7 +214,7 @@ func (e *Engine) Reload(ctx context.Context, scene api.Scene, settings api.Setti
 		return nil
 	}
 	if e.run.settings.IPv6 != settings.IPv6 {
-		if err := e.stopLocked(); err != nil {
+		if err := e.stopLocked(nil); err != nil {
 			return err
 		}
 		return e.startLocked(ctx, scene, settings)
@@ -238,7 +241,7 @@ func (e *Engine) reloadLocked(scene api.Scene, settings api.Settings) error {
 func (e *Engine) Stop(context.Context) error {
 	e.lifecycle.Lock()
 	defer e.lifecycle.Unlock()
-	return e.stopLocked()
+	return e.stopLocked(nil)
 }
 
 func (e *Engine) Close() error {
@@ -248,7 +251,7 @@ func (e *Engine) Close() error {
 		return nil
 	}
 	e.closed = true
-	err := e.stopLocked()
+	err := e.stopLocked(nil)
 	e.mu.Lock()
 	close(e.done)
 	for ch := range e.subs {

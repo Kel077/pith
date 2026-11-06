@@ -142,6 +142,10 @@ func (nativeDriver) BootSession() (string, error) {
 }
 
 func (nativeDriver) Snapshot() ([]Route, error) { return Snapshot() }
+func (d nativeDriver) SnapshotContext(ctx context.Context) ([]Route, error) {
+	routes, _, err := d.SnapshotDetailsContext(ctx)
+	return routes, err
+}
 func (nativeDriver) InterfacePrefixes() ([]netip.Prefix, error) {
 	addresses, err := net.InterfaceAddrs()
 	if err != nil {

@@ -397,11 +397,34 @@ Its additive `EndedAt` is set only after a successful device close and a subsequ
 snapshot with no owned capture routes. Failed or unobservable cleanup leaves it
 zero. Controllers retain this confirmation separately from immutable identity.
 
+Stop uses an independent cleanup context. A failed pre-close routing snapshot
+does not authorize any explicit route deletion: close the owned utun descriptor
+instead. Then retry complete post-close snapshots for at most two seconds, with
+50 ms spacing, including brief kernel route-retirement lag. Each native RIB read
+still has its own 250 ms bound. A transient read deadline is not permanently
+cached as cleanup failure when device close and fresh verification succeed.
+Exhausted verification, remaining owned routes, device/route command failures,
+or journal errors remain failures, leave `EndedAt` unset and retain the journal.
+Only matching owned routes are considered; a rebuilt external VPN is preserved.
+
 Stop restores routes before waiting on relays or disk. TCP half-close is retained;
 shutdown aborts incomplete handshakes and waits for all workers. Hot rule/scene
 changes affect new connections. Changing the IPv6 capture preference restarts
 capture, because it changes the actual route set; existing proxied connections
 end in that case. Interface availability is refreshed by notifications.
+
+Lifecycle steps are recorded in memory during teardown and atomically persisted
+only after capture cleanup, before relay draining and again at completion.
+`lifecycle.json` in the private helper data directory keeps at most 128 records
+and 64 KiB across helper restarts (mode 0600); uninstall removes it with that
+directory. Records contain timestamps, fixed phase names, elapsed milliseconds
+and coarse error kinds only: no raw errors, addresses, interface names, process
+paths or credentials. They distinguish observer/lease shutdown, capture snapshots,
+route deletion ordinals, device/event closure, verification retries, relay/monitor
+draining, telemetry, and fault rollback. Recording failures do not prevent routing
+cleanup. Capture-close errors also publish their sanitized phase/error kind through
+the existing `Status.RouteDiagnostics`, which the test harness already archives;
+the coordinator need not read a root-owned file to identify a failing close step.
 
 The helper's private directory is `/Library/Application Support/Pith`. It contains
 the capture journal, daily JSONL connection snapshots and atomic `traffic.json`.
