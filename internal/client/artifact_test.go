@@ -97,11 +97,19 @@ func TestUntrustedStatusNeverClaimsStoppedOrPeerData(t *testing.T) {
 		"connections": func() error { _, err := c.Connections(context.Background(), api.ConnectionQuery{}); return err },
 		"traffic":     func() error { _, err := c.Traffic(context.Background(), api.TrafficQuery{}); return err },
 		"clear":       func() error { return c.ClearConnections(context.Background()) },
-		"subscribe":   func() error { _, err := c.Subscribe(context.Background()); return err },
 	} {
 		if err := call(); api.Code(err) != api.ErrHelperUntrusted {
 			t.Errorf("%s: %v", name, err)
 		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events, err := c.Subscribe(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first := <-events; first.Status == nil || first.Status.State != api.Failed || api.Code(first.Status.Error) != api.ErrHelperUntrusted || first.Status.Helper.Running || first.Status.Helper.Version != "" || first.Status.SceneID != "" {
+		t.Fatal("local subscription claimed unverified peer data", first)
 	}
 }
 
