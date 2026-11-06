@@ -43,6 +43,7 @@ Mac 可以同时连着有线、Wi-Fi 和手机热点，但系统默认只走其�
 ```sh
 git clone https://github.com/Kel077/pith.git
 cd pith
+make helper                # 先编译负责分流的后台助手
 go run ./cmd/pith          # 启动橘核，图标出现在菜单栏
 go run ./cmd/pith -mock    # 用模拟数据看看界面，不会安装任何东西
 ```

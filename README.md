@@ -43,6 +43,7 @@ Runs on Macs with Apple silicon and macOS 13 or later.
 ```sh
 git clone https://github.com/Kel077/pith.git
 cd pith
+make helper                # first, the helper that does the routing
 go run ./cmd/pith          # the app, in the menu bar
 go run ./cmd/pith -mock    # the interface on simulated data, nothing installed
 ```
