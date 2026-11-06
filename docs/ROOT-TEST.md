@@ -16,6 +16,39 @@ The helper also limits each scoped routing run to five minutes, so a killed
 test client cannot leave routing active indefinitely. The helper remains
 installed and idle until the explicit uninstall step.
 
+## Recorded helper identity result
+
+Helper identity and replacement were verified on hardware at `54a2881` in a
+separate idle-only session. Initial installation, an app-only version change,
+a changed-helper update, an unreadable installed-file case and final removal
+passed. The app-only build requested no administrator approval and kept the same
+helper PID. The changed artifact was reported as Outdated before explicit update.
+During the unreadable-file case, Start and Stop both returned `helper_untrusted`;
+the file's mode was restored to 0755. Final removal left no managed paths or
+launchd registration, and default routing matched the baseline. No capture was
+started in this identity phase. This tests file-verification failure, not an
+independently substituted live peer or every installer rollback path.
+
+## Recorded affected-flow reload result
+
+Scoped IPv4 reconnection was verified on hardware at `54a2881` using a cellular
+hotspot and wired Ethernet. Installation, TCP smoke and the complete TCP batch
+passed, including reset of the affected established connection and a new
+connection using the changed route. UDP/DNS smoke and both resolver batches also
+passed: the same native source port created a new session on the changed exit,
+and a separately opened UDP socket selected that exit. These checks require the
+old record's normal `EndReason=rules_changed`, empty `Problem`, original outcome
+and retained byte accounting. Cancellation-dialog behavior was not tested.
+
+Removal completed, but its strict post-removal comparison was incomplete: one
+unrelated cellular IPv6 prefix expired, removing two SLAAC addresses and its
+connected `/64` route. Independent inspection found no Pith files, service,
+socket, process or captured `/32` route; default routing was unchanged, and the
+process audit reported zero remaining test-window processes. This is recorded
+as an external topology change, not a strict baseline-restoration pass. It does
+not extend the result to full capture, IPv6 reconnection or a hardware QUIC
+reload; those and pending-handshake/lifetime boundaries remain separate coverage.
+
 ## Recorded full IPv4 result
 
 Full IPv4 was verified on hardware at `9ceff5c`, with Tailscale disconnected:

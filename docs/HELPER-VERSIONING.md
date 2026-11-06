@@ -5,6 +5,13 @@ of the app's version. The client authenticates both the installed file and the
 executing peer before IPC. Replacement and recovery preserve the same identity
 and capture-ownership checks.
 
+The idle-only hardware acceptance at `54a2881` passed fresh installation, an
+app-only version change with no authorization and the same helper PID, explicit
+changed-artifact replacement, an unreadable installed-file rejection and removal.
+The unreadable-file case returned `helper_untrusted` for Start and Stop and
+restored mode 0755. It does not establish a substituted live peer or every
+rollback case; see the [recorded scope](ROOT-TEST.md#recorded-helper-identity-result).
+
 ## Build identity
 
 The helper has its own display version, advanced only for helper releases. The

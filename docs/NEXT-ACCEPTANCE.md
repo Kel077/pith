@@ -19,30 +19,37 @@ proves fresh kernel delegation and the selected exit, not automatic page-body
 verification or Private Relay support. The bounded throughput comparison has also
 passed its scoped hardware subset; sustained capacity remains unverified.
 
-## Rule-change reconnection acceptance
+## Recorded identity and rule-change reconnection results
 
-The current Reload behavior closes affected forwarder-owned sessions instead of
-keeping their old route. Its implementation and synthetic/race tests do not
-extend the older hardware results below. Repeat scoped TCP smoke and the bounded
-TCP batch with a connection established **after** capture starts: a rule change
-from A to B must reset that connection, end its original record normally with
-`EndReason: rules_changed` and an empty `Problem`, and route a newly established
-connection through B. Adding an unrelated rule or retaining the same decision
-and first-choice interface must leave an established connection alone. A new
-matching block must close it without forwarding more application payload.
+Hardware acceptance at `54a2881` passed initial helper installation, a build that
+changed only the app version, replacement with a changed helper, an unreadable
+installed-file case and removal. The app-only change requested no administrator
+approval and retained the helper PID. The unreadable file made Start and Stop
+return `helper_untrusted`, then recovered its 0755 mode. The identity phase kept
+capture stopped and ended with absent managed files/service and unchanged default
+routing. Live peer substitution and every rollback path remain outside this result.
 
-Repeat the UDP/DNS batch on its reviewed host scope. The same native UDP socket's
-next query after A-to-B Reload must create a new B session, while the old A record
-retains its original outcome, tuple and bytes with the normal end reason. Preserve
-the existing query budgets and independent idle-expiry case. QUIC short-header
-tails must not lose a previously observed domain and fall back to system routing;
-socket-generation reuse, unknown lifetime evidence and reload during sniffing
-also have synthetic guards. Do not infer their hardware coverage from the older
-HTTP/3 result. Native pre-capture passthrough and ICMP are outside this change.
+A separate scoped IPv4 session passed TCP smoke and the full batch: an established
+A connection was reset by A-to-B Reload, ended normally with
+`EndReason=rules_changed` and an empty `Problem`, and a new connection used B.
+UDP/DNS smoke and both resolver batches passed, including a replacement B session
+from the same native source port, a separately opened session on B and the
+independent idle-expiry assertions. Original outcomes and byte counts were retained.
 
-Use a short-lease scoped installation for routing acceptance. Helper identity
-installation checks that require an unchanged network are a separate phase;
-they do not start capture or establish reconnection behavior.
+Uninstall removed Pith, but the strict post-removal comparison remained incomplete
+because an unrelated cellular IPv6 prefix expired, removing two SLAAC addresses
+and a connected `/64` route. Independent checks found no managed paths, service,
+socket, process or captured `/32`; default routing was unchanged and the process
+audit returned zero. Do not call that a strict baseline-restoration pass. See the
+[detailed records](ROOT-TEST.md#recorded-affected-flow-reload-result).
+
+Further hardware coverage includes full-capture and IPv6 reconnection, preserving
+an unaffected open flow, closing an existing match with a new block and QUIC
+short-header tails under Reload. Socket-generation reuse, unknown lifetime
+evidence and reload during sniffing/handshake/dial have synthetic and race tests;
+the older HTTP/3 hardware result does not establish these new boundaries.
+Native pre-capture passthrough and ICMP are outside this change. Future routing
+checks still require a separate reviewed scoped installation with its short lease.
 
 ## Recorded throughput hardware comparison
 
