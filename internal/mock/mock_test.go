@@ -86,3 +86,40 @@ func TestRuleChangeEndsAffectedConnections(t *testing.T) {
 		}
 	}
 }
+
+// The sample's local proxies report as the client's do: listening, an
+// interface that isn't connected, a port another program holds; counters
+// move, and a proxy sent through another interface starts them over.
+func TestProxies(t *testing.T) {
+	ctx := context.Background()
+	s := New(Options{Sample: true, ProxyPortInUse: 1081, Seed: 1})
+	s.Simulate(3 * time.Second)
+	st, _ := s.Status(ctx)
+	if len(st.Proxies) != 3 {
+		t.Fatalf("proxies %+v", st.Proxies)
+	}
+	if p := st.Proxies[0]; !p.Listening || p.Error != nil || p.Received == 0 || p.Open == 0 {
+		t.Errorf("1080 %+v", p)
+	}
+	if p := st.Proxies[1]; p.Listening || api.Code(p.Error) != api.ErrPortInUse {
+		t.Errorf("1081 %+v", p)
+	}
+	if p := st.Proxies[2]; !p.Listening || api.Code(p.Error) != api.ErrInterfaceUnavailable || p.Received != 0 {
+		t.Errorf("1082 %+v", p)
+	}
+
+	cfg, _ := s.LoadConfig(ctx)
+	cfg.Proxies[0].Via = cfg.Proxies[2].Via
+	if err := s.SaveConfig(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ = s.Status(ctx); st.Proxies[0].Received != 0 {
+		t.Errorf("counters kept through a new interface: %+v", st.Proxies[0])
+	}
+
+	s.ifaces = append(s.ifaces, api.Interface{Name: "utun5", Kind: api.KindVPN, Up: true})
+	cfg.Proxies[0].Via = api.InterfaceRef{Name: "utun5"}
+	if err := s.SaveConfig(ctx, cfg); api.Code(err) != api.ErrInvalidConfig {
+		t.Errorf("a VPN as a proxy's exit: %v", err)
+	}
+}

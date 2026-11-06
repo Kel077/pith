@@ -29,6 +29,7 @@ type Options struct {
 	Seed            uint64    // of the simulation's randomness
 	Now             time.Time // the clock's start; zero: the real clock
 	Live            bool      // simulate on a ticker; off, only Simulate advances it
+	ProxyPortInUse  int       // a local proxy port another program holds
 }
 
 // Service is the mock backend.
@@ -52,6 +53,9 @@ type Service struct {
 
 	hotspotLocked bool // Pith has no admin password for the hotspot
 	renewals      int  // how often the hotspot was renewed: its public addresses
+
+	proxies   map[int]*api.ProxyStatus // the counters of listening proxies, by port
+	portInUse int                      // Options.ProxyPortInUse
 }
 
 // flow is an open connection's plan: how long it lasts and how fast it goes.
@@ -66,13 +70,15 @@ type flow struct {
 // New returns a mock backend.
 func New(o Options) *Service {
 	s := &Service{
-		cfg:    api.DefaultConfig(),
-		open:   map[uint64]*flow{},
-		subs:   map[chan api.Event]struct{}{},
-		rnd:    rand.New(rand.NewPCG(o.Seed, o.Seed^0x9e3779b97f4a7c15)),
-		clock:  o.Now,
-		live:   o.Live,
-		ifaces: sampleInterfaces(),
+		cfg:       api.DefaultConfig(),
+		open:      map[uint64]*flow{},
+		subs:      map[chan api.Event]struct{}{},
+		rnd:       rand.New(rand.NewPCG(o.Seed, o.Seed^0x9e3779b97f4a7c15)),
+		clock:     o.Now,
+		live:      o.Live,
+		ifaces:    sampleInterfaces(),
+		proxies:   map[int]*api.ProxyStatus{},
+		portInUse: o.ProxyPortInUse,
 	}
 	if s.clock.IsZero() && !o.Live {
 		s.clock = time.Date(2026, 11, 4, 9, 30, 0, 0, time.Local)
@@ -139,6 +145,7 @@ func (s *Service) Simulate(d time.Duration) {
 		step := min(d, 250*time.Millisecond)
 		s.clock = s.clock.Add(step)
 		s.stepLocked(step)
+		s.stepProxiesLocked(step)
 		d -= step
 	}
 }
@@ -157,6 +164,13 @@ func (s *Service) SaveConfig(ctx context.Context, cfg api.Config) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for k, p := range cfg.Proxies {
+		if i := p.Via.Resolve(s.ifaces); i != nil && !i.CanProxy() {
+			return &api.Error{Code: api.ErrInvalidConfig, Detail: fmt.Sprintf("proxy %d: %s can't carry a proxy", k+1, i.Name)}
+		}
+	}
+	s.restartProxiesLocked(cfg.Proxies)
+	defer s.publishStatusLocked()
 	old := s.scene(s.status.SceneID)
 	s.cfg = clone(cfg)
 	if s.status.State == api.Running {
@@ -208,7 +222,9 @@ func sameRoute(a, b *api.Rule) bool {
 func (s *Service) Status(ctx context.Context) (api.Status, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.status, nil
+	st := s.status
+	st.Proxies = s.proxiesLocked()
+	return st, nil
 }
 
 func (s *Service) InstallHelper(ctx context.Context) error {
@@ -789,6 +805,7 @@ func (s *Service) refreshWarningsLocked() {
 
 func (s *Service) publishStatusLocked() {
 	st := s.status
+	st.Proxies = s.proxiesLocked()
 	for ch := range s.subs {
 		select {
 		case ch <- api.Event{Status: &st}:
@@ -877,6 +894,9 @@ func SampleConfig() api.Config {
 		}},
 	}
 	c.Selected = "home"
+	// Local proxies, one an interface: the last one's Wi-Fi isn't connected.
+	hotspot := api.InterfaceRef{Name: hotspotIface, Label: "M2000", HardwareAddr: "02:00:5e:10:00:09"}
+	c.Proxies = []api.Proxy{{Port: 1080, Via: eth, Enabled: true}, {Port: 1081, Via: hotspot, Enabled: true}, {Port: 1082, Via: wifi, Enabled: true}}
 	return c
 }
 
@@ -959,6 +979,7 @@ func clone(c api.Config) api.Config {
 			out.Aliases[k] = v
 		}
 	}
+	out.Proxies = slices.Clone(c.Proxies)
 	return out
 }
 
