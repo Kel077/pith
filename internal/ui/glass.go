@@ -3,6 +3,7 @@ package ui
 import (
 	"github.com/egoist/mygo/plugins/glass"
 	"github.com/egoist/mygo/ui"
+	"math"
 )
 
 // Pith's look: a calm background with soft glows of tangerine, rose and
@@ -183,7 +184,10 @@ func segmentedCapsule(c *ui.Context, key, label string, chosen *int, labels []st
 						ic.TextColor(t.TextMuted)
 					}
 				}
-				label := ui.Text(c, text).SingleLine()
+				// As wide as it is bold, chosen or not: choosing doesn't move
+				// the segments.
+				bold, _ := c.MeasureText(0, ui.Span{Text: text, Weight: 600})
+				label := ui.Text(c, text).SingleLine().MinWidth(float32(math.Ceil(float64(bold)))).TextAlign(ui.Center)
 				if on {
 					label.FontWeight(600)
 				} else {
