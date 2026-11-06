@@ -117,6 +117,7 @@ Some hotspots also show their signal and can change their public IP. Only these,
 
 ### Also
 
+- **Local proxies**: SOCKS5 ports on 127.0.0.1, each going out through one interface, never another; for apps and browsers that take a proxy, with routing on or off.
 - **Safe start**: if the Mac loses the internet right after routing starts, Pith undoes it.
 - **Resume on launch**, **keep routing after quitting**, **open at login**, and the download speed in the menu bar.
 - **Import and export** a scene's rules, or back up everything.
