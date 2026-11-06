@@ -37,30 +37,13 @@ func (a *App) activityView(c *ui.Context) {
 		// The capsules are not all as high: centered on each other.
 		ui.Row(c).Gap(8).Children(func() {
 			segmentedCapsule(c, "activity-view", locales.Show(), &p.view, []string{locales.Connections(), locales.Apps(), locales.Traffic()}, nil)
+			// Traffic has no use for the tools, which keep their room all the
+			// same: the capsule of the views stays where it is.
+			tools := ui.Row(c).Gap(8).AlignItems(ui.Center)
 			if p.view == 2 {
-				return
+				tools.Invisible()
 			}
-			activitySearch(c, &p.query)
-			ic, label := icPause, locales.Pause()
-			if p.paused {
-				ic, label = icPlay, locales.Resume()
-			}
-			// Buttons the keyboard reaches, as the theme's are.
-			if glassCapsuleButton(c, "activity-pause", ic, "").Label(label).Tooltip(label).Focusable().Clicked() {
-				p.paused = !p.paused
-				p.frozen = nil
-				if p.paused {
-					p.frozen = slices.Clone(a.conns)
-				}
-			}
-			empty := len(a.conns) == 0
-			clear := glassCapsuleButton(c, "activity-clear", icEraser, "").Label(locales.Clear()).Tooltip(locales.Clear()).Focusable().Disabled(empty)
-			if empty {
-				clear.Opacity(0.4)
-			}
-			if clear.Clicked() {
-				a.clearConnections()
-			}
+			tools.Children(func() { a.activityTools(c) })
 		})
 	})
 	if p.view == 2 {
@@ -582,4 +565,31 @@ func activityShareBar(c *ui.Context, share float32) {
 	ui.Box(c).FillWidth().Height(5).Radius(999).Background(subtle(t, 0.06)).Children(func() {
 		ui.Box(c).WidthPercent(max(2, share*100)).Height(5).Radius(999).LinearGradient(fill)
 	})
+}
+
+// activityTools are the header's tools for connections and apps: the
+// search, a button that pauses the list, and one that clears it.
+func (a *App) activityTools(c *ui.Context) {
+	p := &a.activity
+	activitySearch(c, &p.query)
+	ic, label := icPause, locales.Pause()
+	if p.paused {
+		ic, label = icPlay, locales.Resume()
+	}
+	// Buttons the keyboard reaches, as the theme's are.
+	if glassCapsuleButton(c, "activity-pause", ic, "").Label(label).Tooltip(label).Focusable().Clicked() {
+		p.paused = !p.paused
+		p.frozen = nil
+		if p.paused {
+			p.frozen = slices.Clone(a.conns)
+		}
+	}
+	empty := len(a.conns) == 0
+	clear := glassCapsuleButton(c, "activity-clear", icEraser, "").Label(locales.Clear()).Tooltip(locales.Clear()).Focusable().Disabled(empty)
+	if empty {
+		clear.Opacity(0.4)
+	}
+	if clear.Clicked() {
+		a.clearConnections()
+	}
 }
