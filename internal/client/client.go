@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Kel077/pith/internal/api"
+	"github.com/Kel077/pith/internal/helper"
 	"github.com/Kel077/pith/internal/helper/identity"
 	"github.com/Kel077/pith/internal/keychain"
 	"github.com/Kel077/pith/internal/netif"
@@ -47,6 +48,8 @@ type Client struct {
 	opts           Options
 	configPath     string
 	mu             sync.Mutex
+	installMu      sync.Mutex
+	executePlan    func(context.Context, helper.InstallPlan) error
 	interfaces     func(context.Context) ([]api.Interface, error)
 	lookup         func(context.Context, string, string) ([]netip.Addr, error)
 	dialer         func(string, time.Duration, []string) (*net.Dialer, error)
@@ -90,6 +93,7 @@ func New(opts Options) (*Client, error) {
 			return link.Index, nil
 		}}
 	c.initIdentity()
+	c.executePlan = func(ctx context.Context, plan helper.InstallPlan) error { return plan.Execute(ctx) }
 	c.initIPC()
 	return c, nil
 }

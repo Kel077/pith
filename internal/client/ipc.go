@@ -30,6 +30,9 @@ func (c *Client) initIPC() {
 		}
 		conn, err := (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "unix", c.opts.SocketPath)
 		if err != nil {
+			if errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EPERM) {
+				return nil, untrustedHelper("helper socket access could not be verified")
+			}
 			return nil, err
 		}
 		unixConn, ok := conn.(*net.UnixConn)

@@ -8,8 +8,12 @@ constructing it never starts capture. The helper owns its complete shutdown.
 HTTP/JSON runs only over a Unix socket, with protocol version 1 in
 `X-Pith-Protocol`. The status response also announces its protocol/build
 version. The socket is mode 0600, owned by the installing user. The server
-checks Darwin `LOCAL_PEERCRED` on every accepted connection, and the client
-requires a root peer. There is no TCP listener or trusted UID in JSON.
+checks Darwin `LOCAL_PEERCRED` on every accepted connection. Before sending HTTP,
+the client verifies the installed artifact's full SHA-256 and the root peer's
+kernel audit token/CDHash. The expected identity is compiled into the app, not
+learned from the peer or an adjacent manifest. App versions are informational;
+only a differing helper artifact/protocol requires replacement. There is no TCP
+listener or trusted UID in JSON.
 
 Endpoints: `GET /v1/status`, `GET /v1/events` (NDJSON), and POST requests for
 `/v1/start`, `/v1/reload`, `/v1/stop`, `/v1/connections`,
@@ -29,16 +33,22 @@ The installer changes only these managed paths and launchd service:
 An update records the previous executable, plist and loaded state before
 booting out the service. It stages a root-owned executable, checks the SHA-256
 computed before authorization, and validates the plist. Failure restores the
-old files and registration. Successful installation removes the temporary
-backup. No launchd command is called by tests: installer tests parse the shell
+old files and registration. The app's installation plan pins the expected SHA
+before authorization and executes only the verified root-owned staged helper for
+stale-journal cleanup. Successful installation removes the temporary backup.
+Uninstallation uses the same staged-copy verification, never an unverified
+installed executable. If the bundle is damaged, a matching root-owned installed
+artifact can supply the staged cleanup copy; if neither copy is verifiable,
+reinstall the app first. Ambiguous cleanup preserves the ownership journal and
+fails instead of deleting unproven routes. No launchd command is called by tests: installer tests parse the shell
 with `sh -n` and decode the plist. Peer, request, subscription, cancellation,
 hot-reload and shutdown tests use a temporary socket and no elevated process.
 
-## Pending authorized test
+## Privileged operations
 
-Installation (including cancellation), real scoped routing and uninstall are
-reserved for one coordinated session after M3. No unit test installs the daemon,
-creates a real utun or changes routing. Uninstall removes helper logs/traffic;
+Installation, real routing acceptance and uninstall require an administrator's
+approval. No unit test installs the daemon, creates a real utun or changes routing.
+Uninstall removes helper logs/traffic;
 reinstalling restores the service, not deleted history. The consolidated procedure
 must record original routes/managed paths and include emergency undo before any
 authorization is requested. See [backend architecture](../../docs/ARCHITECTURE.md).

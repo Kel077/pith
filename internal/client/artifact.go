@@ -33,6 +33,12 @@ type artifactCache struct {
 	files map[string]artifactEntry
 }
 
+func (cache *artifactCache) invalidate() {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	cache.files = nil
+}
+
 func (cache *artifactCache) check(path string, installed bool, expected identity.Identity, open func(string, bool) (*os.File, artifactStamp, error)) error {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
