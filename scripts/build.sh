@@ -102,14 +102,43 @@ build_app() {
     verify_app
 }
 
+archive_app() (
+    local archive="$repo/build/pith-$version-arm64.zip"
+    local stage extracted='' entry entry_count=0
+    stage=$(mktemp -d "$repo/build/.pith-archive.XXXXXX")
+    trap 'rm -rf "$stage"; [[ -z "$extracted" ]] || rm -rf "$extracted"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    extracted=$(mktemp -d "$pith_tmp/pith-archive.XXXXXX")
+
+    # A fresh archive cannot retain stale entries from an earlier build.
+    # Store symlinks as links and omit macOS metadata without changing the app.
+    (
+        cd "$(dirname "$app")"
+        /usr/bin/zip -qry -X "$stage/app.zip" -- "$name.app"
+    )
+    /usr/bin/unzip -Z1 "$stage/app.zip" > "$stage/entries.txt"
+    while IFS= read -r entry; do
+        case "/$entry/" in
+            */._*|*/__MACOSX/*) fail "archive contains macOS metadata: $entry" ;;
+        esac
+        entry_count=$((entry_count + 1))
+    done < "$stage/entries.txt"
+
+    # Plain unzip leaves AppleDouble files in place, unlike Finder or ditto.
+    /usr/bin/unzip -q "$stage/app.zip" -d "$extracted"
+    /usr/bin/codesign --verify --deep --strict "$extracted/$name.app"
+    printf 'Verified archive: %d entries, no macOS metadata, valid extracted signature\n' "$entry_count"
+    mv -f "$stage/app.zip" "$archive"
+    printf 'Created %s\n' "${archive#"$repo/"}"
+)
+
 case "$mode" in
     licenses) go run ./scripts/licenses ;;
     verify) verify_app ;;
     app|dmg) build_app ;;
     archive)
         build_app
-        archive="$repo/build/pith-$version-arm64.zip"
-        /usr/bin/ditto -c -k --keepParent --noextattr --noqtn --noacl "$app" "$archive"
-        printf 'Created %s\n' "${archive#"$repo/"}"
+        archive_app
         ;;
 esac
