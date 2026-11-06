@@ -48,17 +48,21 @@ func (a *App) WindowView(c *ui.Context) {
 
 // topBar holds the window's controls: the traffic lights on the left, the
 // pages in a capsule in the middle, and the routing switch on the right.
-// It drags the window, as a title bar does.
+// It drags the window, as a title bar does. The capsule sits at the
+// window's center: both sides are equally wide, each at least as wide as
+// the traffic lights need.
 func (a *App) topBar(c *ui.Context) {
 	bar := c.TitleBar()
-	ui.Row(c).Height(64).Padding(0, 20, 0, max(bar.Left, 76)+12).Gap(12).DragWindow().Shrink(0).Children(func() {
-		ui.Row(c).Grow(1).Basis(0).Children(func() {})
+	const edge = 20
+	side := max(max(bar.Left, 76)+12, bar.Right+edge) - edge
+	ui.Row(c).Height(64).Padding(0, edge, 0, edge).Gap(12).DragWindow().Shrink(0).Children(func() {
+		ui.Row(c).Grow(1).Basis(0).MinWidth(side).Children(func() {})
 		chosen := slices.Index(pages, a.page)
 		labels := []string{locales.Rules(), locales.Activity(), locales.Network(), locales.Settings()}
 		if segmentedCapsule(c, "nav", locales.Pages(), &chosen, labels, []*ui.SVG{icRules, icActivity, icNetwork, icSettings}) {
 			a.page = pages[chosen]
 		}
-		ui.Row(c).Grow(1).Basis(0).Justify(ui.End).Children(func() { a.routingCapsule(c) })
+		ui.Row(c).Grow(1).Basis(0).MinWidth(side).Justify(ui.End).Children(func() { a.routingCapsule(c) })
 	})
 }
 

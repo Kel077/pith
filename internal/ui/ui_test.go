@@ -276,6 +276,26 @@ func TestToggle(t *testing.T) {
 	}
 }
 
+// The pages' capsule sits at the window's center, whatever the traffic
+// lights and the routing switch beside it take.
+func TestPagesCentered(t *testing.T) {
+	for _, o := range []mock.Options{{Sample: true}, {Sample: true, HelperInstalled: true, Running: true}, {Sample: true, HelperInstalled: true, HelperUntrusted: true}} {
+		for _, width := range []int{900, 1040, 1400} {
+			a, _ := testApp(t, o)
+			tt := ui.NewTester(a.WindowView, width, 680)
+			tt.SetTitleBar(ui.TitleBar{Height: 28, Left: 76})
+			tt.Frame()
+			r, ok := tt.Find(locales.Pages())
+			if !ok {
+				t.Fatal("no pages capsule")
+			}
+			if off := r.X + r.W/2 - float32(width)/2; off < -0.5 || off > 0.5 {
+				t.Errorf("width %d, %+v: the capsule's center is %.1f off the window's", width, o, off)
+			}
+		}
+	}
+}
+
 // An unverified helper is never shown as stopped, and turning routing on
 // asks for no password: the fix is an explicit reinstall in Settings.
 func TestUntrustedHelper(t *testing.T) {
