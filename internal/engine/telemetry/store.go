@@ -3,6 +3,7 @@
 package telemetry
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -60,8 +61,17 @@ func Open(opts Options) (*Store, error) {
 }
 
 func (s *Store) Add(connection api.Connection) uint64 {
+	return s.AddContext(context.Background(), connection)
+}
+
+// AddContext skips a pending flow canceled while waiting for telemetry storage.
+// The caller must still finalize a record if cancellation follows publication.
+func (s *Store) AddContext(ctx context.Context, connection api.Connection) uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if ctx.Err() != nil {
+		return 0
+	}
 	s.next++
 	connection.ID = s.next
 	if connection.Started.IsZero() {
@@ -100,6 +110,12 @@ func (s *Store) AddBytes(id uint64, sent, received uint64) {
 }
 
 func (s *Store) End(id uint64, problem string) {
+	s.EndWithReason(id, problem, "")
+}
+
+// EndWithReason records normal policy-driven closure without changing the
+// original routing outcome or retaining a failure message.
+func (s *Store) EndWithReason(id uint64, problem string, reason api.EndReason) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r := s.records[id]
@@ -107,7 +123,10 @@ func (s *Store) End(id uint64, problem string) {
 		return
 	}
 	r.connection.Ended = s.now()
-	if problem != "" {
+	if reason != "" {
+		r.connection.EndReason = reason
+		r.connection.Problem = ""
+	} else if problem != "" {
 		r.connection.Problem = problem
 	}
 	s.open--

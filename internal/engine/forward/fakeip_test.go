@@ -148,7 +148,7 @@ func TestFakeIPUnknownDomainRecordsSystemBypass(t *testing.T) {
 	}
 }
 
-func TestFakeIPRelayLogsResolvedBlockFromOriginalPolicy(t *testing.T) {
+func TestFakeIPRelayReloadCancelsPendingResolution(t *testing.T) {
 	for _, proto := range []api.Protocol{api.TCP, api.UDP} {
 		t.Run(string(proto), func(t *testing.T) {
 			fake := netip.MustParseAddrPort("198.18.0.7:443")
@@ -162,10 +162,10 @@ func TestFakeIPRelayLogsResolvedBlockFromOriginalPolicy(t *testing.T) {
 			}, scene)
 			original := x.router.Policy()
 			x.router.Resolve = func(context.Context, api.Interface, string) ([]netip.Addr, error) {
-				// A new rule snapshot must not affect the connection already being
-				// resolved, including its attribution-dependent real-address block.
+				// The resolver may still finish after cancellation. Its immutable
+				// snapshot must never publish a relay after the generation changes.
 				scene.Rules[1].Enabled = false
-				if err := x.router.Reload(scene, api.DefaultSettings()); err != nil {
+				if err := x.f.Reload(scene, api.DefaultSettings()); err != nil {
 					return nil, err
 				}
 				return []netip.Addr{netip.MustParseAddr("192.0.2.80")}, nil
@@ -195,22 +195,16 @@ func TestFakeIPRelayLogsResolvedBlockFromOriginalPolicy(t *testing.T) {
 					t.Fatal("blocked resolved TCP destination did not reset", err)
 				}
 			}
-			for {
-				rows := x.store.Connections(api.ConnectionQuery{})
-				if len(rows) != 0 {
-					if len(rows) != 1 || rows[0].RuleID != "real-block" || rows[0].Outcome != api.Blocked || rows[0].Remote != fake.String() || rows[0].Domain != "example.com" || rows[0].Ended.IsZero() || rows[0].Interface != "" || !strings.Contains(rows[0].Problem, "blocked") {
-						t.Fatal("lost resolved block or original flow identity", rows)
-					}
-					if x.router.Policy() == original {
-						t.Fatal("test did not replace the policy during resolution")
-					}
-					break
-				}
-				select {
-				case <-ctx.Done():
-					t.Fatal("resolved block was not logged")
-				case <-time.After(time.Millisecond):
-				}
+			deadline := time.Now().Add(time.Second)
+			for x.router.Policy() == original && time.Now().Before(deadline) {
+				time.Sleep(time.Millisecond)
+			}
+			if x.router.Policy() == original {
+				t.Fatal("test did not replace the policy during resolution")
+			}
+			waitNoFlows(t, x)
+			if rows := x.store.Connections(api.ConnectionQuery{}); len(rows) != 0 {
+				t.Fatal("canceled unpublished resolution invented a connection failure", rows)
 			}
 		})
 	}

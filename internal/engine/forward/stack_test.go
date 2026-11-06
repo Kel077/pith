@@ -134,8 +134,11 @@ func newFixture(t testing.TB, dial egress.DialFunc, scene api.Scene, configure .
 		t.Fatal(err)
 	}
 	opts := Options{Device: device, Router: router, Store: store, IPv6: true, UDPIdle: 500 * time.Millisecond, DNSIdle: 100 * time.Millisecond, Lookup: func(context.Context, api.Protocol, netip.AddrPort, netip.AddrPort) (attribution.Attribution, error) {
-		return attribution.Attribution{App: api.AppRef{Path: "/Applications/Example.app"}, Process: api.Process{PID: 42, Path: "/Applications/Example.app/Contents/MacOS/App"}}, nil
+		return attribution.Attribution{App: api.AppRef{Path: "/Applications/Example.app"}, Process: api.Process{PID: 42, Path: "/Applications/Example.app/Contents/MacOS/App"}, SocketGeneration: 1}, nil
 	}}
+	opts.LookupFresh = func(ctx context.Context, proto api.Protocol, local, remote netip.AddrPort) (attribution.Attribution, error) {
+		return opts.Lookup(ctx, proto, local, remote)
+	}
 	for _, fn := range configure {
 		fn(&opts)
 	}
@@ -200,15 +203,11 @@ func TestTCPRelayIPv4IPv6AndHotRules(t *testing.T) {
 				t.Fatal(string(buf), err)
 			}
 			scene := api.Scene{ID: "test", Rules: []api.Rule{{ID: "block", Enabled: true, Protocol: api.TCP, Action: api.Block}}}
-			if err := x.router.Reload(scene, api.DefaultSettings()); err != nil {
+			if err := x.f.Reload(scene, api.DefaultSettings()); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := io.WriteString(conn, "open stays open"); err != nil {
-				t.Fatal(err)
-			}
-			buf = make([]byte, len("open stays open"))
-			if _, err := io.ReadFull(conn, buf); err != nil || string(buf) != "open stays open" {
-				t.Fatal(string(buf), err)
+			if _, err := conn.Read(buf); err == nil || !strings.Contains(err.Error(), "reset") {
+				t.Fatal("existing connection escaped the new block", err)
 			}
 			if denied, err := x.dialTCP(ctx, remote); err == nil {
 				denied.Close()
@@ -220,6 +219,9 @@ func TestTCPRelayIPv4IPv6AndHotRules(t *testing.T) {
 					t.Fatal("missing application tuple or invented blocked egress", c)
 				}
 				if c.Outcome == api.System && c.Domain == "example.com" && c.Sent > 0 && c.Received > 0 && c.Interface == "en0" {
+					if c.Ended.IsZero() || c.EndReason != api.EndRulesChanged || c.Problem != "" {
+						t.Fatal("reload did not report why the existing connection ended", c)
+					}
 					if c.Local != conn.LocalAddr().String() || c.OutboundLocal != "198.51.100.10:50001" {
 						t.Fatal("incorrect TCP socket tuples", c)
 					}

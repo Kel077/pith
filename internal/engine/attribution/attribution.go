@@ -24,6 +24,9 @@ type Attribution struct {
 	Process      api.Process
 	EffectivePID int
 	Delegated    bool
+	// SocketGeneration is XNU's already-observed socket lifetime identity. A zero
+	// value cannot authorize carrying a UDP name across a relay replacement.
+	SocketGeneration uint64
 }
 
 type identity struct {
@@ -59,6 +62,16 @@ func New() *Resolver {
 }
 
 func (r *Resolver) Lookup(ctx context.Context, proto api.Protocol, local, remote netip.AddrPort) (Attribution, error) {
+	return r.lookup(ctx, proto, local, remote, false)
+}
+
+// LookupFresh independently reads the PCB table before comparing socket
+// lifetimes. A cached tuple cannot prove that its native port was not reused.
+func (r *Resolver) LookupFresh(ctx context.Context, proto api.Protocol, local, remote netip.AddrPort) (Attribution, error) {
+	return r.lookup(ctx, proto, local, remote, true)
+}
+
+func (r *Resolver) lookup(ctx context.Context, proto api.Protocol, local, remote netip.AddrPort, fresh bool) (Attribution, error) {
 	if !local.IsValid() || local.Port() == 0 || !remote.IsValid() {
 		return Attribution{}, fmt.Errorf("invalid flow tuple")
 	}
@@ -72,7 +85,7 @@ func (r *Resolver) Lookup(ctx context.Context, proto api.Protocol, local, remote
 	}
 	table := r.tables[proto]
 	refreshed := false
-	if time.Since(table.at) > 100*time.Millisecond {
+	if fresh || time.Since(table.at) > 100*time.Millisecond {
 		sockets, err := r.read(proto)
 		if err != nil {
 			return Attribution{}, err
@@ -97,7 +110,7 @@ func (r *Resolver) Lookup(ctx context.Context, proto api.Protocol, local, remote
 	if ownerErr != nil {
 		owner = api.Process{PID: socket.PID}
 	}
-	result := Attribution{Process: owner, App: ownerApp, EffectivePID: socket.PID}
+	result := Attribution{Process: owner, App: ownerApp, EffectivePID: socket.PID, SocketGeneration: socket.Generation}
 	if socket.EffectivePID > 0 && socket.EffectivePID != socket.PID {
 		result.Delegated, result.EffectivePID = true, socket.EffectivePID
 		_, app, err := r.process(socket.EffectivePID)

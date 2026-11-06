@@ -86,6 +86,8 @@ func (r *Router) Interfaces(ifaces []api.Interface) {
 	r.ifaces.Store(&value)
 }
 
+// Reload publishes a policy for a standalone router. Once attached to a running
+// forwarder, callers must use Forwarder.Reload to also revoke affected relays.
 func (r *Router) Reload(scene api.Scene, settings api.Settings) error {
 	set, err := rules.New(scene)
 	if err != nil {
@@ -95,8 +97,9 @@ func (r *Router) Reload(scene api.Scene, settings api.Settings) error {
 	return nil
 }
 
-// Policy is retained by the flow from its first packet. Reload never changes an
-// existing flow, including one still reading a ClientHello or trying fallback.
+// Policy returns an immutable generation. Forwarder.Reload publishes a new
+// generation and revokes affected relays; a dial retains one generation until
+// the forwarder checks it again before publishing or sending application data.
 func (r *Router) Policy() *Policy { return r.policy.Load() }
 
 type Result struct {
@@ -104,7 +107,8 @@ type Result struct {
 	Outcome   api.Outcome
 	RuleID    string
 	Interface string
-	Problem   string // includes a successful system bypass of an unknown fake IP
+	Problem   string         // includes a successful system bypass of an unknown fake IP
+	Address   netip.AddrPort // actual destination, including a resolved fake IP
 }
 
 func (r *Router) System(remote netip.Addr) string {
@@ -124,7 +128,8 @@ func (r *Router) Dial(ctx context.Context, d rules.Decision, proto api.Protocol,
 
 // DialFlow retains the flow's policy and attribution while resolving synthetic
 // destinations. Real addresses are checked only for blocks; they never select a
-// different route rule. Reload cannot change either decision for this flow.
+// different route rule. The caller must validate the generation before using a
+// successful result if policy can change during the dial.
 func (r *Router) DialFlow(ctx context.Context, policy *Policy, owner attribution.Attribution, proto api.Protocol, remote netip.AddrPort, domain string) (Result, error) {
 	d := policy.Match(owner, proto, remote, domain)
 	return r.dialDomain(ctx, d, proto, remote, domain, func(target netip.AddrPort) rules.Decision {
@@ -280,7 +285,7 @@ func (r *Router) dialDomain(ctx context.Context, d rules.Decision, proto api.Pro
 				failures = append(failures, fmt.Errorf("%s: %w", name, err))
 				continue
 			}
-			return Result{Conn: conn, Outcome: outcome, RuleID: d.RuleID, Interface: name, Problem: note}, true, nil
+			return Result{Conn: conn, Outcome: outcome, RuleID: d.RuleID, Interface: name, Problem: note, Address: target}, true, nil
 		}
 		if blocked.RuleID != "" {
 			// An allowed answer may connect, but once all such attempts fail do

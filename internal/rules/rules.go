@@ -34,8 +34,8 @@ type compiled struct {
 	targets []api.Target
 }
 
-// Set is immutable and can be shared by concurrent flows. Build a new Set to
-// hot-reload rules; established connections keep their original Decision.
+// Set is immutable and can be shared by concurrent flows. Build a new Set for
+// hot reload; the forwarding layer rechecks which open flows must reconnect.
 type Set struct{ rules []compiled }
 
 func New(scene api.Scene) (*Set, error) {

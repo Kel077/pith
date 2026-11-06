@@ -226,7 +226,7 @@ func (e *Engine) reloadLocked(scene api.Scene, settings api.Settings) error {
 	if err := e.store.SetLogDays(settings.LogDays); err != nil {
 		return err
 	}
-	if err := e.run.router.Reload(scene, settings); err != nil {
+	if err := e.run.forward.Reload(scene, settings); err != nil {
 		return err
 	}
 	e.mu.Lock()

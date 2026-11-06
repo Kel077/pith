@@ -125,7 +125,8 @@ func normalized(a netip.AddrPort) netip.AddrPort {
 }
 
 // Find prefers an exact connected tuple over a wildcard UDP bind. A shared
-// port must never be attributed to an arbitrary process by snapshot order.
+// port must never be attributed to an arbitrary process or socket lifetime by
+// snapshot order, including SO_REUSEPORT sockets owned by the same process.
 func Find(sockets []Socket, local, remote netip.AddrPort) (Socket, error) {
 	local, remote = normalized(local), normalized(remote)
 	bestScore := -1
@@ -166,7 +167,7 @@ func Find(sockets []Socket, local, remote netip.AddrPort) (Socket, error) {
 		}
 		if score > bestScore {
 			best, bestScore, ambiguous = socket, score, false
-		} else if score == bestScore && (socket.PID != best.PID || socket.EffectivePID != best.EffectivePID) {
+		} else if score == bestScore && (socket.PID != best.PID || socket.EffectivePID != best.EffectivePID || socket.Generation != best.Generation) {
 			ambiguous = true
 		}
 	}
