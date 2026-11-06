@@ -145,6 +145,13 @@ func (a *App) settingsView(c *ui.Context) {
 								}
 								a.uninstallButton(c)
 							})
+						case helperNotResponding(a.status):
+							ui.Row(c).Gap(8).Children(func() {
+								if primaryCapsule(c, "repair", icRefresh, locales.Repair()).Focusable().Clicked() {
+									a.installHelper("")
+								}
+								a.uninstallButton(c)
+							})
 						case h.Outdated:
 							if primaryCapsule(c, "update", icRefresh, locales.Update()).Focusable().Clicked() {
 								a.installHelper("")

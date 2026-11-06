@@ -709,6 +709,19 @@ func helperUntrusted(s api.Status) bool {
 	return s.Error != nil && s.Error.Code == api.ErrHelperUntrusted
 }
 
+// helperNotResponding tells whether the verified helper is installed but
+// doesn't answer, so what it routes is unknown, not stopped.
+func helperNotResponding(s api.Status) bool {
+	return s.Error != nil && s.Error.Code == api.ErrHelperNotResponding
+}
+
+// refreshStatus asks the backend for its status now, rather than at the
+// next poll.
+func (a *App) refreshStatus() {
+	var st api.Status
+	a.async(func(ctx context.Context) (err error) { st, err = a.Service.Status(ctx); return err }, func() { a.setStatus(st) }, nil)
+}
+
 // errorText explains an error of the backend to the user.
 func errorText(err error) string {
 	var detail string
@@ -723,6 +736,8 @@ func errorText(err error) string {
 		msg = locales.TheHelperNeedsAnUpdate()
 	case api.ErrHelperUntrusted:
 		msg = locales.PithCanTVerifyItsHelper()
+	case api.ErrHelperNotResponding:
+		msg = locales.TheHelperIsnTAnswering()
 	case api.ErrCanceled:
 		msg = locales.Canceled()
 	case api.ErrInvalidConfig:

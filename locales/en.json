@@ -581,6 +581,18 @@
   "@itDoesnTMatchThisVersion": {
     "description": "Tooltip of the helper's state in Settings when it must be replaced to match this version of the app."
   },
+  "helperNotAnsweringState": "Helper not answering",
+  "@helperNotAnsweringState": {
+    "description": "The routing state in the window's corner and the panel when the installed helper doesn't answer. What it routes is unknown, so not a stopped state."
+  },
+  "theHelperIsnTAnswering": "The helper isn't answering. Pith keeps trying; if it doesn't come back, repair it in Settings.",
+  "@theHelperIsnTAnswering": {
+    "description": "A notice and error message when the installed helper doesn't answer. Try Again asks at once, without a password."
+  },
+  "repair": "Repair",
+  "@repair": {
+    "description": "A button in Settings that sets the helper up again when it doesn't answer. macOS asks for an administrator's password."
+  },
   "helperNotAnswering": "Not answering",
   "@helperNotAnswering": {
     "description": "The helper's state in a word, in Settings: installed, but it does not answer. Its version follows."

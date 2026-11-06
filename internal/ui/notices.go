@@ -38,6 +38,14 @@ func (a *App) notices() []notice {
 				}
 			},
 		})
+	} else if helperNotResponding(a.status) {
+		// Pith keeps polling; Try Again asks now. Repair, in Settings, is
+		// the explicit fix that needs a password.
+		out = append(out, notice{
+			text:   locales.TheHelperIsnTAnswering(),
+			action: locales.TryAgain(),
+			do:     a.refreshStatus,
+		})
 	} else if a.status.State == api.Failed && a.status.Error != nil {
 		out = append(out, notice{
 			text:   locales.RoutingStopped() + errorText(a.status.Error),

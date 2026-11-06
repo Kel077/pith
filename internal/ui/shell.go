@@ -74,6 +74,8 @@ func (a *App) routingCapsule(c *ui.Context) {
 	capsule(c.Key("routing")).Gap(8).Padding(5, 6, 5, 12).Tooltip(a.stateDetail()).Children(func() {
 		col := t.TextMuted
 		switch {
+		case helperNotResponding(a.status):
+			col = t.Warning // unknown, not failed
 		case a.status.State == api.Failed:
 			col = t.Danger
 		case on:
@@ -122,6 +124,8 @@ func (a *App) stateText() string {
 	case helperUntrusted(a.status):
 		// Not "stopped": Pith can't tell what an unverified helper does.
 		return locales.CantVerifyHelper()
+	case helperNotResponding(a.status):
+		return locales.HelperNotAnsweringState()
 	case a.status.State == api.Failed:
 		return locales.StoppedByAnError()
 	}

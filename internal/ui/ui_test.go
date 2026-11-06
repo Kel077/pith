@@ -157,6 +157,20 @@ func TestSnapshots(t *testing.T) {
 		tt.Frame()
 		save(t, tt.Image(), "untrusted-panel-"+mode)
 
+		// A helper that doesn't answer: Settings, and the panel.
+		a, _ = testApp(t, mock.Options{Sample: true, HelperInstalled: true, HelperSilent: true})
+		a.page = "settings"
+		tt = ui.NewTester(a.WindowView, 1040, 1240)
+		tt.SetDark(dark)
+		tt.SetScale(2)
+		tt.Frame()
+		save(t, tt.Image(), "silent-"+mode)
+		tt = ui.NewTester(a.PanelView, PanelWidth, a.PanelHeight())
+		tt.SetDark(dark)
+		tt.SetScale(2)
+		tt.Frame()
+		save(t, tt.Image(), "silent-panel-"+mode)
+
 		// The rule editor, and the checker.
 		a, _ = testApp(t, mock.Options{Sample: true, HelperInstalled: true, Running: true})
 		a.openEditor("home", 2)
@@ -313,6 +327,28 @@ func TestUntrustedHelper(t *testing.T) {
 	a.installHelper("")
 	if st, _ := svc.Status(context.Background()); st.Error != nil || !st.Helper.Running {
 		t.Errorf("after reinstalling, %+v", st)
+	}
+}
+
+// A helper that doesn't answer isn't shown as stopped either; Try Again
+// asks without a password, and Repair sets it up again.
+func TestSilentHelper(t *testing.T) {
+	a, svc := testApp(t, mock.Options{Sample: true, HelperInstalled: true, HelperSilent: true})
+	if got := a.stateText(); got != locales.HelperNotAnsweringState() {
+		t.Errorf("state %q", got)
+	}
+	n := a.notices()
+	if len(n) == 0 || n[0].text != locales.TheHelperIsnTAnswering() || n[0].danger {
+		t.Fatalf("notices %+v", n)
+	}
+	n[0].do()
+	a.toggle()
+	if a.install.open {
+		t.Error("turning routing on with a silent helper asks for a password")
+	}
+	a.installHelper("")
+	if st, _ := svc.Status(context.Background()); st.Error != nil || !st.Helper.Running {
+		t.Errorf("after repairing, %+v", st)
 	}
 }
 

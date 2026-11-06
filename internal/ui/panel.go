@@ -131,6 +131,8 @@ func (a *App) panelHeader(c *ui.Context, on bool) {
 				switch {
 				case on:
 					col = running(t)
+				case helperNotResponding(a.status):
+					col = t.Warning // unknown, not failed
 				case a.status.State == api.Failed:
 					col = t.Danger
 				}

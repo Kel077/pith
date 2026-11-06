@@ -24,6 +24,7 @@ type Options struct {
 	Sample          bool // a configuration with scenes and rules, rather than DefaultConfig
 	HelperInstalled bool
 	HelperUntrusted bool      // installed, but Pith can't verify it (needs HelperInstalled)
+	HelperSilent    bool      // installed and verified, but not answering (needs HelperInstalled)
 	Running         bool      // routing the selected scene from the start (needs HelperInstalled)
 	Seed            uint64    // of the simulation's randomness
 	Now             time.Time // the clock's start; zero: the real clock
@@ -85,6 +86,9 @@ func New(o Options) *Service {
 		// As the client reports a helper it can't verify: neither ready nor
 		// stopped, and no version taken from the unverified peer.
 		s.status = api.Status{State: api.Failed, Error: &api.Error{Code: api.ErrHelperUntrusted}, Helper: api.HelperStatus{Installed: true}}
+	} else if o.HelperSilent && o.HelperInstalled {
+		// What it routes is unknown, so not "stopped" either.
+		s.status = api.Status{State: api.Failed, Error: &api.Error{Code: api.ErrHelperNotResponding}, Helper: api.HelperStatus{Installed: true}}
 	} else if o.Running && o.HelperInstalled {
 		s.startLocked(s.cfg.Selected)
 	}
@@ -175,7 +179,7 @@ func (s *Service) InstallHelper(ctx context.Context) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.untrustedLocked() {
+	if s.unusableLocked() != nil {
 		s.status = api.Status{State: api.Stopped}
 	}
 	s.status.Helper = api.HelperStatus{Installed: true, Running: true, Version: "0.1.0"}
@@ -186,7 +190,7 @@ func (s *Service) InstallHelper(ctx context.Context) error {
 func (s *Service) UninstallHelper(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.untrustedLocked() {
+	if s.unusableLocked() != nil {
 		s.status = api.Status{State: api.Stopped}
 	} else {
 		s.stopLocked()
@@ -196,17 +200,22 @@ func (s *Service) UninstallHelper(ctx context.Context) error {
 	return nil
 }
 
-// untrustedLocked tells whether the helper is one Pith can't verify.
-func (s *Service) untrustedLocked() bool {
-	return s.status.Error != nil && s.status.Error.Code == api.ErrHelperUntrusted
+// unusableLocked returns the error of a helper Pith can't use: one it
+// can't verify, or one that doesn't answer. Nil when it can use it.
+func (s *Service) unusableLocked() *api.Error {
+	if e := s.status.Error; e != nil && (e.Code == api.ErrHelperUntrusted || e.Code == api.ErrHelperNotResponding) {
+		return &api.Error{Code: e.Code}
+	}
+	return nil
 }
 
 func (s *Service) Start(ctx context.Context, sceneID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if e := s.unusableLocked(); e != nil {
+		return e
+	}
 	switch {
-	case s.untrustedLocked():
-		return &api.Error{Code: api.ErrHelperUntrusted}
 	case !s.status.Helper.Installed:
 		return &api.Error{Code: api.ErrHelperMissing}
 	case s.scene(sceneID) == nil:
@@ -219,8 +228,8 @@ func (s *Service) Start(ctx context.Context, sceneID string) error {
 func (s *Service) Stop(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.untrustedLocked() {
-		return &api.Error{Code: api.ErrHelperUntrusted}
+	if e := s.unusableLocked(); e != nil {
+		return e
 	}
 	s.stopLocked()
 	return nil

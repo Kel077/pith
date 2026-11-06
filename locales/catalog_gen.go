@@ -2744,6 +2744,54 @@ func (msgs Messages) ItDoesnTMatchThisVersion() string {
 	return Catalog.Format(msgs.locale, "itDoesnTMatchThisVersion", nil)
 }
 
+// HelperNotAnsweringState says "Helper not answering"
+// in the language the app shows.
+//
+// The routing state in the window's corner and the panel when the installed
+// helper doesn't answer. What it routes is unknown, so not a stopped state.
+func HelperNotAnsweringState() string { return In(i18n.Locale()).HelperNotAnsweringState() }
+
+// HelperNotAnsweringState says "Helper not answering"
+// in the language of msgs.
+//
+// The routing state in the window's corner and the panel when the installed
+// helper doesn't answer. What it routes is unknown, so not a stopped state.
+func (msgs Messages) HelperNotAnsweringState() string {
+	return Catalog.Format(msgs.locale, "helperNotAnsweringState", nil)
+}
+
+// TheHelperIsnTAnswering says "The helper isn't answering. Pith keeps trying; if it doesn't come back, repair it in Settings."
+// in the language the app shows.
+//
+// A notice and error message when the installed helper doesn't answer. Try
+// Again asks at once, without a password.
+func TheHelperIsnTAnswering() string { return In(i18n.Locale()).TheHelperIsnTAnswering() }
+
+// TheHelperIsnTAnswering says "The helper isn't answering. Pith keeps trying; if it doesn't come back, repair it in Settings."
+// in the language of msgs.
+//
+// A notice and error message when the installed helper doesn't answer. Try
+// Again asks at once, without a password.
+func (msgs Messages) TheHelperIsnTAnswering() string {
+	return Catalog.Format(msgs.locale, "theHelperIsnTAnswering", nil)
+}
+
+// Repair says "Repair"
+// in the language the app shows.
+//
+// A button in Settings that sets the helper up again when it doesn't
+// answer. macOS asks for an administrator's password.
+func Repair() string { return In(i18n.Locale()).Repair() }
+
+// Repair says "Repair"
+// in the language of msgs.
+//
+// A button in Settings that sets the helper up again when it doesn't
+// answer. macOS asks for an administrator's password.
+func (msgs Messages) Repair() string {
+	return Catalog.Format(msgs.locale, "repair", nil)
+}
+
 // HelperNotAnswering says "Not answering"
 // in the language the app shows.
 //
