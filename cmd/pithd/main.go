@@ -20,7 +20,7 @@ import (
 	"github.com/Kel077/pith/internal/testprofile"
 )
 
-var version = "dev"
+var version = helper.Version
 
 func main() {
 	if err := run(); err != nil {
