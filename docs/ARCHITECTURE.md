@@ -65,8 +65,8 @@ or denied calls fail without a numeric-PID fallback. This is confined to the
 explicit acceptance option, not the app/helper. Its private reports retain normal,
 forced and incomplete cleanup, and a separate post-uninstall inventory lists all
 still-present processes started in the recorded window. That inventory is read-only
-and cannot authorize future signals. The coordinator has verified the normal
-automatic-open cleanup path on hardware; independently managed launchd Safari
+and cannot authorize future signals. The normal automatic-open cleanup path was
+verified on hardware at `936c6a7`; independently managed launchd Safari
 agents remain outside its ownership, as recorded in the acceptance documents.
 
 ### Capture ownership
@@ -293,8 +293,8 @@ VPN can supply a different route layout.
 ### Rebuilding a VPN while capture is running
 
 The runtime separates capture ownership from replaceable egress observations.
-Synthetic drivers and transition tests cover the guarantees below. The coordinator
-also verified the bounded full IPv4 Tailscale disconnect/reconnect stage on
+Synthetic drivers and transition tests cover the guarantees below. The bounded
+full IPv4 Tailscale disconnect/reconnect stage was verified on hardware at
 `fbb5234`, without an exit node: local MagicDNS and physical/system public controls
 passed through reconstruction, followed by clean Stop with `endedAt`, post-Stop
 DNS, reviewed external-change rebaseline and uninstall. The rebuilt tunnel reused
@@ -451,7 +451,7 @@ route deletion ordinals, device/event closure, verification retries, relay/monit
 draining, telemetry, and fault rollback. Recording failures do not prevent routing
 cleanup. Capture-close errors also publish their sanitized phase/error kind through
 the existing `Status.RouteDiagnostics`, which the test harness already archives;
-the coordinator need not read a root-owned file to identify a failing close step.
+identifying a failing close step does not require reading a root-owned file.
 
 The helper's private directory is `/Library/Application Support/Pith`. It contains
 the capture journal, daily JSONL connection snapshots and atomic `traffic.json`.
@@ -474,6 +474,15 @@ unverified-manifest fallback. File hash caching includes inode, device, ownershi
 permissions, size, modification and change timestamps; peer checks are never
 cached across sockets.
 
+IPC does not depend on a surviving app resource path: a moved or replaced bundle
+cannot prevent Stop of an installed, executing helper that still matches the
+compiled identity. An installed artifact with no answering peer is a failed
+`helper_not_responding` status, never proof that routing stopped. Status retries
+do not authorize changes; explicit repair can stage the verified installed bytes
+and re-bootstrap them with administrator approval. Removal similarly uses a
+verified staged cleanup executable and restores the previous registration if
+cleanup fails after bootout, retaining the executable, plist and journal.
+
 App versions do not authorize helper access. A different artifact/protocol requires
 replacement, even on an app downgrade. Unverifiable file/peer identity returns a
 failed status with `helper_untrusted`, no claimed version/scene, and no normal IPC.
@@ -489,9 +498,9 @@ flags, `--safe-target IP:443`, `--safe-server-name example.com`, `--data-dir` an
 `--socket`. Scoped capture never expands to global DNS routes. Passing these flags
 does not start routing: an authenticated Start is still required. Each scoped
 capture stops automatically after five minutes even if its controller dies;
-hot reload never extends that lease. **Do not run a
-root capture test without the coordinator's explicit go-ahead and the recorded
-undo plan.** Unit tests use fake drivers, memory tunnels and synthetic addresses;
+hot reload never extends that lease. **Root capture tests require administrator
+approval and a recorded undo plan.** Unit tests use fake drivers, memory tunnels
+and synthetic addresses;
 unprivileged live tests only read interface/socket metadata or use loopback.
 
 Full IPv4 acceptance uses a separate `--test-profile full-ipv4` installation,

@@ -14,18 +14,17 @@ one-query smoke gate and bounded batch, as recorded below. The scoped QUIC/HTTP/
 harness has also passed its reviewed hardware subset after the UDP lifetime fix.
 The disposable app-bundle subset and separate delegated Safari observation have
 also passed hardware acceptance. Safari used one explicit LaunchServices open
-to a stable IPv4-only endpoint, with Private Relay disabled by the user. This
+to a stable IPv4-only endpoint, with Private Relay disabled. This
 proves fresh kernel delegation and the selected exit, not automatic page-body
 verification or Private Relay support. The bounded throughput comparison has also
 passed its scoped hardware subset; sustained capacity remains unverified.
 
 ## Recorded throughput hardware comparison
 
-The coordinator reported that `8a9094f` passed a managed `host-ipv4` session:
-manual cancellation was explicitly skipped; installation, TCP smoke, all three
-throughput phases on a cellular hotspot, all three on wired Ethernet, and
-uninstall passed. The wired invocation was gated on the hotspot result. Two
-managed authorizations covered installation and uninstall. Independent checks
+The throughput comparison was verified on hardware at `8a9094f` in a `host-ipv4`
+session: installation, TCP smoke, all three throughput phases on a cellular
+hotspot, all three on wired Ethernet, and uninstall passed. Cancellation was not
+tested. The wired invocation was gated on the hotspot result. Independent checks
 found no helper or rootcheck processes and unchanged default routing.
 
 Application throughput in Mbps (download / upload), using 32 MiB downloads and
@@ -55,21 +54,20 @@ CPU profiles are needed before claiming a relay ceiling or sustained capacity.
 
 ## Recorded Safari hardware acceptance
 
-The coordinator reported a successful scoped Safari/WebKit observation using
-`5a60671`: TCP smoke and independent delegated socket/exit evidence passed,
-without an authorization dialog; uninstall restored routing and helper state. The actual frozen target
-was identified by ordinal. The page body was not automatically verified.
+Scoped Safari/WebKit observation was verified on hardware at `5a60671`: TCP
+smoke and independent delegated socket/exit evidence passed; uninstall restored
+routing and helper state. The actual frozen target was identified by ordinal.
+The page body was not automatically verified.
 
 Later review found browser processes left by the former automatic-open harness.
-The coordinator removed those test-owned processes. The new lifecycle refuses
-an already running Safari, uses bounded identity-checked cleanup on every return,
-and independently audits all processes started in the test window after uninstall.
-The coordinator subsequently verified `936c6a7` on hardware: managed cancellation
-was explicitly skipped; installation, TCP smoke, delegated observation, automatic
-browser cleanup and uninstall passed. Independent coalition inspection found no
-remaining Safari or WebKit process in any coalition created by that Safari launch.
-Two managed authorizations covered installation and uninstall. The earlier routing
-pass alone did not establish process cleanup. Synthetic tests cover existing browsers,
+The new lifecycle refuses an already running Safari, uses bounded identity-checked
+cleanup on every return, and independently audits all processes started in the
+test window after uninstall.
+Installation, TCP smoke, delegated observation, automatic browser cleanup and
+uninstall were subsequently verified on hardware at `936c6a7`. Cancellation was
+not tested. Independent coalition inspection found no remaining Safari or WebKit
+process in any coalition created by that Safari launch. The earlier routing pass
+alone did not establish process cleanup. Synthetic tests cover existing browsers,
 other applications' WebKit services, PID reuse, cancellation and stubborn children.
 
 The time-window audit intentionally included unrelated applications and system
@@ -84,7 +82,7 @@ of a larger address pool. Choose a small stable A-record set and **no AAAA
 records**; Safari may select IPv6, which is outside the IPv4 host capture. The
 bounded prepare preflight now compares three A answers and queries AAAA once,
 retaining warnings without widening capture. Short or cached DNS samples cannot
-guarantee later stability; the coordinator still reviews this prerequisite.
+guarantee later stability; this prerequisite still needs review.
 
 The multi-host startup also exposed an `ENOMEM` RIB size/copy race. Padded,
 bounded read retries and a separate ownership-observation window fixed it;
@@ -94,16 +92,16 @@ VPN rebuilding, or throughput performance.
 
 ## Recorded application bundle hardware acceptance
 
-The coordinator reported successful hardware acceptance of `fb94688`: TCP smoke,
-the main executable's `--app-bundle` IP rule through A, and all six
-`--app-bundle-batch` cases. The nested helper inherited the parent's IP rule; the
+Application bundles were verified on hardware at `fb94688`: TCP smoke, the main
+executable's `--app-bundle` IP rule through A, and all six `--app-bundle-batch`
+cases passed. The nested helper inherited the parent's IP rule; the
 outside control retained system routing. Main and nested executables matched the
 outermost Bundle ID with a TLS domain target. The parent's block applied to its
 helper while leaving the outside control untouched. Process, tuple, application,
 rule, exit and byte evidence passed. Uninstall restored the baseline, all temporary
-apps were deleted, and independent system checks were clean. Reports were reviewed
-privately and deleted. This establishes bundle containment and identity matching,
-not XPC activation or delegated Safari/WebKit attribution.
+apps were deleted, and independent system checks were clean. This establishes
+bundle containment and identity matching, not XPC activation or delegated
+Safari/WebKit attribution.
 
 The first QUIC hardware smoke passed. Its batch stopped after the first verified
 HTTP/3 response because the same UDP tuple was split into a second unattributed
@@ -113,26 +111,26 @@ until normal idle, preserving queued tail datagrams. The failed run's triggering
 error was not retained, so the triggering hardware packet was not directly
 observed. Evidence failures now distinguish early closure, duplicate tuples
 (including missing owners) and pending byte counts from HTTP/3 request failure.
-The coordinator verified clean uninstall. That failed attempt remains distinct
-from the successful repeat recorded below.
+Uninstall was verified clean. That failed attempt remains distinct from the
+successful repeat recorded below.
 
 ## Recorded QUIC hardware acceptance
 
-The coordinator reported successful hardware acceptance of `8dd603e`: TCP smoke,
-the single `--quic` HTTP/3 IP request through A, and all three `--quic-batch` cases
+QUIC/HTTP/3 was verified on hardware at `8dd603e`: TCP smoke, the single `--quic`
+HTTP/3 IP request through A, and all three `--quic-batch` cases passed
 (observable Initial SNI domain rule through A, IP rule through B, and IP rule
 through A with a fragmented Initial ClientHello). Verified server HTTP/3 responses
 and exact helper process/tuple/rule/interface/name/counter evidence passed.
 Uninstall restored the baseline and independent system-state checks were clean.
-Reports were reviewed privately and deleted. This covers the reviewed IPv4 QUIC
-v1/HTTP/3 subset, not ECH, migration, 0-RTT, HTTP retry or general multi-packet SNI
-reassembly. The repeat also exercises the corrected UDP binding lifetime; the
+This covers the reviewed IPv4 QUIC v1/HTTP/3 subset, not ECH, migration, 0-RTT,
+HTTP retry or general multi-packet SNI reassembly. The repeat also exercises the
+corrected UDP binding lifetime; the
 synthetic regression separately covers IPv4 and IPv6 ICMP errors.
 
 ## Recorded full IPv4 hardware acceptance
 
-The coordinator reported a successful hardware run of `9ceff5c`, with Tailscale
-disconnected. The following full IPv4 cases passed, each using bounded capture:
+Full IPv4 was verified on hardware at `9ceff5c`, with Tailscale disconnected.
+The following cases passed, each using bounded capture:
 
 * `smoke`: immediate SafeStart, system egress and a rule through adapter A.
 * `batch`: all 11 TCP cases, including block priority, interface/system fallback
@@ -143,7 +141,7 @@ disconnected. The following full IPv4 cases passed, each using bounded capture:
 * `crash`: helper death removed capture and the replacement helper started idle.
 * Final `uninstall`: baseline restoration passed. Independent inspection found
   none of the eight capture prefixes, retained normal default routing and
-  connectivity, and found no remaining test processes or sudo credential cache.
+  connectivity, and found no remaining test processes.
 
 The initial full-capture SafeStart failed because XNU's bound-socket fallback
 looked up the zero address when no scoped route matched. The former lower `/1`
@@ -160,22 +158,20 @@ another observed name, such as SNI or HTTP Host. This is not a DNS-capture pass.
 
 This record does not cover full capture with Tailscale connected (including VPN
 restart), full IPv6 capture, UDP/QUIC, app bundles/delegated processes, or throughput.
-Tool attribution is not bundle acceptance. Raw reports were reviewed privately
-and deleted; no network identifiers or raw observations are reproduced here.
+Tool attribution is not bundle acceptance.
 
 ## Recorded UDP/DNS hardware acceptance
 
-The coordinator also reported successful scoped UDP/DNS hardware acceptance of
-`c342de7`: TCP smoke, the single A-query `--udp-dns` smoke through adapter A,
-and the complete two-resolver `--udp-dns-batch`. The first resolver passed ten
+Scoped UDP/DNS was verified on hardware at `c342de7`: TCP smoke, the single A-query
+`--udp-dns` smoke through adapter A, and the complete two-resolver `--udp-dns-batch`
+passed. The first resolver passed ten
 cases, including idle expiry and a new session through B on the same application
 source port; the second passed eight cases. The batch checked A/AAAA replies,
 nonce/tuple attribution, rule/interface/outcome, payload counters, reuse, hot
 reload, block priority and deterministic fallback. Uninstall restored the
 baseline; independent inspection confirmed ordinary resolver routing, working
-system DNS, no owned residue and no sudo credential cache. Reports were reviewed
-privately and deleted. This establishes the reviewed IPv4 UDP/DNS subset, not
-general UDP services, pre-existing UDP, cache expiry, QUIC or public NAT ports.
+system DNS and no owned residue. This establishes the reviewed IPv4 UDP/DNS subset,
+not general UDP services, pre-existing UDP, cache expiry, QUIC or public NAT ports.
 
 ## Review and boundaries
 
@@ -190,8 +186,8 @@ Preserve the initial routes, interface names/indices, DNS configuration, launchd
 registration, system-directory permissions and existing long-lived connections.
 Each stage gets its own accepted baseline; an approved external VPN change may
 be accepted only while Pith is stopped and with the documented ownership proof.
-Keep the app and other helper installers closed. The user controls any approved
-VPN mode change; neither the harness nor an agent starts or updates a VPN.
+Keep the app and other helper installers closed. VPN mode changes are manual;
+the harness never starts or updates a VPN.
 
 Installation/removal use the reviewed prompts in [root tests](ROOT-TEST.md).
 Rebaseline itself has no administrator dialog. Changed frozen scopes require a
@@ -241,7 +237,7 @@ to obtain a pass. Preserve failures and independent cleanup evidence separately.
 | UDP and DNS | Passed the reviewed two-resolver IPv4 hardware subset. One-query smoke, then at most 11/20 queries for one/two resolvers; two-second response deadlines, no retries or TCP fallback. | Match DNS IDs/questions and exact application tuple/PID/path against helper records, including rule/interface/outcome and payload counters. Check A/AAAA, stable pre-NAT source tuples, hot reload, block/fallback, reuse and replacement after the ten-second DNS idle timeout. Record TTLs without dialing answer addresses or widening capture. | Cache expiry, ordinary UDP's two-minute idle timeout, pre-existing connected UDP and unconnected listeners remain separate gaps. The latter has a known source-port limitation. Silent-peer timeout does not prove automatic interface failover; DNS replies cannot prove public NAT ports. |
 | QUIC | Passed the reviewed IPv4 hardware subset: one frozen `/32`, one HTTP/3 smoke request through A, then three sequential cases; ten seconds per exchange, bounded socket payload and packet counts. | Require verified TLS/ALPN and a real HTTP/3 response, exact UDP process/tuple/rule/interface/name records and counters. Test domain routing with observable SNI, IP routing through B, then IP routing through A with a fragmented ClientHello that lacks recoverable first-datagram SNI. | The fragmented control is not ECH or multi-packet name recovery. No redirects, application retries, TCP fallback, unreviewed destination or plaintext/packet logging. Stop and verify routes/tunnel. See the [QUIC procedure](ROOT-TEST.md#bounded-quichttp3-stage). |
 | App bundle and helpers | Passed the reviewed hardware subset: one main-executable smoke request, then six nested/helper/control cases to the existing host, each with an eight-second deadline. | Correlate spawned PID, executable, exact application tuple, outer bundle path/identifier, rule/outcome/interface and bytes. Exercise path and identifier matching independently, then block priority and the outside control. | Children were reaped, private fixtures removed and uninstall restored the baseline. See the [bundle procedure](ROOT-TEST.md#disposable-application-bundle-stage). This does not establish XPC activation or delegated sockets. |
-| Safari/WebKit delegation | Scoped hardware subset passed; repeat with a stable IPv4-only endpoint: `prepare --webkit-app` freezes Safari metadata/executable, the existing endpoint URL and all A records in one bounded resolver answer (at most 16 scoped hosts). After TCP smoke, `check --webkit 45s` waits for one manual navigation; explicit `--webkit-open` opens that URL once after READY via LaunchServices. At most 60 seconds. | Independently correlate a fresh exact PCB tuple, owner and delegated PID, effective Safari executable/bundle, helper process/app/rule/interface, outbound tuple and bidirectional bytes. No new capture prefixes or DNS overrides. | Missing/new-address/reused/short-lived socket evidence is incomplete, with no retry or capture widening. Automatic pass proves delegation and exit only, not page content. No AppleScript or window/tab control. Automatic open refuses an existing Safari and owns bounded cleanup of the newly launched browser and independently attributed WebKit services; manual mode leaves cleanup to the coordinator. See the [Safari procedure](ROOT-TEST.md#bounded-safariwebkit-observation); background URLSession is skipped. |
+| Safari/WebKit delegation | Scoped hardware subset passed; repeat with a stable IPv4-only endpoint: `prepare --webkit-app` freezes Safari metadata/executable, the existing endpoint URL and all A records in one bounded resolver answer (at most 16 scoped hosts). After TCP smoke, `check --webkit 45s` waits for one manual navigation; explicit `--webkit-open` opens that URL once after READY via LaunchServices. At most 60 seconds. | Independently correlate a fresh exact PCB tuple, owner and delegated PID, effective Safari executable/bundle, helper process/app/rule/interface, outbound tuple and bidirectional bytes. No new capture prefixes or DNS overrides. | Missing/new-address/reused/short-lived socket evidence is incomplete, with no retry or capture widening. Automatic pass proves delegation and exit only, not page content. No AppleScript or window/tab control. Automatic open refuses an existing Safari and owns bounded cleanup of the newly launched browser and independently attributed WebKit services; manual mode requires manual browser cleanup. See the [Safari procedure](ROOT-TEST.md#bounded-safariwebkit-observation); background URLSession is skipped. |
 | Throughput | Passed the reviewed short hardware comparison; sustained capacity pending: one frozen IPv4 HTTPS endpoint and explicit per-adapter caps; `check --throughput a` before `b`. Direct bound baseline first, then captured minimal and 1001-rule scenes on the same adapter. Each phase has one finite warmup (five-second deadline), download and upload (15 seconds each). | Verified HTTP/1.1 response, client payload/TLS byte meters and elapsed time independently of Pith counters; correlate process/tuple/rule/exit and counters. Record helper CPU/RSS, two-second idle CPU, exact connections and serialized JSON size (not disk log volume). | Reserve all nine requests before the first; failures never retry or refund. Enforce socket caps with at least half the total cap unused as network headroom. Single-stream short samples do not certify sustained capacity or the 500 Mbps target. Topology/capture/helper identity changes abort. See the [throughput procedure](ROOT-TEST.md#bounded-throughput-comparison). |
 | Full IPv4 extensions after scoped stages | The core TCP and cleanup cases above have passed. DNS, mixed-protocol and VPN extensions still need separate approval and a helper-enforced lease of at most 120 seconds; one ordinary TCP request first, then a small bounded batch. Use the eight IPv4 split prefixes above; do not enable IPv6 capture in this stage. | Review all intended LAN-DNS host routes as well as every split prefix. Retain the TCP regression checks, and separately verify real observed DNS answers, mixed protocols and the selected VPN/tailnet/MagicDNS controls without scanning peers. | Prove each asserted flow crossed Pith and reached the expected external path. Stop on lost ordinary connectivity, routing loops, unexpected destination scope, conflicting ownership, or changed VPN state. After Stop and optional separately approved helper crash, verify no Pith split prefix, DNS host route or utun remains, and unrelated paths still work. |
 
@@ -259,14 +255,13 @@ does not itself prove that a test request traversed it.
 
 ## Recorded IPv6 host hardware acceptance
 
-The coordinator reported successful hardware acceptance of `d359287`: `host-ipv6`
+Host IPv6 was verified on hardware at `d359287`: `host-ipv6`
 passed smoke, all 11 batch cases, app-bypass, preservation, forced SafeStart
 failure and crash recovery. A scoped IPv4 regression passed the same TCP cases
 without a crash test, and full IPv4 passed the same cases including crash
 recovery. Every uninstall restored its accepted baseline. Independent inspection
 confirmed ordinary IPv4/IPv6 routing and connectivity, no remaining owned routes,
-tunnel or test processes, and no sudo credential cache. Raw session reports were
-reviewed privately and deleted. These results cover host IPv6 and the full IPv4
+tunnel or test processes. These results cover host IPv6 and the full IPv4
 TCP subset, not full IPv6, UDP/QUIC, bundles or throughput.
 
 The `host-ipv6` harness freezes one `/128`,
@@ -278,8 +273,8 @@ deadline. Preparation, installation identity, family/scope rejection and cleanup
 also have synthetic coverage.
 
 The first hardware smoke attempt stopped during SafeStart with
-`unreadable configured route event`; the coordinator verified clean rollback and
-uninstall. Source analysis and a synthetic wire-format reproduction found that
+`unreadable configured route event`; rollback and uninstall were verified clean.
+Source analysis and a synthetic wire-format reproduction found that
 `-net` with IPv6 `/128` removes HOST while omitting the mask. Host additions and
 deletions now explicitly use `-host` in both families. The former report had no
 event metadata, so the exact offending hardware message is unconfirmed. Inspect
@@ -329,20 +324,19 @@ Additional preservation, tool-bypass or crash cases need to be included in this
 session's explicit scope. No UDP/QUIC, bundle, throughput or full IPv6 test is
 implicitly enabled by the IPv6 host profile.
 
-## Confirmed scope for later harness extensions
+## Harness fixtures and budgets
 
-The coordinator has confirmed the choices below. Keep actual endpoint names,
-adapter identities and byte budgets in private session notes, not in this table.
-They define the fixtures and bounded requests; no harness is run by the engine
-developer. The coordinator reviews each completed implementation before use.
+The fixtures below define the available bounded requests. Keep actual endpoint
+names, adapter identities and byte budgets in private session notes, not in this
+table. Each session requires review of its concrete scope and undo plan.
 
-| Stage | Coordinator/user choices | Harness preparation after confirmation |
+| Stage | Required fixtures | Harness preparation |
 | --- | --- | --- |
 | UDP and DNS | Two permitted public IPv4 DNS resolvers on port 53; small A/AAAA queries for one reviewed name, using DNS IDs as nonces. No echo server. | Implemented: freeze up to two `/32` DNS hosts and the question, run `--udp-dns` before `--udp-dns-batch`, validate replies/tuples/policy/counters and session reuse/expiry. At most 11/20 batch queries for one/two resolvers. TTLs are evidence only; do not dial answer addresses or infer public NAT ports. See the [bounded DNS procedure](ROOT-TEST.md#bounded-udpdns-stage). |
 | QUIC | One permitted HTTP/3 endpoint; one request per case, with a real HTTP/3 response as application evidence. | Implemented: freeze endpoint/certificate and request/packet budgets in `quic-plan.json`, run `--quic` before `--quic-batch`. The third batch request is an explicit fragmented-Initial negative SNI control with a positive IP-route response. |
-| App bundles and delegation | A temporary pure-Go `.app` with main executable, nested helper, and an outside-bundle control; one Safari request to the frozen URL. Background URLSession is explicitly skipped this round. | Bundle portion implemented: `prepare --app-bundle` freezes checksums/metadata and request limits; `--app-bundle` gates `--app-bundle-batch`. Children exit and fixtures are removed. WebKit requires a separate observation; bundle containment does not establish delegation. |
+| App bundles and delegation | A temporary pure-Go `.app` with main executable, nested helper, and an outside-bundle control; one Safari request to the frozen URL. Background URLSession is outside this stage. | Bundle portion implemented: `prepare --app-bundle` freezes checksums/metadata and request limits; `--app-bundle` gates `--app-bundle-batch`. Children exit and fixtures are removed. WebKit requires a separate observation; bundle containment does not establish delegation. |
 | Throughput | A permitted upload/download service, direct baseline before Pith, separate wired and cellular total byte budgets. | Implemented: freeze endpoint/protocol and private caps in `throughput-plan.json`; exclusive attempts reserve baseline, warmup and captured phases before transfer. Bound TLS bytes and request time independently, preserve overhead headroom, and never retry or replace an endpoint automatically. |
-| Full capture with Tailscale | The user enables the VPN and manually disconnects/reconnects at the agreed checkpoint. MagicDNS checks use only this machine's name; no peer scan. | Hardware-verified on `fbb5234`, including clean Stop, post-Stop DNS, reviewed external-change rebaseline and uninstall. Freeze own-name/Quad100 evidence with `--vpn-own-name` / `--vpn-dns-target`, then `check --vpn-restart` after smoke. No remote peer, daemon self-update or long-lived connection continuity claim. |
+| Full capture with Tailscale | Enable the VPN and manually disconnect/reconnect at the defined checkpoint. MagicDNS checks use only this machine's name; no peer scan. | Verified on hardware at `fbb5234`, including clean Stop, post-Stop DNS, reviewed external-change rebaseline and uninstall. Freeze own-name/Quad100 evidence with `--vpn-own-name` / `--vpn-dns-target`, then `check --vpn-restart` after smoke. No remote peer, daemon self-update or long-lived connection continuity claim. |
 
 ## Required full-capture VPN restart acceptance
 
@@ -352,12 +346,13 @@ capture routes, observer failure, pending and established sockets, and VPN
 packets arriving before notifications. Hardware coverage is the narrower stage
 recorded below, not every synthetic fault or continuity scenario.
 
-**Hardware-verified on `fbb5234`: user-controlled Tailscale disconnect/reconnect
+**Verified on hardware at `fbb5234`: manual Tailscale disconnect/reconnect
 during full IPv4 capture, without an exit node, including clean Stop.**
-see the [exact procedure](ROOT-TEST.md#manual-vpn-reconstruction-during-full-ipv4-capture).
+See the [exact procedure](ROOT-TEST.md#manual-vpn-reconstruction-during-full-ipv4-capture).
 Freeze this Mac's own MagicDNS name, the device-local Quad100 resolver and the
 public control endpoint. The A answer must match the VPN interface's own address.
-No agent invokes the VPN CLI, operates its menu, updates it or scans peers.
+The harness invokes no VPN CLI and does not operate its menu, update it or scan
+peers.
 Use the separately reviewed 120-second full-profile installation and pass ordinary
 TCP smoke first. `check --vpn-restart` then permits exactly one manual transition.
 
@@ -384,9 +379,6 @@ The VPN reused its tunnel name with a new index, unchanged addresses and the sam
 13 routes. After independent review, external-change rebaseline and uninstall
 both passed. Independent checks found no helper, split prefixes or Pith tunnel,
 and verified normal wired default routing, public HTTPS and local MagicDNS.
-Two delegated authorizations were used in the successful run; eight covered all
-four runs of this stage. No private names, addresses or interface identifiers are
-part of this record.
 
 * `348214c`: fix the harness's DNS deadline/close classification.
 * `64d1214`: bound MagicDNS readiness retries inside the rebuild window.

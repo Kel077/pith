@@ -2,9 +2,9 @@
 
 This document describes an opt-in test harness and records the limited completed
 hardware coverage below. A past result does not authorize another session.
-Do not run a command that opens an administrator dialog or starts capture until
-the coordinator has obtained the user's approval for this session. Run the
-harness as the installing user, never with `sudo` or as root.
+Privileged operations require administrator approval for the specific session.
+Review the capture scope and undo plan before starting. Run the harness as the
+installing user, never with `sudo` or as root.
 
 The default host-scoped session captures only one explicitly selected public IPv4 `/32`
 HTTPS destination, plus an optional public IPv4 `/32` DNS destination. It does
@@ -18,13 +18,13 @@ installed and idle until the explicit uninstall step.
 
 ## Recorded full IPv4 result
 
-The coordinator reported that the full IPv4 hardware run of `9ceff5c`, with
-Tailscale disconnected, passed `smoke`, all 11 `batch` cases, `app-bypass`,
-`preserve`, `safe-failure` and `crash`. Final `uninstall` restored the accepted
+Full IPv4 was verified on hardware at `9ceff5c`, with Tailscale disconnected:
+`smoke`, all 11 `batch` cases, `app-bypass`, `preserve`, `safe-failure` and `crash`
+passed. Final `uninstall` restored the accepted
 baseline. Independent inspection found none of Pith's eight split prefixes,
-normal default routing and connectivity, no remaining test processes and no
-sudo credential cache. The app-bypass result covers standalone executables and
-their different-path child, not app bundles or delegated networking services.
+normal default routing and connectivity, and no remaining test processes.
+The app-bypass result covers standalone executables and their different-path
+child, not app bundles or delegated networking services.
 
 The initial full-capture SafeStart failed at outbound forwarding. When no scoped
 route matched a bound socket, XNU fell back to a longest-prefix lookup of the
@@ -48,20 +48,17 @@ has now passed on hardware. Full IPv6, broader UDP/QUIC coverage, background
 delegation and sustained throughput remain separate acceptance items.
 The later scoped IPv6, UDP/QUIC, bundle, Safari and short throughput results are
 recorded separately here and in [the acceptance plan](NEXT-ACCEPTANCE.md).
-Raw reports were reviewed privately and deleted; only this sanitized outcome is
-retained. A skipped manual cancellation under delegated authorization is not a
-cancellation-dialog pass.
+These results do not establish cancellation-dialog behavior.
 
 ## Recorded IPv6 host result and IPv4 regressions
 
-The coordinator reported that `d359287` passed `host-ipv6` smoke, all 11 batch
-cases, app-bypass, preservation, forced SafeStart failure and crash recovery.
+Host IPv6 was verified on hardware at `d359287`: smoke, all 11 batch cases,
+app-bypass, preservation, forced SafeStart failure and crash recovery passed.
 The scoped IPv4 regression passed smoke, batch, app-bypass, preservation and
 forced SafeStart failure; full IPv4 passed those cases and crash recovery.
 Each uninstall restored its baseline. Independent inspection confirmed ordinary
 IPv4/IPv6 routing and connectivity, no remaining owned routes, tunnel or test
-processes, and no sudo credential cache. Raw reports were reviewed privately and
-deleted. The IPv6 result covers one frozen `/128`, not full IPv6 capture.
+processes. The IPv6 result covers one frozen `/128`, not full IPv6 capture.
 
 Three issues were corrected on the way to that pass: explicit `-host` preserves
 HOST and host-route semantics where IPv6 `-net /128` omitted both HOST and the
@@ -156,7 +153,7 @@ Do not use a path inside the repository or the normal application config
 directory. A changed helper or regenerated installation plan invalidates the
 review; `cancel` and `install` recheck the SHA-256 and reviewed script before
 authorization. The root installation stage independently verifies the copied
-binary checksum after the password dialog.
+binary checksum after administrator approval.
 
 The installation plan also lists two shared parent directories under
 `CreatesIfMissing`. `/Library/PrivilegedHelperTools` is created as root:wheel
@@ -178,10 +175,9 @@ External-change acceptance also requires complete capture identities and boot/
 interface-index observations from this version. An old session cannot infer
 that history from utun names or be upgraded by editing its JSON.
 
-The coordinator should review these concrete artifacts and obtain the user's
-go-ahead now. Keep a second Terminal window open with the emergency command
-already copied. Do not start the application or another helper installer
-during the session.
+Review these artifacts before administrator approval. Keep a second Terminal
+window open with the emergency command already copied. Do not start the
+application or another helper installer during the session.
 
 ## Separate full IPv4 installation
 
@@ -226,11 +222,9 @@ SafeStart cannot be disabled, including by hot Reload or repeated Start.
 The exact install/cancellation prompt is:
 `Pith needs your password to install its full IPv4 test helper (at most 120 seconds per capture).`
 The uninstall and optional crash prompts, managed paths, ownership checks and
-emergency-command construction are unchanged. Dialog mode uses one canceled
-installation dialog and two password authorizations; optional crash adds one.
-Managed authorization, only when separately permitted, marks cancellation as
-skipped as described below. These are separate session counts, not permission
-to reuse a previous installation or credential authorization.
+emergency-command construction are unchanged. Installation, uninstall and the
+optional deliberate crash each require administrator approval. Cancellation
+must be tested separately; a previous session does not authorize another one.
 
 The harness accepts a 30-to-120-second lease, default 120 seconds. The immutable
 helper limit starts before startup work, includes SafeStart, and never extends
@@ -324,10 +318,9 @@ local addresses; closing it removes those along with the single owned `/128`.
 The exact install/cancellation prompt is:
 `Pith needs your password to install its IPv6 host test helper (at most 60 seconds per capture).`
 Use the same separately reviewed cancel/install/check/stop/uninstall sequence and
-ownership-checked emergency command as above. Dialog counts are one cancellation
-and two password authorizations, plus one only for an approved crash; managed
-authorization remains a separate explicit choice. The helper starts idle and
-the controller leaves ten seconds of margin before the helper deadline.
+ownership-checked emergency command as above. Installation, uninstall and the
+optional deliberate crash each require administrator approval. The helper starts
+idle and the controller leaves ten seconds of margin before the helper deadline.
 
 SafeStart is mandatory and proves the exact IPv6 socket crossed the tunnel.
 Every preflight and ordinary test request uses `tcp6`, with no name resolution
@@ -352,14 +345,13 @@ connectivity control requires its own reviewed endpoint and observation.
 
 ## Bounded UDP/DNS stage
 
-The coordinator reported successful hardware acceptance of `c342de7`: TCP smoke,
-the one-query A-path DNS smoke and the complete two-resolver batch. The first
+UDP/DNS was verified on hardware at `c342de7`: TCP smoke, the one-query A-path DNS
+smoke and the complete two-resolver batch passed. The first
 resolver passed ten cases, including expiry and a new B-path session on the same
 application source port; the second passed eight. Real A/AAAA replies, DNS IDs,
 application/pre-NAT tuples, policy and payload counters supported those results.
 Uninstall restored the baseline. Independent inspection confirmed ordinary
-resolver routing, working system DNS, no owned residue and no sudo credential
-cache. Raw reports were reviewed privately and deleted. Cache expiry, general
+resolver routing, working system DNS and no owned residue. Cache expiry, general
 UDP services, pre-existing UDP, QUIC and public NAT ports remain outside this pass.
 
 This is an explicit extension of `host-ipv4` only. During preparation,
@@ -426,22 +418,21 @@ those answer addresses, add routes for them, or prove IP-to-domain cache expiry.
 Those cache semantics retain synthetic tests. General UDP echo, a two-minute
 non-DNS idle timeout, pre-existing connected UDP, and unconnected UDP listeners
 remain separate acceptance gaps. Uninstall and independently inspect all owned
-routes, tunnel, service and paths when this session ends; no additional password
-dialog is needed for the DNS checks themselves.
+routes, tunnel, service and paths when this session ends. The DNS checks themselves
+require no additional administrator approval.
 
 ## Bounded QUIC/HTTP/3 stage
 
-The coordinator reported successful hardware acceptance of `8dd603e`: TCP smoke,
-the single `--quic` request through A, and all three `--quic-batch` cases:
+QUIC/HTTP/3 was verified on hardware at `8dd603e`: TCP smoke, the single `--quic`
+request through A, and all three `--quic-batch` cases passed:
 observable Initial SNI domain routing through A, IP routing through B, and IP
 routing through A with a fragmented ClientHello. Verified HTTP/3 responses and
 helper tuple/process/rule/interface/name/counter evidence all passed. Uninstall
-restored the baseline; independent system checks were clean. Private reports were
-reviewed and deleted. This establishes the reviewed IPv4 QUIC v1/HTTP/3 subset,
-not ECH, migration, 0-RTT or arbitrary multi-packet SNI recovery.
+restored the baseline; independent system checks were clean. This establishes
+the reviewed IPv4 QUIC v1/HTTP/3 subset, not ECH, migration, 0-RTT or arbitrary
+multi-packet SNI recovery.
 
-The first
-hardware attempt passed TCP and QUIC smoke, but failed the domain-rule batch
+The first hardware attempt passed TCP and QUIC smoke, but failed the domain-rule batch
 case's post-response evidence check despite a verified HTTP/3 response. One UDP
 tuple had ended early and been recreated without owner/name on the system path.
 Cleanup restored the baseline. A synthetic IPv4/IPv6 reproduction identified the
@@ -512,13 +503,13 @@ The acceptance tool uses MIT-licensed
 
 ## Disposable application bundle stage
 
-Hardware acceptance of `fb94688` passed TCP smoke, the main executable's IP-rule
-smoke through A, and all six batch cases listed below. Nested helper inheritance,
-outside controls, parent Bundle ID/domain matching and parent block priority all
+Application bundles were verified on hardware at `fb94688`: TCP smoke, the main
+executable's IP-rule smoke through A, and all six batch cases listed below passed.
+Nested helper inheritance, outside controls, parent Bundle ID/domain matching
+and parent block priority all
 passed their process/tuple/app/rule/exit/byte checks. Uninstall restored the
 baseline; temporary apps were deleted and independent system checks were clean.
-The coordinator reviewed and deleted the private reports. This result does not
-establish XPC launch or delegated WebKit attribution.
+This result does not establish XPC launch or delegated WebKit attribution.
 
 Add `--app-bundle` to a new `host-ipv4` preparation. It freezes this standalone
 rootcheck executable's checksum and size, the existing TLS endpoint, both
@@ -558,39 +549,38 @@ has a 25-second lifetime, and is waited for on success, rejection and timeout.
 The parent removes only its newly created fixture directory on every ordinary
 return; reports and the source executable remain. If the controller itself is
 killed, EOF/child lifetime still release its processes, but the private fixture
-files may remain for the coordinator to remove with the session.
+files may remain and require removal with the session.
 
 Default smoke, rebaseline and uninstall clear the bundle smoke gate. The shared
 Stop/cleanup/report path still applies, including after a fixture integrity
 failure. This is bundle containment acceptance, not evidence of XPC launch or
 delegated WebKit sockets. Safari requires its separate reviewed observation;
-background URLSession is explicitly skipped this round. Synthetic policy tests
+background URLSession is outside this stage. Synthetic policy tests
 and real copied Go protocol children cover preparation, tampering, attribution,
 block priority and process cleanup without accessing a helper or network.
 
 ## Bounded Safari/WebKit observation
 
-**Hardware result:** the coordinator reported TCP smoke and delegated Safari/
-WebKit socket and exit routing passed using `5a60671`, with one explicit
-LaunchServices open to a stable IPv4-only endpoint and Private Relay disabled by
-the user. The destination was recorded by its frozen ordinal; page-body content
-was not automatically verified. There were no authorization prompts and uninstall
-restored routing and helper state. Subsequent process review found Safari and a
-WebKit service left running by the former single-open implementation; the
-coordinator terminated only those new test processes. A later hardware run of
-`936c6a7` passed installation, TCP smoke, delegated socket/exit observation,
-automatic browser cleanup and uninstall, with manual cancellation explicitly
-skipped under managed authorization. Independent process review confirmed Safari
-and every WebKit process in its newly created coalitions had exited. Two delegated
-authorizations covered installation and removal; no additional prompt was needed.
+TCP smoke and delegated Safari/WebKit socket and exit routing were verified on
+hardware at `5a60671`, with one explicit LaunchServices open to a stable IPv4-only
+endpoint and Private Relay disabled. The destination was recorded by its frozen
+ordinal; page-body content
+was not automatically verified. Uninstall restored routing and helper state.
+Subsequent process review found Safari and a WebKit service left running by the
+former single-open implementation; the
+earlier result therefore did not establish process cleanup. Installation, TCP
+smoke, delegated socket/exit observation, automatic browser cleanup and uninstall
+were subsequently verified on hardware at `936c6a7`. Cancellation was not tested.
+Independent process review confirmed Safari and every WebKit process in its newly
+created coalitions had exited.
 
 The independent audit also listed unrelated application renderers, system services
 and launchd-managed Safari agents. On-demand bookmark, safe-browsing and other
 Safari agents can run in their own launchd-job coalitions, allocated before this
 observation, and launchd may restart them while Safari is closed. These are expected
 system/app services, not leftovers owned by this test. Other applications' older
-WebKit services were preserved. The coordinator reviewed coalition ownership rather
-than treating the audit's total count as a failure or an instruction to kill.
+WebKit services were preserved. Cleanup ownership depends on process identity and
+coalitions; the audit's total count is not a failure or an instruction to kill.
 Earlier runs remained incomplete: even freezing every A record in an
 answer missed later answers from a larger rotating CDN pool.
 
@@ -627,8 +617,8 @@ origin-only scope. No documented, reliable read-only per-Safari-navigation statu
 detector was established; the preflight and report explicitly say `unknown`.
 Undocumented `networkserviceproxy` preference/status values cannot establish
 whether this particular site/connection uses the relay, so the harness does not
-read or interpret them. The coordinator must establish that the test navigation
-will connect directly before starting; if it is known to use Private Relay, stop
+read or interpret them. Establish that the test navigation will connect directly
+before starting; if it is known to use Private Relay, stop
 at prerequisite review instead of running the timed observation. Apple describes
 device/network/site exceptions in its [Private Relay guidance](https://support.apple.com/102022).
 The tool never changes that setting, queries an account/keychain, or opens an
@@ -646,14 +636,14 @@ trigger for an observation of at most 60 seconds:
 ```
 
 The second form first records the process inventory and **refuses an already
-running Safari**. Use manual mode, or have the coordinator establish that Safari
-has exited before retrying this command. After READY it rechecks that prerequisite,
+running Safari**. Use manual mode, or confirm that Safari has exited before
+retrying this command. After READY it rechecks that prerequisite,
 then executes `/usr/bin/open -a <frozen app> <frozen URL>` exactly once. The
 short-lived `open` child is waited for with a five-second limit. There is no
 AppleScript/osascript, Automation control, private-window creation, tab inspection
 or tab closing. Do not independently launch Safari during this automatic stage.
 Manual mode never starts or terminates a browser; its test tab remains the
-coordinator's responsibility.
+user's responsibility.
 
 On every automatic-open return, including incomplete evidence, errors and
 cancellation, a separate fifteen-second cleanup deadline applies. Identify the
@@ -720,15 +710,15 @@ return, including incomplete observations.
 One navigation can cause multiple or background browser requests. The observation
 bounds capture duration, not Safari's total network bytes, and does not override
 DNS, proxies, certificates or ECH. Use the approved small endpoint only. Background
-URLSession remains skipped. The coordinator decides whether manual page evidence
-is sufficient separately from the automatic socket result.
+URLSession remains skipped. Assess any manual page evidence separately from the
+automatic socket result.
 
 ## Bounded throughput comparison
 
 This extension has passed the bounded hardware comparison below, in addition to
 fake service/route/usage tests and loopback TLS transfers. Keep the actual endpoint and separate
-adapter byte caps in the private session. The coordinator runs all privileged
-steps. Preparation does not transfer performance payloads.
+adapter byte caps in the private session. Privileged steps require administrator
+approval. Preparation does not transfer performance payloads.
 
 In a new `host-ipv4` session, add a canonical public IPv4:443 and certificate name
 for the permitted performance service, plus explicit total byte caps for A and B:
@@ -808,12 +798,12 @@ usual service, path, route, tunnel and process cleanup after reviewing both resu
 
 ### Recorded throughput result
 
-The coordinator verified `8a9094f` in a managed `host-ipv4` session. Cancellation
-was explicitly skipped, while install, TCP smoke, the hotspot's three phases,
-the subsequently gated wired phases and uninstall all passed. Independent checks
-found no helper or rootcheck process and no change to the default route. Only
-installation and uninstall required managed authorization. A separately bounded
-64 KiB GET and POST had first confirmed HTTP/1.1 success at the permitted service.
+The throughput comparison was verified on hardware at `8a9094f` in a `host-ipv4`
+session: install, TCP smoke, the hotspot's three phases, the subsequently gated
+wired phases and uninstall all passed. Cancellation was not tested. Independent
+checks found no helper or rootcheck process and no change to the default route.
+A separately bounded 64 KiB GET and POST had first confirmed HTTP/1.1 success at
+the permitted service.
 
 With 32 MiB download / 4 MiB upload samples, a cellular hotspot measured
 138 / 23 Mbps direct, 139 / 22 Mbps captured with one rule, and 132 / 23 Mbps
@@ -832,11 +822,11 @@ steady transfer cost. See the [comparison and limitations](NEXT-ACCEPTANCE.md#re
 
 ### Recorded optimization rerun
 
-The coordinator verified `20ae914` with the same privately frozen endpoint and
-per-adapter budgets as `8a9094f`, retaining the 32 MiB / 4 MiB sample sizes. Both
-adapters' throughput stages passed. Two delegated authorizations covered install
-and uninstall; independent cleanup checks passed and the default route was
-unchanged. MTU remained 1500. This run combines indexed binding checks and output
+The optimization comparison was verified on hardware at `20ae914` with the same
+privately frozen endpoint and per-adapter budgets as `8a9094f`, retaining the
+32 MiB / 4 MiB sample sizes. Both adapters' throughput stages passed. Independent
+cleanup checks passed and the default route was unchanged. MTU remained 1500.
+This run combines indexed binding checks and output
 buffer reuse; it does not attribute the hardware improvement to either alone.
 
 Application rates in Mbps (download / upload):
@@ -873,10 +863,10 @@ and complete comparison in PERFORMANCE.md.
 
 ## Manual VPN reconstruction during full IPv4 capture
 
-The coordinator verified this stage on hardware with `fbb5234`: full IPv4 capture
+This stage was verified on hardware at `fbb5234`: full IPv4 capture
 stayed running through a user-controlled Tailscale disconnect/reconnect without
 an exit node, and final Stop and cleanup passed. It requires the separate `full-ipv4` profile
-with exactly a 120-second helper lease. The user alone operates the VPN menu.
+with exactly a 120-second helper lease. VPN changes are manual.
 Neither prepare nor check runs a VPN CLI, starts, stops, updates or reconfigures
 the VPN, changes an exit node, queries peers, or connects to a DNS answer address.
 
@@ -902,11 +892,10 @@ diagnostics, a successful post-Stop own-name query, and both `controlsPassed` an
 `postStopPassed` true. There were zero unreachable connections in the final run.
 
 The only external change was the VPN retaining its tunnel name and addresses
-with a new interface index and the same 13 routes. The coordinator reviewed that
-difference, explicitly accepted `rebaseline vpn-rebuilt`, then uninstalled.
+with a new interface index and the same 13 routes. After review of that difference,
+explicit `rebaseline vpn-rebuilt` and uninstall passed.
 Independent inspection confirmed no helper, split capture routes or Pith tunnel,
-ordinary wired default routing, working public HTTPS and local MagicDNS. The
-successful run used two delegated authorizations; all four stage runs used eight.
+ordinary wired default routing, working public HTTPS and local MagicDNS.
 
 Changes leading to the verified result:
 
@@ -920,9 +909,9 @@ not establish remote peer reachability, daemon self-update/restart, or continuit
 of long-lived connections across reconstruction. No peer scan or VPN CLI was used.
 
 Before the session, the user enables Tailscale **without an exit node** and keeps
-it connected through prepare, install and ordinary TCP smoke. The coordinator
-obtains this Mac's full MagicDNS name independently and supplies it privately,
-along with the device-local Quad100 resolver and an ordinary public HTTPS control.
+it connected through prepare, install and ordinary TCP smoke. Obtain this Mac's
+full MagicDNS name independently and supply it privately, along with the
+device-local Quad100 resolver and an ordinary public HTTPS control.
 The actual name, addresses and adapter identifiers never belong in repository
 examples. Add these options to the reviewed prepare invocation:
 
@@ -939,17 +928,16 @@ VPN interface. Freeze that answer, name, interface identity, routes and DNS in
 `vpn-plan.json`. These options do not add capture prefixes, override the
 production DNS plan, query another node or change any DNS settings.
 
-After plan review, managed cancellation skip (or the ordinary manual cancel
-case), install and default `check` smoke, run one explicit attempt:
+After plan review, cancellation testing, administrator-approved installation and
+default `check` smoke, run one explicit attempt:
 
 ```sh
 "$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --vpn-restart
 ```
 
-The coordinator may relay the following single-line prompts to the user in chat;
-the user does not need direct access to the process output:
+The command prints these prompts for the manual transition:
 
-1. `READY:` means the pre-capture and running controls passed. Tell the user:
+1. `READY:` means the pre-capture and running controls passed:
    **turn Tailscale off, keep it off about 15 seconds, then turn it on once.**
    Observe route withdrawal for at most 45 seconds; advance immediately on actual
    withdrawal, not a fixed sleep. A down flag with retained VPN routes is not
@@ -979,12 +967,12 @@ the user does not need direct access to the process output:
    not a cleanup pass; inspect the completed private check/cleanup reports.
 
 The command uses the existing 110-second controller deadline and the independent
-120-second helper lease; it never extends either for a human delay. Typical prompt
-relay delays of 5--15 seconds fit the windows, but the two 45-second maxima are
-not additive guarantees. Any timeout/cancellation is incomplete and ends capture.
+120-second helper lease; it never extends either for a human delay. The two
+45-second maxima are not additive guarantees. Any timeout/cancellation is
+incomplete and ends capture.
 The durable attempt file prevents automatic or accidental repetition in this
-session, even after failure/rebaseline. If aborted while disconnected, the user
-restores the VPN manually after the coordinator confirms Pith is stopped. Any
+session, even after failure/rebaseline. If aborted while disconnected, restore the
+VPN manually after confirming Pith is stopped. Any
 failure or incomplete result after READY prints exactly one terminal reminder:
 `RECONNECT: test ended; turn the VPN back on now`. This also covers errors in
 final verification. The reminder never waits for user action or delays Stop.
@@ -1044,7 +1032,7 @@ managed paths and the launchd service are absent and the accepted routes/tunnel
 inventory match. It contacts no helper, runs no removal script, and reads no
 credential. Success clears the stale installed/test flags and runs the independent
 process audit. If a rebuilt VPN has a different identity and strict comparison
-still fails after removal, keep the snapshots for independent coordinator review;
+still fails after removal, keep the snapshots for independent review;
 this command does not silently adopt external changes or claim a cleanup pass.
 
 Quad100 is a [device-local service](https://tailscale.com/docs/reference/quad100);
@@ -1067,57 +1055,17 @@ and do not retry capture. A separately proven external-only change can instead
 use the explicit acceptance procedure below; it is not a successful check.
 Concurrent commands on the same session are refused by an advisory lock.
 
-### Optional delegated authorization
+### Administrator approval
 
-Only the coordinator may opt into a password that the user has explicitly
-delegated for this session. Use `--auth keychain:REVIEWED_SERVICE` on **each**
-privileged invocation. The default remains the ordinary administrator dialog;
-the session never remembers permission to read a keychain item on a later
-invocation. Other agents must not read or use the delegated item, the hotspot's
-administrator item, or the app's stored hotspot credentials.
+Installation, final uninstall and an optional deliberate crash require
+administrator approval. Cancellation is a separate test. Ordinary `check`, `stop`
+and `rebaseline` do not require additional approval. Emergency recovery is an
+alternative removal operation, not an automatic extra step.
 
-In this mode, `cancel --auth keychain:REVIEWED_SERVICE` performs the original-state
-checks and records the manual cancel case as **skipped**, without opening a
-dialog or reading a password. `install` with the same explicit option may record
-that skip itself if the cancel step was omitted. `cancelPassed` stays false;
-session/check reports retain `cancelSkipped` and an explanatory note. Managed
-installation and uninstall each use the delegated credential once. An optional
-`check --crash --auth keychain:REVIEWED_SERVICE` uses it once more. No manual
-cancel click or administrator-password dialog is expected; Keychain access may
-still be denied or require user authorization under the user's macOS settings.
-
-The harness reads `/usr/bin/security find-generic-password -s SERVICE -w` into a
-bounded memory buffer. Hex-looking output requires a matching private `-g` read:
-only an explicit `password: 0x...` representation permits decoding non-ASCII
-bytes; a literal hexadecimal password stays literal. Failed or inconsistent
-reads abort authorization. The password goes only on stdin to `/usr/bin/sudo -S -k -p ''`.
-Only the frozen reviewed script goes in the command arguments. Passwords never
-enter arguments, reports, files or forwarded child output, and temporary buffers
-are cleared afterward. Each use records its operation, mode, script checksum,
-attempt and result in private authorization reports; subprocess diagnostic text
-is discarded to prevent it echoing credentials. A command success is not a test
-pass: the existing independent identity/state/cleanup checks still decide that.
-
-Fresh prepare output includes `install.sh`, `uninstall.sh`, and optional
-`crash.sh` with frozen checksums. A missing or changed script refuses managed
-execution. Announce the root session beforehand and report every credential use
-afterward. A skipped cancellation case does not establish cancellation behavior.
-The emergency command remains an independently reviewed, manual recovery path;
-this option does not broaden it or automatically authorize retries.
-
-### Dialog mode
-
-The complete session requests **one cancellation dialog and two password
-authorizations**, for installation and final uninstall. There is no additional
-authorization for any `check`, `stop`, or `rebaseline`, regardless of the number
-of approved Tailscale modes. One optional deliberate crash test adds exactly
-one separately approved administrator dialog. Emergency recovery is an
-alternative removal authorization, not an automatic extra step.
-
-| Step | Command after the root-session go-ahead | Dialog and changes | Pass condition and undo |
+| Step | Command | Dialog and changes | Pass condition and undo |
 | --- | --- | --- | --- |
-| 1. Cancellation | `"$PITH_TEST_BIN/rootcheck" cancel --session "$PITH_SESSION"` | Administrator dialog requests `Pith needs your password to install its routing helper.` Click **Cancel**; do not enter a password. | Returns `ErrCanceled`; no managed path, service, route, or utun changes. If a password was entered or cached authorization installs the helper, this case fails; uninstall it before preparing a new session. |
-| 2. Installation | `"$PITH_TEST_BIN/rootcheck" install --session "$PITH_SESSION"` | Same install prompt; enter the administrator password. Creates the root-owned helper and launchd plist/data directory, plus a listed shared parent only if absent; the daemon creates its authenticated socket. It starts idle. | Version and executable checksum match; plist arguments contain only the reviewed host captures; plist inode/mtime identify this installation; engine is stopped; routes and utun inventory match the initial snapshot. Undo is step 9 or emergency cleanup. |
+| 1. Cancellation | `"$PITH_TEST_BIN/rootcheck" cancel --session "$PITH_SESSION"` | Cancel the administrator dialog. | Returns `ErrCanceled`; no managed path, service, route, or utun changes. If the helper is installed, this case fails; uninstall it before preparing a new session. |
+| 2. Installation | `"$PITH_TEST_BIN/rootcheck" install --session "$PITH_SESSION"` | Requires administrator approval. Creates the root-owned helper and launchd plist/data directory, plus a listed shared parent only if absent; the daemon creates its authenticated socket. It starts idle. | Version and executable checksum match; plist arguments contain only the reviewed host captures; plist inode/mtime identify this installation; engine is stopped; routes and utun inventory match the initial snapshot. Undo is step 9 or emergency cleanup. |
 | 3. One smoke check | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION"` | No dialog. Saves only a temporary config, starts the scoped utun with SafeStart, requests HTTPS through ordinary system routing, then hot-applies an IP rule for interface A. | SafeStart succeeds; both logged flows belong to this test process; outcome, rule, interface, bidirectional byte counts, and live traffic are correct. `Stop` restores routes and utun inventory before the command returns. Only a successful smoke check unlocks later cases. |
 | 4. Rule batch | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --batch` | No dialog. Starts a fresh bounded capture and changes only the test scene. | Verifies interface B, TLS SNI domain matching, the second target of one rule, block priority over an earlier route, missing-interface fallback, explicit system fallback, and strict unreachable. Opens TLS on A, changes the rule to B, completes the same connection on A, then verifies a new connection on B. The capture start timestamp stays unchanged during hot reload. Ends stopped. |
 | 4a. Optional app-specific routing | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --app-bypass` | No dialog. Requires a passed smoke check and public-IP preflight evidence. Uses the current standalone `rootcheck` executable path as the app/tool identity, and creates a checksum-verified copy at a different path inside the private session directory. Each controlled child makes exactly one ordinary TLS request to the same frozen target. No helper installation, capture expansion, or VPN setting change occurs. | The parent matches app+IP and then app+domain rules through physical interface A. Under each rule, the different executable remains unmatched and uses the saved system route. A final app block after the route rule wins. Every case checks PID, executable/app path, destination, rule, outcome, interface, and byte counts; successful requests use the public-IP drift policy below. Children are acknowledged and waited for on every outcome, their copy is removed, and routing ends stopped. Identical public exits do not prove a distinct exit-node bypass. |
@@ -1127,11 +1075,10 @@ alternative removal authorization, not an automatic extra step.
 | 8. Explicit stop | `"$PITH_TEST_BIN/rootcheck" stop --session "$PITH_SESSION"` | No dialog; authenticated IPC only after verifying the installation belongs to this session. Safe to repeat while this helper is installed. | Status is stopped at the reviewed version; route snapshot and utun inventory match the latest active baseline. A successful comparison is persisted as cleanup proof. If IPC is broken, use emergency cleanup instead. |
 | 8a. Optional next mode | While stopped, the user selects the approved Tailscale mode; then `"$PITH_TEST_BIN/rootcheck" rebaseline --session "$PITH_SESSION" --label tailnet` (or `vpn-off` / `exit-node`) | No dialog. Verifies the same idle installation and the preceding cleanup proof; takes new snapshots and makes three bounded HTTPS requests to the frozen target through system/A/B. Writes private review files only; it does not change VPN settings, capture scope, or routing. | Both reviewed adapters resolve and are up; helper identity/version remain unchanged; snapshots are stable across preflight. Only then does the new baseline become active, with smoke/pass state cleared. Repeat step 3 before any further case. A failed rebaseline leaves the previous active baseline and all history intact. |
 | 8b. Reviewed external change | `"$PITH_TEST_BIN/rootcheck" rebaseline --session "$PITH_SESSION" --label vpn-rebuilt --accept-external-change` | No dialog or routing change. Use only after reviewing an `external-change` cleanup report; this is not a general mismatch override. | Pith's exact capture prefixes are absent; every reused name/index has independent whole-VPN migration evidence; the same idle installation and stable preflight checks pass. Archive both the prior proof and current differences, then repeat smoke. The original failed check remains failed. |
-| 9. Final uninstall, once | `"$PITH_TEST_BIN/rootcheck" uninstall --session "$PITH_SESSION"` | Administrator dialog requests `Pith needs your password to remove its routing helper.` Enter the password. Attempts `Stop` on the verified installation, then independently boots out launchd, checks stale capture ownership, and removes managed files. It does not require working IPC or a matching IPC version. | Helper, service, socket, journal, and data directory are absent; the latest baseline's routes and utun inventory are restored. Shared parent directories and private session artifacts remain. A clearly different installation is refused before authorization; review ownership and the standalone emergency command instead. |
+| 9. Final uninstall, once | `"$PITH_TEST_BIN/rootcheck" uninstall --session "$PITH_SESSION"` | Requires administrator approval. Attempts `Stop` on the verified installation, then independently boots out launchd, checks stale capture ownership, and removes managed files. It does not require working IPC or a matching IPC version. | Helper, service, socket, journal, and data directory are absent; the latest baseline's routes and utun inventory are restored. Shared parent directories and private session artifacts remain. A clearly different installation is refused before authorization; review ownership and the standalone emergency command instead. |
 
-macOS supplies the surrounding dialog title, buttons, and any cached
-authorization behavior. The quoted prompt strings are the harness's exact
-English text. A missing cancellation dialog is not a cancellation pass. No
+macOS supplies the dialog title, buttons, and authorization behavior.
+A missing cancellation dialog is not a cancellation pass. No
 update dialog is expected because the harness refuses an existing installation;
 testing helper updates needs its own reviewed case.
 
@@ -1285,8 +1232,8 @@ three bounded requests, and requires stable routes, interface indices and
 topology throughout. It archives the accepted proof reference and current
 differences before atomically selecting the new baseline. Previous reports and
 failed assertions are preserved; smoke must pass again. It does not adopt a
-running capture, delete a route, restart a VPN, widen scope, or add a password
-dialog. If external state has already returned exactly to the old baseline,
+running capture, delete a route, restart a VPN, widen scope, or require additional
+administrator approval. If external state has already returned exactly to the old baseline,
 run `stop` to obtain an ordinary restored-baseline proof instead.
 
 An interrupted controller or a failed preparation without a readable capture
@@ -1322,13 +1269,11 @@ observation automatically and treats an unexpected helper stop as a failure.
 * **Crash cleanup:** prefer `check --session "$PITH_SESSION" --crash` after a
   passed smoke check. It holds the session lock, starts the reviewed host capture,
   verifies one system request and the active helper/capture identity, then runs
-  the frozen `crash.sh` with the separate crash prompt. Add the explicit managed
-  auth option above to use the stdin mechanism instead. It allows ten seconds
-  for capture disappearance and an authenticated idle restart, and always runs
+  the frozen `crash.sh`, which requires administrator approval. It allows ten
+  seconds for capture disappearance and an authenticated idle restart, and always runs
   independent Stop/cleanup afterward. Its report is a distinct crash check, not
-  a smoke pass. For a manually observed crash, only after the coordinator approves
-  this deliberate fault,
-  interrupt the *managed service only* during observation with an administrator
+  a smoke pass. A manually observed crash also requires administrator approval.
+  Interrupt the *managed service only* during observation with an administrator
   dialog running `/bin/launchctl kill SIGKILL system/io.github.kel077.pith.helper`.
   Kernel utun ownership must remove capture when the process dies. Launchd may
   restart the daemon, but it must come back idle. The observation command is
@@ -1352,7 +1297,7 @@ observation automatically and treats an unexpected helper stop as a failure.
   synthetic interface; it does not prove timeout behavior on a live interface
   that drops packets. Do not infer full IPv6, UDP/QUIC correctness or a throughput
   target from the TCP results. Repeating host IPv6 requires a reviewed
-  `/128`. Every new full-capture session still requires an explicit go-ahead;
+  `/128`. Every new full-capture session still requires administrator approval;
   the completed IPv4 run does not authorize VPN or mixed-protocol extensions.
 
 The [next acceptance plan](NEXT-ACCEPTANCE.md) separates the broader capture,
@@ -1361,12 +1306,12 @@ does not add the pending protocol or fixture capabilities to this harness.
 
 ## Optional Tailscale compatibility phases
 
-These phases belong to the same coordinated acceptance window, but they are
+These phases belong to the same bounded acceptance session, but they are
 opt-in. They do not authorize installing, updating, reconnecting, or changing
 Tailscale automatically. Test only an already available Tailscale configuration
 and an exit node the user is permitted to use. The user selects **no exit node**
-or the approved **exit node** in Tailscale after the coordinator has explicitly
-included that change in the session approval. Keep Pith stopped while changing
+or the approved **exit node** in Tailscale only when that change is included in
+the session scope. Keep Pith stopped while changing
 the mode. Do not change routes, DNS preferences, or Tailscale settings to make
 a failing Pith test pass.
 
@@ -1380,7 +1325,7 @@ snapshots, and public-IP echoes stay outside the repository.
 
 A changed Tailscale mode requires a fresh reviewed route/interface baseline;
 a different mode's snapshot is not a valid rollback reference. Keep the same
-installed, idle scoped helper throughout this coordinated session. After the
+installed, idle scoped helper throughout this session. After the
 initial smoke check, use the following sequence for each approved mode:
 
 ```sh

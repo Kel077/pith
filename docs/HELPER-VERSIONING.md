@@ -1,14 +1,15 @@
 # Helper identity independent of app versions
 
-Status: proposal for agreement; this document does not change the current API or
-implementation. Today the build embeds the app version in both executables, and
-the client compares those version strings. Both parts must change together.
+Helper compatibility depends on the bundled artifact and protocol, independently
+of the app's version. The client authenticates both the installed file and the
+executing peer before IPC. Replacement and recovery preserve the same identity
+and capture-ownership checks.
 
 ## Build identity
 
-Give the helper its own display version, advanced only for helper releases. Stop
-embedding the app version, repository revision or build time in `pithd`. The exact
-artifact, rather than that display version, determines compatibility:
+The helper has its own display version, advanced only for helper releases. The
+app version, repository revision and build time are not embedded in `pithd`.
+The exact artifact, rather than that display version, determines compatibility:
 
 - protocol version;
 - SHA-256 of the complete, final signed helper file;
@@ -50,36 +51,35 @@ XNU exposes `LOCAL_PEERTOKEN` in
 Its read-only `CS_OPS_CDHASH` query accepts a peer audit token and checks the PID
 generation in
 [kern_proc.c](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_proc.c).
-Implement these documented ABIs in pure Go, without copying source. Verify their
-availability on the minimum supported macOS before rollout. An unavailable or
-failed identity check rejects IPC; there is no version-only fallback.
+The pure-Go implementation uses these documented read-only ABIs. An unavailable
+or failed identity check rejects IPC; there is no version-only fallback.
 
 No Developer ID, keychain access, signing entitlement or new privileged operation
 is needed for this design. Ad-hoc identity binds the peer to the app's bundled
 artifact; it does not establish a publisher identity or defend against a
 compromised root account/kernel or replacement of the entire app.
 
-## API and UI agreement requested
+## Compatibility and status
 
-Change `HelperStatus.Outdated` to mean **the installed helper must be replaced to
+`HelperStatus.Outdated` means **the installed helper must be replaced to
 match this app's expected artifact or protocol**, not "older than the app."
-Retain `ErrHelperOutdated` for that actionable condition, including an app
-downgrade whose helper differs. Keep `Version` as the helper's own informational
-version; never compare it with the app version to authorize IPC.
+`ErrHelperOutdated` reports that actionable condition, including an app downgrade
+whose helper differs. `Version` is the helper's own informational version; it is
+never compared with the app version to authorize IPC.
 
-Propose additive `ErrHelperUntrusted` (`helper_untrusted`) for an unverifiable
+`ErrHelperUntrusted` (`helper_untrusted`) reports an unverifiable
 socket, process, installation metadata, or bundled identity. It must not be
 silently converted to ready, stopped or missing. No hashes need to enter the UI
-contract. Any API edit is a separate `api:` commit after agreement.
+contract.
 
-| Observation | Client behavior | UI and administrator authorization |
+| Observation | Client behavior | UI and administrator approval |
 | :-- | :-- | :-- |
-| No installed helper | `Installed=false` | Install; one authorization on explicit action |
-| Expected artifact and protocol, app version changed | Ready; `Outdated=false` | Show helper version; no update or password |
-| Secure installed file differs, or authenticated protocol differs | `Outdated=true`; no ordinary commands to the differing peer | Replacement required; explicit Update/Replace needs authorization |
-| Expected installed artifact, no answering peer | Not responding; do not infer that routing is stopped | Retry without authorization; explicit repair may require it |
-| Peer, path or file metadata cannot be verified | `ErrHelperUntrusted`; no IPC | Cannot verify helper; offer documented recovery, not an automatic password prompt |
-| Bundled artifact differs from the app's embedded identity | `ErrHelperUntrusted`; no installation | Reinstall the app; never elevate an invalid payload |
+| No installed helper | `Installed=false` | Installation requires administrator approval |
+| Expected artifact and protocol, app version changed | Ready; `Outdated=false` | Show helper version; no replacement or administrator approval required |
+| Secure installed file differs, or authenticated protocol differs | `Outdated=true`; no ordinary commands to the differing peer | Replacement requires administrator approval |
+| Expected installed artifact, no answering peer | `Failed` with `helper_not_responding`; routing state is unknown | Status retries request no approval; explicit repair can re-bootstrap verified installed bytes with administrator approval |
+| Peer, path or file metadata cannot be verified | `ErrHelperUntrusted`; no IPC | Cannot verify helper; offer documented recovery without automatically requesting administrator approval |
+| Bundled artifact differs from the app's embedded identity | Refuse that installation payload; existing verified IPC remains usable | Rebuild or reinstall the app; never elevate an invalid payload |
 
 For an unverified/different running process, do not obtain its version or engine
 state over IPC and do not display a claimed "routing stopped" state. `Running`
@@ -87,24 +87,44 @@ continues to mean an answering verified helper; unavailable engine state needs
 the error/replacement presentation. Local configuration, interface listing,
 probing and rule checking remain usable without a verified helper.
 
+An unverifiable helper is returned by `Status` as `State: Failed` with
+`Error.Code: helper_untrusted`, not a transport error. Its helper status has
+`Installed` reflects the actual installed file; `Running` and `Outdated` are false,
+with an empty version and no scene. Helper operations return `ErrHelperUntrusted`
+without sending commands. Missing build identity alone never invents an installation.
+
+Ordinary IPC does not read the bundle. Moving or replacing the running app on disk
+cannot revoke Status, Subscribe or Stop when its compiled identity still matches
+the installed file and executing peer. A bundled payload is checked only when
+it is to be used for installation or recovery.
+
 ## Replacement, recovery and migration
 
-Normal replacement first stops a verified compatible helper, then uses the
-existing explicit authorization, staged checksum verification, launchd restart
-and rollback. Revalidate the new peer before declaring success. An authorization
+Replacement uses administrator-approved staging, checksum verification, launchd
+bootout, verified recovery and restart, with rollback on failure. Revalidate the
+new peer before declaring success. An authorization
 cancel leaves the existing installation intact. Never ask solely because the app
 version increased.
 
 When the old peer cannot be authenticated or speaks another protocol, do not send
-it commands. Explicit authorized replacement/removal may boot out the fixed
-launchd job; any journal cleanup must use a verified staged helper, not execute
+it commands. Replacement/removal requires administrator approval and may boot out
+the fixed launchd job; any journal cleanup must use a verified staged helper, not execute
 the unverified installed binary. Preserve ambiguous journals and fail rather
-than guess ownership or broaden route deletion. This also needs installer tests.
+than guess ownership or broaden route deletion.
+
+Uninstall remains available with an unverifiable peer when the bundled cleanup
+artifact is valid. A damaged bundle may instead use a root-owned installed file
+whose complete bytes match the compiled identity, copied and verified in the
+same root-owned stage. If neither artifact can be verified, reinstall the app
+before cleanup; no unverified executable is run or journal discarded.
+If cleanup fails after bootout, removal preserves the executable, plist and journal
+and attempts to restore the previously loaded registration. An explicit repair
+can use the verified installed bytes even when the original app is gone.
 
 Existing installations may require one replacement at migration. Do not add a
 trust-on-first-use exception or accept an arbitrary old binary's claimed version.
 An exact matching existing artifact may be accepted after the same kernel/file
-checks; migration itself is not a reason to show a password dialog.
+checks; migration itself does not require administrator approval.
 
 Tests must cover app-only bumps, changed artifacts with unchanged display
 versions, protocol mismatch, missing/offline helpers, mismatching file and running

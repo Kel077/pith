@@ -23,6 +23,8 @@ explicitly approved test session.
    `resources/darwin-arm64/bin/pithd`. Its informational version comes from
    `helper.Version`, independently of the app. Sign it ad hoc with a fixed
    identifier and no timestamp, then freeze its identity in generated client code.
+   Normalize the helper to mode `0755` before signing, independently of umask;
+   identity generation and final verification reject group/other write access.
 3. Collect the reviewed licenses and notices for both binaries.
 4. Run `go run github.com/egoist/mygo/cmd/mygo@v0.7.4 build` for
    `darwin/arm64`, with ad hoc signing and without notarization or DMG creation.
@@ -52,15 +54,27 @@ has not been packaged. A development app uses the identity compiled by
 `make helper`; an absent identity must not enable a version-only verification
 fallback. Changing the helper requires rebuilding that app/controller too.
 
+From a fresh checkout, `make helper` followed by `go run ./cmd/pith` enables the
+real backend's explicit helper installation and verification. `make build`
+instead produces the complete app bundle. Running `go run ./cmd/pith` alone
+without the generated identity still opens the interface, but helper status is
+`helper_untrusted` and installation is refused before administrator approval.
+
 ## Archives and disk images
 
 ```sh
 make archive
 ```
 
-This builds the app and creates `build/pith-<version>-arm64.zip` with `ditto`,
-preserving executable permissions and the app bundle layout. Use this archive
-when uploading an app as a GitHub Actions artifact.
+This builds the app and creates `build/pith-<version>-arm64.zip` with
+`zip -qry -X`, preserving executable permissions, symbolic links and the app
+bundle layout without macOS extended metadata. Each build uses a fresh archive;
+no stale entries can survive from an earlier ZIP. It rejects every `._*` or
+`__MACOSX` path component, extracts with plain `unzip` into a private temporary
+directory, and requires `codesign --verify --deep --strict` on that extracted app
+before replacing the final archive. Temporary files are removed on success or
+failure. Finder/ditto extraction alone cannot prove this: they consume AppleDouble
+entries that plain `unzip` would leave inside the signed bundle.
 
 ```sh
 make dmg
@@ -153,7 +167,7 @@ Passing local validation does not replace a successful GitHub Actions run.
 ## Draft releases
 
 `.github/workflows/release.yml` runs on a pushed `v*` tag, or manually **on that
-existing tag**. For example, after the maintainer has created the release tag:
+existing tag**. For example:
 
 ```sh
 gh workflow run release.yml --ref v0.1.0
@@ -169,7 +183,7 @@ The ARM64 build job runs `make check`, `make archive`, then attempts `make dmg`.
 Successful assets have fixed names, `pith-<version>-arm64.zip` and
 `pith-<version>-arm64.dmg`. If the runner's DMG packaging fails or times out, a
 visible warning identifies a ZIP-only draft; no stale or partial DMG is attached.
-The maintainer must review that packaging failure before publishing.
+Review any packaging failure before publishing.
 
 `SHA256SUMS` lists exactly the attached ZIP and, when successful, DMG, with
 relative filenames. `actions/attest`, pinned to a full commit SHA like every
@@ -183,8 +197,8 @@ only this build's immutable artifact, checks the exact file set and hashes, and
 compares the notes with the tagged changelog again. Its only repository permission
 is `contents: write`; the generated job token is supplied only to
 `gh release create --draft --verify-tag --notes-file ...`. It attaches the ZIP,
-optional DMG and `SHA256SUMS`, marks prerelease versions appropriately, and leaves
-publication to the maintainer. It never overwrites an existing release. If draft
+optional DMG and `SHA256SUMS`, marks prerelease versions appropriately, and requires
+separate manual publication. It never overwrites an existing release. If draft
 creation/upload is interrupted, review the partial draft before deleting it and
 rerunning; no automatic cleanup can remove a published release.
 
