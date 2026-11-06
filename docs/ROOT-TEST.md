@@ -830,6 +830,47 @@ sustained 500 Mbps proof**: the wired download samples lasted only about
 0.4 seconds. Phase CPU includes setup, download and upload and is not an isolated
 steady transfer cost. See the [comparison and limitations](NEXT-ACCEPTANCE.md#recorded-throughput-hardware-comparison).
 
+### Recorded optimization rerun
+
+The coordinator verified `20ae914` with the same privately frozen endpoint and
+per-adapter budgets as `8a9094f`, retaining the 32 MiB / 4 MiB sample sizes. Both
+adapters' throughput stages passed. Two delegated authorizations covered install
+and uninstall; independent cleanup checks passed and the default route was
+unchanged. MTU remained 1500. This run combines indexed binding checks and output
+buffer reuse; it does not attribute the hardware improvement to either alone.
+
+Application rates in Mbps (download / upload):
+
+| Interface class | Phase | Before | After |
+| --- | --- | ---: | ---: |
+| Cellular hotspot | Direct | 138 / 23 | 152 / 19 |
+| Cellular hotspot | One rule | 139 / 22 | 145 / 14 |
+| Cellular hotspot | 1001 rules | 132 / 23 | 152 / 15 |
+| Wired Ethernet | Direct | 672 / 154 | 710 / 45 |
+| Wired Ethernet | One rule | 680 / 145 | 773 / 81 |
+| Wired Ethernet | 1001 rules | 740 / 160 | 335 / 78 |
+
+Helper CPU for the one-rule / 1001-rule phases fell from 42% / 35% to
+23.6% / 19.6% on the hotspot, and from 90% / 100% to 49.5% / 48.4% on wired
+Ethernet, where 100% means one core. RSS was about 27--28 MiB and 29 MiB,
+respectively. Idle CPU was 2.0% on the hotspot and 1.0% wired, versus 0.5% and
+1.0% previously; this run does not establish an idle improvement.
+
+The **one-rule** CPU% per download-Mbps ratio improved by approximately 46% on
+the hotspot and 52% on wired Ethernet. Phase CPU also includes setup and upload,
+so this is not isolated steady-state per-byte cost. Upload was noisy: wired direct
+upload fell to 45 Mbps. The wired 1001-rule download was a single 0.80-second
+sample at 335 Mbps; its normalized CPU ratio did not improve, and it is not
+discarded from the record. Short-sample and network variation are plausible,
+not proven explanations. This remains no proof of sustained 500 Mbps.
+
+Source inspection confirms that TCP rule matching occurs during connection
+establishment, including the block precheck and post-sniff route selection;
+the payload-copy loop does not scan the rule list. UDP matches per new session.
+Rule compilation, validation and new-connection matching can still cost more
+with 1001 rules. See the [rule-count analysis](PERFORMANCE.md#rule-count-cost-is-at-connection-setup)
+and complete comparison in PERFORMANCE.md.
+
 ## Manual VPN reconstruction during full IPv4 capture
 
 The coordinator verified this stage on hardware with `fbb5234`: full IPv4 capture

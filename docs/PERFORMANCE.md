@@ -1,4 +1,4 @@
-# Root-free relay performance investigation
+# Relay performance investigation
 
 The initial investigation identified the per-I/O interface identity lookup.
 The baseline `capture.Binding.Check` called the native driver's name lookup before
@@ -29,7 +29,8 @@ loopback runs measured these medians:
 This is about 28 times faster per check, not a claimed throughput speedup.
 Tests cover name/index reuse, missing or inconsistent lookup results, epoch and
 generation changes, capture faults and fresh name resolution after reindexing.
-Hardware CPU-per-Mbps acceptance remains pending. MTU is unchanged.
+The combined hardware rerun below passed; it does not isolate this change from
+output-buffer reuse. MTU is unchanged.
 
 ## Applied output-buffer reuse
 
@@ -58,7 +59,64 @@ until its synchronous write returns, mutable native headers, growth followed by
 shorter packets, immutable caller input and error propagation. The concurrency
 test is also run under the race detector.
 
-## Method and limits
+## Hardware comparison after both optimizations
+
+The coordinator verified `20ae914` using the same privately frozen endpoint and
+per-adapter budgets as `8a9094f`, with 32 MiB downloads and 4 MiB uploads per
+sample. Both adapters' throughput stages passed. Installation and removal used
+two delegated authorizations; independent cleanup verification passed and the
+default route was unchanged. This is the combined result of pinned-index checks
+and output-buffer reuse, not a measurement of either change in isolation.
+
+All rates below are application Mbps, download / upload; each value is one
+bounded hardware sample rather than an average of repeated runs.
+
+| Interface class | Phase | Before (`8a9094f`) | After (`20ae914`) |
+| --- | --- | ---: | ---: |
+| Cellular hotspot | Direct | 138 / 23 | 152 / 19 |
+| Cellular hotspot | One rule | 139 / 22 | 145 / 14 |
+| Cellular hotspot | 1001 rules | 132 / 23 | 152 / 15 |
+| Wired Ethernet | Direct | 672 / 154 | 710 / 45 |
+| Wired Ethernet | One rule | 680 / 145 | 773 / 81 |
+| Wired Ethernet | 1001 rules | 740 / 160 | 335 / 78 |
+
+| Interface class | Helper CPU, one rule | Helper CPU, 1001 rules | RSS after | Idle CPU before -> after |
+| --- | ---: | ---: | ---: | ---: |
+| Cellular hotspot | 42% -> 23.6% | 35% -> 19.6% | 27--28 MiB | 0.5% -> 2.0% |
+| Wired Ethernet | 90% -> 49.5% | 100% -> 48.4% | About 29 MiB | 1.0% -> 1.0% |
+
+CPU percentages use one core as 100%. In the **one-rule** phase, CPU percentage
+per download-Mbps fell from about 0.302 to 0.163 on the hotspot (46%), and from
+0.132 to 0.064 on wired Ethernet (52%). These are coarse phase comparisons: CPU
+includes setup and upload, so this ratio is not steady-state CPU time per byte.
+The wired 1001-rule sample does not show the same normalized improvement and must
+not be averaged away or described as a 52% improvement.
+
+Upload varied substantially: wired direct upload fell from 154 to 45 Mbps.
+The wired 1001-rule download was one 0.80-second sample at 335 Mbps, versus 740
+Mbps previously. Network and short-sample variation are plausible explanations,
+but the measurements cannot establish the cause of that outlier. They do not
+prove sustained throughput or an improvement in idle CPU.
+
+### Rule-count cost is at connection setup
+
+Source inspection confirms that the user rule list is not scanned per packet or
+per copied payload chunk. [TCP setup](../internal/engine/forward/relay.go) captures
+one immutable policy, performs a pre-acceptance app/address block check, then
+calls [DialFlow](../internal/engine/egress/egress.go) to match the route after
+optional sniffing. Fake-address resolution can additionally check candidate real
+addresses for blocks during dialing. The selected connection and route are then
+retained: `copyTCP` reads/writes, updates counters and optionally observes DNS,
+without calling the matcher. UDP similarly selects a route for each new session;
+its subsequent datagram loop does not scan user rules.
+
+The per-packet VPN-prefix gate and per-I/O binding validation remain necessary,
+but neither loops over the user rule list. More rules can cost more to compile,
+validate/save, inspect for warnings, or match when creating a new connection.
+Thus there is no 1001-rule per-packet cost to explain the wired outlier; this is
+not a claim that rule count has zero cost across the entire measured phase.
+
+## In-memory benchmark method and limits
 
 Measurements used the module's Go toolchain on Apple silicon, without root,
 capture, network requests, helper installation or any route/interface change.
@@ -68,13 +126,13 @@ transfers 4 MiB on one warmed-up flow; setup, rule lookup, attribution and sniff
 are outside the measured steady transfer. The only OS network API calls are
 read-only identity lookups of a dynamically selected loopback interface.
 
-The native read/write wrapper models the existing name lookup, an index-plus-name
-validation candidate, or a no-lookup control. The control is **not** a proposed
+The native read/write wrapper models the legacy name lookup, index-plus-name
+validation, or a no-lookup control. The control is **not** a proposed
 safety bypass. Test-only link MTUs are 1500 and 9000; production remains 1500.
 The interface inventory and all raw profiles remain private. Lookup cost depends
 on that inventory, so these numbers are measurements, not portable constants.
 
-Tables report medians of three unprofiled runs, with 300 ms measurement windows
+The in-memory tables report medians of three unprofiled runs, with 300 ms measurement windows
 at the default runtime parallelism and 500 ms with one Go execution processor.
 `getrusage(RUSAGE_SELF)` supplies user-plus-system CPU across all test threads;
 `cpu-ns/B` counts both TCP stacks, fixture copies and runtime work. `cpu-Mbit/s`
@@ -86,7 +144,7 @@ guard/observer work, disk flushes, or multiple applications. It has an extra TCP
 stack and fixture copy absent from the helper. It therefore cannot determine the
 native helper's throughput ceiling or prove sustained 500 Mbps on hardware.
 
-## Measurements
+## In-memory measurements
 
 | Identity query | Time per query | Allocated bytes | Allocations |
 | --- | ---: | ---: | ---: |
@@ -169,7 +227,8 @@ strategy needs separate platform research; no batching gain is claimed here.
 1. Implemented: native checks for a **previously pinned index** verify its returned name
    and index, and keep existing guard epochs/generations and failure behavior.
    Retain normal name/MAC resolution for new bindings and rule references. Never
-   substitute a cached result for lifetime validation. Hardware confirmation is pending.
+   substitute a cached result for lifetime validation. The combined hardware
+   comparison above is recorded with its short-sample limitations.
 2. Implemented: output-buffer reuse without changing MTU or packet ownership.
    Real counter updates remain enabled in relay comparisons; concurrent
    ICMP/TCP/UDP-shaped writer tests preserve lengths, headers and data lifetime.
@@ -177,9 +236,9 @@ strategy needs separate platform research; no batching gain is claimed here.
    with explicit IPv6/UDP/PMTU and VPN acceptance. Do not tune runtime parallelism
    from a single-flow memory model.
 
-The first two candidates have been applied to production. Native I/O and MTU
-changes remain separate work; one coordinated hardware throughput rerun is still
-needed to establish the actual CPU-per-Mbps effect.
+The first two candidates have been applied to production and the combined bounded
+hardware rerun is recorded above. Native I/O and MTU changes remain separate work;
+sustained throughput and isolated steady-state CPU cost remain unproven.
 
 ## Reproduce without root or network traffic
 
