@@ -53,7 +53,10 @@ build_helper() {
     mkdir -p "$(dirname "$helper")"
     GOOS=darwin GOARCH=arm64 go build -ldflags '-s -w' -o "$helper" ./cmd/pithd
     chmod 0755 "$helper"
-    /usr/bin/codesign --force --sign - --identifier io.github.kel077.pith.helper --timestamp=none "$helper"
+    # Pin both the code-page size and CMS reservation: macOS releases use
+    # different defaults even for identical ad-hoc signed Go executables.
+    /usr/bin/codesign --force --sign - --identifier io.github.kel077.pith.helper \
+        --timestamp=none --pagesize 4096 --signature-size 18000 "$helper"
     /usr/bin/codesign --verify --strict "$helper"
     go run ./scripts/helperidentity -helper "$helper" -manifest "$helper_identity" \
         -generate "$repo/internal/client/helper_identity_generated.go"

@@ -95,7 +95,10 @@ installed. Protocol, DNS, lifecycle, cancellation and interface-reuse tests use
 loopback or injected state. Hardware acceptance at `b8b3628` verified separate
 wired/cellular exits, disconnect failure without fallback and automatic recovery,
 with TUN disabled and no running helper. Concurrent TUN operation and remapping
-an open stream remain unverified; see the
+an open stream were not covered by that run. A later pre-release check at
+`2f9d14b` verified both exits while a normal scene captured traffic, with no
+captured connection attributed to the App; Stop restored the prior default
+route and tunnel count. Remapping an open proxy stream remains unverified; see the
 [recorded scope](ROOT-TEST.md#recorded-local-socks5-result).
 
 ## Capturing and forwarding
@@ -531,7 +534,20 @@ checks found no Pith residue. See the [acceptance record](ROOT-TEST.md#recorded-
 SafeStart resolves a TLS endpoint before capture (default `api.ipify.org:443`).
 After activation it has ten seconds to complete a certificate-verified TLS
 handshake with an ordinary native socket and prove that exact socket crossed the
-tunnel. A failure returns `ErrNetworkLost`, removes capture and closes every
+tunnel. Its native leg deliberately has no interface binding. Activity can
+therefore show a short TCP connection owned by `pithd` to that endpoint at Start:
+it follows normal rules and has outcome `system` when none matches. The separate
+forwarder socket binds the chosen egress interface and bypasses capture. This
+single captured probe is expected, not evidence of a forwarding loop; binding or
+exempting its native leg would defeat the end-to-end capture check. SafeStart
+performs TLS verification, not an HTTP public-address query or a periodic probe.
+
+The Network page's `Service.Probe` runs in the unprivileged App process, binds
+the requested interface and, for an empty target, sends HTTPS public-address
+requests for both address families. It does not invoke the helper. Distinguish
+the two paths by the process and startup timing rather than the endpoint alone.
+
+A SafeStart failure returns `ErrNetworkLost`, removes capture and closes every
 relay. Startup failure publishes completed connection records even before a
 Running monitor exists; outbound errors remain in the log. The test harness
 also reads a bounded post-Stop log into its private report, independently of

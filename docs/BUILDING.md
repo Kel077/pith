@@ -22,7 +22,8 @@ explicitly approved test session.
 2. Build `cmd/pithd` for `darwin/arm64` with `CGO_ENABLED=0`, writing
    `resources/darwin-arm64/bin/pithd`. Its informational version comes from
    `helper.Version`, independently of the app. Sign it ad hoc with a fixed
-   identifier and no timestamp, then freeze its identity in generated client code.
+   identifier, 4096-byte code pages, an 18000-byte CMS reservation and no timestamp,
+   then freeze its identity in generated client code.
    Normalize the helper to mode `0755` before signing, independently of umask;
    identity generation and final verification reject group/other write access.
 3. Collect the reviewed licenses and notices for both binaries.
@@ -99,6 +100,17 @@ Explicit environment values for those cache directories are respected. Keep
 them inside the repository or a temporary directory for local test sessions.
 No `go env -w` command is needed. Go builds use `-trimpath` and
 `-buildvcs=false` to omit local source paths and working-tree metadata.
+
+Helper signing also pins `codesign --pagesize 4096 --signature-size 18000`.
+The latter fixes the CMS reservation, not the complete embedded signature size.
+Different macOS signing defaults otherwise change the CodeDirectory, Mach-O
+load commands and padding even when Go emitted identical code. The fixed values
+reproduced the released v0.1.0 helper byte for byte on a newer signing host;
+`codesign --verify --strict` also passed. This does not promise identical helpers
+across different Go toolchains, dependencies, target settings or custom build
+flags, nor reproducible complete app archives. `--signature-size` is an advanced
+codesign option; retain strict signature and frozen-identity checks when changing
+the signing tools.
 
 ```sh
 make clean

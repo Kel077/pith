@@ -29,6 +29,15 @@ the final app contains exactly those helper bytes after MyGo packaging. If MyGo
 resigns the helper differently, fail the build rather than accepting a changed
 identity. Development builds must generate the same identity through `make helper`.
 
+The signing profile fixes 4096-byte code pages and an 18000-byte CMS reservation
+(`--pagesize 4096 --signature-size 18000`). Both affect the signed Mach-O bytes;
+host-dependent defaults caused a local build to differ from v0.1.0 despite the
+same Go build inputs. With this profile the local helper matched that released
+artifact exactly, without changing the executing code or weakening verification.
+Apple's [signer](https://github.com/apple-oss-distributions/Security/blob/main/OSX/libsecurity_codesigning/lib/signer.cpp)
+uses the CMS estimate when allocating the embedded signature, before hashing
+the final executable. Ad-hoc signing still uses no certificate or timestamp.
+
 An app-only version, UI or documentation change must produce the same helper
 identity with the same toolchain and dependencies. An actual helper, compiler or
 linked dependency change can require replacement even with the same display

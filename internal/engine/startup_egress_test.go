@@ -178,9 +178,13 @@ func TestSafeStartImmediatelyUsesSystemEgressAfterActivation(t *testing.T) {
 				roots.AddCert(cert)
 				serverDone := make(chan error, 1)
 				var dialed atomic.Bool
+				var attempts atomic.Int32
 				var servers sync.WaitGroup
 				defer servers.Wait()
 				opts.Dial = func(dialCtx context.Context, name, dialNetwork, dialTarget string) (net.Conn, error) {
+					if attempts.Add(1) != 1 {
+						return nil, errors.New("SafeStart created more than one outbound connection")
+					}
 					if name != "example0" || dialNetwork != network || dialTarget != target.String() {
 						t.Errorf("wrong startup egress: %s %s %s", name, dialNetwork, dialTarget)
 					}
@@ -304,6 +308,19 @@ func TestSafeStartImmediatelyUsesSystemEgressAfterActivation(t *testing.T) {
 				}
 				if err := e.Stop(ctx); err != nil {
 					t.Fatal(err)
+				}
+				flows := e.store.Connections(api.ConnectionQuery{})
+				if attempts.Load() != 1 || len(flows) != 1 {
+					t.Fatalf("SafeStart must create one captured helper flow and one bound outbound attempt: attempts=%d flows=%d", attempts.Load(), len(flows))
+				}
+				flow := flows[0]
+				if flow.Process.PID != 123 || flow.Process.Path != "/tmp/example/pithd" || flow.Remote != target.String() || flow.Domain != "example.com" {
+					t.Fatalf("SafeStart did not retain the captured helper attribution and TLS target: %+v", flow)
+				}
+				// Stop may interrupt the in-memory FIN exchange. Its diagnostic must
+				// not change the selected route or leave another forwarding attempt.
+				if mode != "legacy" && (flow.Outcome != api.System || flow.Interface != "example0" || flow.Ended.IsZero() || flow.Sent == 0 || flow.Received == 0) {
+					t.Fatalf("the captured SafeStart flow lost its system exit or TLS byte accounting: %+v", flow)
 				}
 				after, _ := d.Snapshot()
 				if !slices.Equal(after, routes) {
