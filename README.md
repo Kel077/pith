@@ -38,7 +38,11 @@ Runs on Macs with Apple silicon and macOS 13 or later.
 
 ## Quick start
 
-**1 · Build.** Pith isn't released yet. With [Go](https://go.dev/dl/) 1.27 or later:
+**1 · Install.** Download Pith from [Releases](https://github.com/Kel077/pith/releases/latest) and move it to Applications. Pith is signed ad hoc, not notarized by Apple, so macOS won't open it the first time: open System Settings → Privacy & Security, choose **Open Anyway** for Pith, and confirm.
+
+<sub>To check a download, run `shasum -a 256 -c SHA256SUMS --ignore-missing` in the folder with the files, or `gh attestation verify <file> -R Kel077/pith`.</sub>
+
+Or build it with [Go](https://go.dev/dl/) 1.27 or later:
 
 ```sh
 git clone https://github.com/Kel077/pith.git

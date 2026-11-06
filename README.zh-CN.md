@@ -38,7 +38,11 @@ Mac 可以同时连着有线、Wi-Fi 和手机热点，但系统默认只走其�
 
 ## 快速上手
 
-**1 · 编译。** 橘核还没有发布安装包，目前需要装好 [Go](https://go.dev/dl/) 1.27 或更高版本，自己编译：
+**1 · 安装。** 到 [Releases](https://github.com/Kel077/pith/releases/latest) 下载橘核，拖进「应用程序」。橘核用的是临时签名，没有经过 Apple 公证，所以第一次打开时 macOS 会拦下来：打开「系统设置 → 隐私与安全性」，在橘核那一条点「仍要打开」，再确认一次。
+
+<sub>想校验下载的文件，可以在放着这些文件的文件夹里运行 `shasum -a 256 -c SHA256SUMS --ignore-missing`，或者 `gh attestation verify <文件> -R Kel077/pith`。</sub>
+
+也可以装好 [Go](https://go.dev/dl/) 1.27 或更高版本，自己编译：
 
 ```sh
 git clone https://github.com/Kel077/pith.git
