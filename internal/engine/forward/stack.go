@@ -49,21 +49,22 @@ type Options struct {
 }
 
 type Forwarder struct {
-	opts      Options
-	stack     *stack.Stack
-	link      *channel.Endpoint
-	cache     *domains.Cache
-	ctx       context.Context
-	cancel    context.CancelFunc
-	mu        sync.Mutex
-	closing   bool
-	active    int
-	seenTCP   map[[2]netip.AddrPort]struct{}
-	flows     sync.WaitGroup
-	io        sync.WaitGroup
-	writeMu   sync.Mutex
-	closeOnce sync.Once
-	faults    chan error
+	opts         Options
+	stack        *stack.Stack
+	link         *channel.Endpoint
+	cache        *domains.Cache
+	ctx          context.Context
+	cancel       context.CancelFunc
+	mu           sync.Mutex
+	closing      bool
+	active       int
+	seenTCP      map[[2]netip.AddrPort]struct{}
+	flows        sync.WaitGroup
+	io           sync.WaitGroup
+	writeMu      sync.Mutex
+	writeBuffers [1][]byte // owned until synchronous Device.Write returns; protected by writeMu
+	closeOnce    sync.Once
+	faults       chan error
 }
 
 // New starts packet workers but does not install routes or change interfaces.
@@ -248,11 +249,17 @@ func (f *Forwarder) write() {
 
 // WritePacket also lets the ICMP echo relay return an IP packet to the app.
 func (f *Forwarder) WritePacket(packet []byte) error {
-	data := make([]byte, len(packet)+4)
-	copy(data[4:], packet)
 	f.writeMu.Lock()
 	defer f.writeMu.Unlock()
-	_, err := f.opts.Device.Write([][]byte{data}, 4)
+	size := len(packet) + 4
+	if cap(f.writeBuffers[0]) < size {
+		f.writeBuffers[0] = make([]byte, size)
+	}
+	data := f.writeBuffers[0][:size]
+	f.writeBuffers[0] = data
+	clear(data[:4]) // Native Darwin writes its address-family header here.
+	copy(data[4:], packet)
+	_, err := f.opts.Device.Write(f.writeBuffers[:], 4)
 	return err
 }
 

@@ -220,6 +220,12 @@ remote address become a local tunnel address. They never enter the policy
 snapshot or authorize route deletion; uncached remote addresses behind a default
 route cannot be inferred from this observation.
 
+Output packet writes reuse one buffer per Forwarder under the existing write
+mutex. The reserved native header is reset and only the current packet length
+is passed to the synchronous device write. Storage is not reused until that
+write returns, including when concurrent TCP, UDP or ICMP writers are active.
+This removes repeated output allocations without changing MTU or packet contents.
+
 New TCP SYNs and UDP tuples become userspace endpoints. At the first packet,
 process attribution reads `pcblist_n`, prefers the effective/delegated PID, and
 resolves the outermost app bundle and identifier. The log keeps the actual socket

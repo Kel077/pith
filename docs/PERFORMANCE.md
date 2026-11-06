@@ -5,8 +5,8 @@ The baseline `capture.Binding.Check` called the native driver's name lookup befo
 each guarded socket read/write. Go's BSD `InterfaceByName` reads the entire
 interface table; `InterfaceByIndex` can request one index. Checking the returned
 name and index could preserve the current identity validation at much lower cost.
-The original investigation changed benchmarks only. The first reviewed
-optimization is recorded separately below; the baseline tables are unchanged.
+The original investigation changed benchmarks only. The reviewed optimizations
+are recorded separately below; the baseline tables are unchanged.
 
 ## Applied pinned-index validation
 
@@ -30,6 +30,33 @@ This is about 28 times faster per check, not a claimed throughput speedup.
 Tests cover name/index reuse, missing or inconsistent lookup results, epoch and
 generation changes, capture faults and fresh name resolution after reindexing.
 Hardware CPU-per-Mbps acceptance remains pending. MTU is unchanged.
+
+## Applied output-buffer reuse
+
+`WritePacket` now retains one output buffer and one single-packet slice descriptor
+per Forwarder. The existing write mutex covers growth, header reset, payload copy
+and the synchronous device write; reuse begins only after that write returns.
+The four-byte native header is cleared each time, the exact current packet length
+is passed, and the input packet is not modified. The buffer grows only when needed
+and keeps the largest capacity until the Forwarder is released. MTU, packet
+contents, one-packet writes and error propagation are unchanged.
+
+A warm-buffer microbenchmark with a memory sink, three 300 ms samples, measured:
+
+| Packet bytes | Previous ns/write | Reused ns/write | Previous bytes/allocations | Reused bytes/allocations |
+| ---: | ---: | ---: | ---: | ---: |
+| 64 | 20.33 | 6.00 | 104 / 2 | 0 / 0 |
+| 1500 | 148.9 | 18.65 | 1,560 / 2 | 0 / 0 |
+| 4096 | 363.7 | 40.69 | 4,888 / 2 | 0 / 0 |
+
+The larger input is a buffer-growth test, not a changed link MTU. In the MTU-1500
+memory relay, allocated bytes per 4 MiB transfer fell from approximately 10.4 MB
+to 5.2 MB; fixture-side copies remain. End-to-end timing varied between runs, so
+these observations do not establish a hardware CPU or throughput improvement.
+Tests include concurrent TCP/UDP/ICMP-shaped packets, a device retaining the input
+until its synchronous write returns, mutable native headers, growth followed by
+shorter packets, immutable caller input and error propagation. The concurrency
+test is also run under the race detector.
 
 ## Method and limits
 
@@ -117,12 +144,12 @@ known limitations tracked in [Go issue 80921](https://github.com/golang/go/issue
 that issue does not by itself establish the cause of this particular discrepancy.
 The optimization ranking rests on unprofiled CPU-per-byte comparisons.
 
-In the index-mode allocation profile, the real `Forwarder.WritePacket` accounts
+In the baseline index-mode allocation profile, the real `Forwarder.WritePacket` accounts
 for about 46% of allocated bytes, and the benchmark-only `memoryTUN.Write` copy
 accounts for another 45%. The latter must not be charged to the production helper.
-`WritePacket` allocates and copies a prefixed buffer per packet; inbound packets
-also copy into a netstack-owned buffer. Pooling or reusing the output buffer is a
-second candidate, subject to packet-lifetime and concurrent-writer tests.
+The former `WritePacket` allocated and copied a prefixed buffer per packet;
+inbound packets also copy into a netstack-owned buffer. The applied output-buffer
+reuse removes that per-write allocation while retaining the payload copy.
 Checksum work appeared in the profile but did not explain the dominant measured
 name/index delta. This study cannot precisely separate native utun syscall cost
 from netstack, checksum or copy cost because it does not open a real utun.
@@ -143,14 +170,16 @@ strategy needs separate platform research; no batching gain is claimed here.
    and index, and keep existing guard epochs/generations and failure behavior.
    Retain normal name/MAC resolution for new bindings and rule references. Never
    substitute a cached result for lifetime validation. Hardware confirmation is pending.
-2. Evaluate output-buffer reuse without changing MTU or packet ownership. Keep
-   real counter updates enabled in comparisons and test concurrent ICMP/TCP/UDP writers.
+2. Implemented: output-buffer reuse without changing MTU or packet ownership.
+   Real counter updates remain enabled in relay comparisons; concurrent
+   ICMP/TCP/UDP-shaped writer tests preserve lengths, headers and data lifetime.
 3. Consider MTU and native I/O changes only after those low-risk candidates,
    with explicit IPv6/UDP/PMTU and VPN acceptance. Do not tune runtime parallelism
    from a single-flow memory model.
 
-Only the first candidate has been applied to production; buffer reuse and MTU
-changes remain separate work.
+The first two candidates have been applied to production. Native I/O and MTU
+changes remain separate work; one coordinated hardware throughput rerun is still
+needed to establish the actual CPU-per-Mbps effect.
 
 ## Reproduce without root or network traffic
 
@@ -162,6 +191,8 @@ Bound individual runs; do not run these during an attended hardware/network test
 PITH_PROFILE_DIR="$(mktemp -d "${TMPDIR%/}/pith-profile-XXXXXX")"
 CGO_ENABLED=0 go test ./internal/engine/capture -run '^$' \
   -bench '^BenchmarkBoundInterfaceCheck$' -benchtime=500ms -count=3 -timeout=30s
+CGO_ENABLED=0 go test ./internal/engine/forward -run '^$' \
+  -bench '^BenchmarkWritePacket$' -benchtime=300ms -count=3 -timeout=30s
 CGO_ENABLED=0 go test -c -o "$PITH_PROFILE_DIR/forward.test" ./internal/engine/forward
 "$PITH_PROFILE_DIR/forward.test" -test.run '^$' \
   -test.bench '^Benchmark(InterfaceIdentityLookup|MemoryTCPRelay|MemorySmallReads)$' \
