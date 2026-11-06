@@ -19,8 +19,8 @@ glass, capsules, hairlines) and what each page is for.
 The interface depends on `internal/api` alone: `internal/mock` implements
 `api.Service` in memory, and `internal/client` for real. Add a field, a
 type or a method in a commit of its own, titled `api: …`. Renaming or
-removing anything there, or changing what it means, needs the agreement
-of both owners.
+removing anything there, or changing what it means, changes both the
+interface and the backends: do it deliberately, in a commit of its own.
 
 ## Code standards
 
@@ -39,25 +39,10 @@ of both owners.
   203.0.113.0/24, 2001:db8::/32) and `example.com`, never a real
   network's.
 
-## Owners
-
-| Area | Owner |
-| :-- | :-- |
-| `cmd/pith`, `internal/ui`, `internal/mock`, `internal/hotspot`, `internal/keychain`, `locales`, `resources`, `mygo.json`, `docs/DESIGN.md`, the READMEs, `CONTRIBUTING.md`, `CHANGELOG.md`, `.github/ISSUE_TEMPLATE` | Claude: the interface, its design, integration, hotspots, releases |
-| `cmd/pithd`, `internal/client`, `internal/engine/…`, `internal/helper`, `internal/rules`, `internal/netif`, `internal/rib`, `internal/captureprefix`, `internal/testprofile`, `scripts`, `Makefile`, `.github/workflows`, `SECURITY.md`, `docs/ARCHITECTURE.md`, `docs/ROOT-TEST.md`, `docs/NEXT-ACCEPTANCE.md`, `docs/PERFORMANCE.md` | Astra: the engine, the helper, data, builds, CI |
-| `internal/api` | both, by agreement |
-
 ## Git
 
-- `main` is the integration branch: the interface's owner works there and
-  pushes it. The engine's owner works on `engine`, in a worktree of its
-  own, which is merged into `main` at milestones.
 - Commit small and often, in English, in the imperative, prefixed by area:
   `engine: …`, `helper: …`, `api: …`, `ui: …`, `docs: …`.
-- Push `main` at milestones, not after every commit: each push runs the
-  macOS CI.
-- Only maintainers open pull requests, and the repository allows no one
-  else to. Outside contributions arrive as issues.
 - Never force-push or rewrite history.
 - Never commit secrets, logs, packet captures, or a real network's
   addresses, interface names or host names.
@@ -72,7 +57,7 @@ of both owners.
   at them after changing the interface.
 - The helper ships inside the app as `resources/darwin-arm64/bin/pithd`,
   a build product, not committed, which `mygo build` signs with the app.
-- Notes about the maintainer's own Mac for local tests live in
+- Notes about the maintainer's own Mac and how work is shared out live in
   `AGENTS.local.md`, which is not committed.
 
 ## Safety

@@ -1,6 +1,6 @@
 # Contributing to Pith
 
-Pith is maintained by one person working with AI agents (see [AGENTS.md](AGENTS.md)), so the process is small.
+Pith is maintained by one person, so the process is small.
 
 ## Issues, not pull requests
 
@@ -25,7 +25,7 @@ Tests use documentation addresses (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24
 
 ## Work done with AI
 
-Much of Pith is written by AI agents and reviewed before it lands. If AI helped with what you send, say so; you're responsible for having read and checked it.
+If AI helped with what you send, say so; you're responsible for having read and checked it.
 
 ## License
 
