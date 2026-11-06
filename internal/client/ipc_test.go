@@ -16,6 +16,7 @@ import (
 
 	"github.com/Kel077/pith/internal/api"
 	"github.com/Kel077/pith/internal/helper"
+	"github.com/Kel077/pith/internal/helper/identity"
 )
 
 type fakeEngine struct {
@@ -117,11 +118,21 @@ func startLocalHelper(t *testing.T, version string, backend helper.Backend) (*Cl
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	c, err := New(Options{ConfigDir: filepath.Join(dir, "config"), SocketPath: socket, Version: "test"})
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected, err := identity.Inspect(executable, "test-helper", helper.ProtocolVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := New(Options{ConfigDir: filepath.Join(dir, "config"), SocketPath: socket, Version: "test-app", HelperPath: executable, ExpectedHelper: &expected})
 	if err != nil {
 		t.Fatal(err)
 	}
 	c.peerUID = uint32(os.Getuid()) // Only same-process tests accept an unprivileged helper.
+	c.binaryPath = executable
+	c.artifactOpen = func(path string, _ bool) (*os.File, artifactStamp, error) { return openArtifact(path, false) }
 	return c, cancel, done
 }
 
@@ -209,19 +220,36 @@ func TestIPCSubscriptionOrderAndCancellation(t *testing.T) {
 	}
 }
 
-func TestIPCVersionAndRootPeerChecks(t *testing.T) {
+func TestIPCArtifactAndRootPeerChecks(t *testing.T) {
 	c, _, _ := startLocalHelper(t, "older", newFakeEngine())
 	status, err := c.Status(context.Background())
-	if err != nil || !status.Helper.Outdated {
+	if err != nil || status.Helper.Outdated || status.Helper.Version != "test-helper" {
+		t.Fatal(status, err)
+	}
+	// Informational app and peer version strings cannot trigger replacement.
+	c.opts.Version = "new-app-version"
+	if err := c.Start(context.Background(), "default"); err != nil {
+		t.Fatal(err)
+	}
+	checkFile := c.checkFile
+	c.checkFile = func(path string, installed bool) error {
+		if installed {
+			return errArtifactMismatch
+		}
+		return checkFile(path, installed)
+	}
+	status, err = c.Status(context.Background())
+	if err != nil || !status.Helper.Outdated || status.Helper.Running || status.Helper.Version != "" {
 		t.Fatal(status, err)
 	}
 	if err := c.Start(context.Background(), "default"); api.Code(err) != api.ErrHelperOutdated {
 		t.Fatal(err)
 	}
+	c.checkFile = checkFile
 	if os.Getuid() != 0 {
 		c.peerUID = 0
-		if _, err := c.Status(context.Background()); err == nil {
-			t.Fatal("client trusted an unprivileged helper")
+		if status, err := c.Status(context.Background()); err != nil || status.State != api.Failed || api.Code(status.Error) != api.ErrHelperUntrusted {
+			t.Fatal("client did not report an untrusted helper", status, err)
 		}
 	}
 }

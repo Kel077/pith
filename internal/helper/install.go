@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/Kel077/pith/internal/api"
+	"github.com/Kel077/pith/internal/helper/identity"
 	"github.com/Kel077/pith/internal/testprofile"
 	"howett.net/plist"
 )
@@ -48,6 +49,19 @@ func launchPlist(uid uint32, extraArgs ...string) ([]byte, error) {
 
 func PlanInstall(source string, uid uint32) (InstallPlan, error) {
 	return planInstall(source, uid, nil)
+}
+
+// PlanVerifiedInstall pins the source to the client's compiled identity before
+// authorization and again after the privileged copy. Cleanup uses that copy.
+func PlanVerifiedInstall(source string, uid uint32, expected identity.Identity) (InstallPlan, error) {
+	if err := expected.Validate(); err != nil || expected.Protocol != ProtocolVersion {
+		return InstallPlan{}, &api.Error{Code: api.ErrHelperUntrusted, Detail: "invalid bundled helper identity"}
+	}
+	plan, err := planInstallChecked(source, uid, nil, expected.SHA256)
+	if err != nil {
+		return InstallPlan{}, &api.Error{Code: api.ErrHelperUntrusted, Detail: "bundled helper could not be verified before authorization"}
+	}
+	return plan, nil
 }
 
 // ScopedOptions restricts an explicitly authorized development installation to
@@ -103,6 +117,10 @@ func PlanTestInstall(source string, uid uint32, profile testprofile.Profile) (In
 }
 
 func planInstall(source string, uid uint32, args []string) (InstallPlan, error) {
+	return planInstallChecked(source, uid, args, "")
+}
+
+func planInstallChecked(source string, uid uint32, args []string, expectedHash string) (InstallPlan, error) {
 	if uid == 0 {
 		return InstallPlan{}, fmt.Errorf("the helper must be installed for an unprivileged user")
 	}
@@ -118,7 +136,7 @@ func planInstall(source string, uid uint32, args []string) (InstallPlan, error) 
 	if err != nil {
 		return InstallPlan{}, err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 {
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 || info.Size() <= 0 || info.Size() > identity.MaxFileSize {
 		return InstallPlan{}, fmt.Errorf("helper source is not an executable regular file")
 	}
 	hash := sha256.New()
@@ -126,12 +144,19 @@ func planInstall(source string, uid uint32, args []string) (InstallPlan, error) 
 		return InstallPlan{}, err
 	}
 	checksum := fmt.Sprintf("%x", hash.Sum(nil))
+	if expectedHash != "" && checksum != expectedHash {
+		return InstallPlan{}, &api.Error{Code: api.ErrHelperUntrusted, Detail: "bundled helper changed before authorization"}
+	}
 	launch, err := launchPlist(uid, args...)
 	if err != nil {
 		return InstallPlan{}, err
 	}
 	// All destination paths are fixed. The source is shell-quoted and the copied
 	// root-owned stage must match the bytes reviewed before elevation.
+	cleanup := ""
+	if expectedHash != "" {
+		cleanup = "if [ -f \"$data/capture.json\" ]; then \"$stage/new-helper\" --cleanup; fi\n"
+	}
 	script := "set -eu\n" +
 		"binary=" + shellQuote(BinaryPath) + "\nplist=" + shellQuote(PlistPath) + "\ndata=" + shellQuote(DataDir) + "\n" +
 		"service=" + shellQuote("system/"+Label) + "\n" +
@@ -158,6 +183,7 @@ func planInstall(source string, uid uint32, args []string) (InstallPlan, error) 
 		"/usr/sbin/chown root:wheel \"$stage/new.plist\"\n/bin/chmod 0644 \"$stage/new.plist\"\n/usr/bin/plutil -lint \"$stage/new.plist\" >/dev/null\n" +
 		"changed=1\nif [ \"$was_loaded\" -eq 1 ]; then /bin/launchctl bootout \"$service\"; fi\n" +
 		waitForSocket() +
+		cleanup +
 		"/bin/mv -f \"$stage/new-helper\" \"$binary\"\n/bin/mv -f \"$stage/new.plist\" \"$plist\"\n" +
 		"/bin/launchctl bootstrap system \"$plist\"\n"
 	return InstallPlan{
@@ -197,6 +223,49 @@ func PlanUninstall() InstallPlan {
 		"if [ -S " + shellQuote(SocketPath) + " ]; then /bin/rm -f " + shellQuote(SocketPath) + "; fi\n" +
 		"/bin/rm -rf " + shellQuote(DataDir) + "\n"
 	return InstallPlan{Script: script, Prompt: UninstallPrompt, Changes: []string{BinaryPath, PlistPath, DataDir, SocketPath}, Undo: "InstallHelper reinstalls the bundled helper; removed connection logs and traffic history are not restored."}
+}
+
+// PlanVerifiedUninstall never executes the installed path for recovery. The
+// source can be the verified bundle or a separately verified installed file;
+// either is copied and hash-checked in a private root-owned stage first.
+func PlanVerifiedUninstall(source string, expected identity.Identity) (InstallPlan, error) {
+	if err := expected.Validate(); err != nil || expected.Protocol != ProtocolVersion {
+		return InstallPlan{}, &api.Error{Code: api.ErrHelperUntrusted, Detail: "invalid cleanup helper identity"}
+	}
+	if !filepath.IsAbs(source) || strings.ContainsAny(source, "\x00\r\n") {
+		return InstallPlan{}, &api.Error{Code: api.ErrHelperUntrusted, Detail: "invalid cleanup helper path"}
+	}
+	f, err := os.Open(source)
+	if err != nil {
+		return InstallPlan{}, &api.Error{Code: api.ErrHelperUntrusted, Detail: "cleanup helper could not be opened before authorization"}
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 || info.Size() <= 0 || info.Size() > identity.MaxFileSize {
+		return InstallPlan{}, &api.Error{Code: api.ErrHelperUntrusted, Detail: "invalid cleanup helper file"}
+	}
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return InstallPlan{}, &api.Error{Code: api.ErrHelperUntrusted, Detail: "cleanup helper could not be read before authorization"}
+	}
+	if fmt.Sprintf("%x", h.Sum(nil)) != expected.SHA256 {
+		return InstallPlan{}, &api.Error{Code: api.ErrHelperUntrusted, Detail: "cleanup helper changed before authorization"}
+	}
+	script := "set -eu\nservice=" + shellQuote("system/"+Label) + "\ndata=" + shellQuote(DataDir) + "\n" +
+		"for path in " + shellQuote(BinaryPath) + " " + shellQuote(PlistPath) + " \"$data\"; do [ ! -L \"$path\" ] || { echo 'refusing symlink installation path' >&2; exit 1; }; done\n" +
+		"if [ -e \"$data\" ]; then [ -d \"$data\" ] && [ \"$(/usr/bin/stat -f %u \"$data\")\" = 0 ] || exit 1; fi\n" +
+		"/usr/bin/install -d -o root -g wheel -m 0700 \"$data\"\n" +
+		"stage=$(/usr/bin/mktemp -d \"$data/.uninstall.XXXXXXXX\")\n" +
+		"trap '/bin/rm -rf \"$stage\"' EXIT\ntrap 'exit 1' HUP INT TERM\n" +
+		"/usr/bin/install -o root -g wheel -m 0755 " + shellQuote(source) + " \"$stage/cleanup-helper\"\n" +
+		"actual=$(/usr/bin/shasum -a 256 \"$stage/cleanup-helper\")\n[ \"${actual%% *}\" = " + shellQuote(expected.SHA256) + " ] || { echo 'cleanup helper changed during authorization' >&2; exit 1; }\n" +
+		"if /bin/launchctl print \"$service\" >/dev/null 2>&1; then /bin/launchctl bootout \"$service\"; fi\n" +
+		waitForSocket() +
+		"if [ -f \"$data/capture.json\" ]; then \"$stage/cleanup-helper\" --cleanup; fi\n" +
+		"/bin/rm -f " + shellQuote(BinaryPath) + " " + shellQuote(PlistPath) + "\n" +
+		"if [ -S " + shellQuote(SocketPath) + " ]; then /bin/rm -f " + shellQuote(SocketPath) + "; fi\n" +
+		"/bin/rm -rf \"$data\"\n"
+	return InstallPlan{Script: script, Prompt: UninstallPrompt, Changes: []string{BinaryPath, PlistPath, DataDir, SocketPath}, Undo: "InstallHelper reinstalls the bundled helper; removed logs and traffic history are not restored. Cleanup failures preserve the installation and ownership journal."}, nil
 }
 
 // A bounded grace period lets the old helper finish route cleanup before its

@@ -18,20 +18,29 @@ explicitly approved test session.
 
 `make build` performs these steps:
 
-1. Read the version from `mygo.json`.
+1. Read the app version from `mygo.json`.
 2. Build `cmd/pithd` for `darwin/arm64` with `CGO_ENABLED=0`, writing
-   `resources/darwin-arm64/bin/pithd`.
+   `resources/darwin-arm64/bin/pithd`. Its informational version comes from
+   `helper.Version`, independently of the app. Sign it ad hoc with a fixed
+   identifier and no timestamp, then freeze its identity in generated client code.
 3. Collect the reviewed licenses and notices for both binaries.
 4. Run `go run github.com/egoist/mygo/cmd/mygo@v0.7.4 build` for
    `darwin/arm64`, with ad hoc signing and without notarization or DMG creation.
-5. Verify both executables' architecture, the helper and bundle versions,
+5. Verify both executables' architecture, the frozen helper identity and app version,
    the bundle identifier, the bundled license texts, and both signatures.
 
 The app is `build/darwin-arm64/Pith.app`. MyGo merges the ARM64 resource
 directory into the bundle, so the helper ships at
-`Pith.app/Contents/Resources/bin/pithd` and is signed with the app. The build
-sets both programs' `main.version` from the same configuration value; the
-app receives it through `MYGO_LDFLAGS`.
+`Pith.app/Contents/Resources/bin/pithd`. MyGo preserves its existing valid ad hoc
+signature; final verification rejects any byte change during packaging. Only the
+app receives `mygo.json`'s version through `MYGO_LDFLAGS`.
+
+`make helper` does not read the app version. It generates
+`internal/client/helper_identity_generated.go`, which embeds the expected complete
+SHA-256, CDHash, protocol and helper version into the client at compile time. The
+adjacent `pithd.identity.json` is a build-verification record, never a runtime trust
+anchor. Both generated files are ignored by Git. The helper does not depend on
+the client, so generating a new client identity cannot change the helper's bytes.
 
 Neither the app nor the helper service is started by these commands. The only
 helper invocation is `pithd --version`, which exits before privileged setup.
@@ -39,8 +48,9 @@ helper invocation is `pithd --version`, which exits before privileged setup.
 
 For development with `go run ./cmd/pith`, first run `make helper`. The client
 also searches `resources/darwin-arm64/bin/pithd` when the resources directory
-has not been packaged. A development app's version must match `mygo.json`;
-the build always sets this explicitly for the packaged app.
+has not been packaged. A development app uses the identity compiled by
+`make helper`; an absent identity must not enable a version-only verification
+fallback. Changing the helper requires rebuilding that app/controller too.
 
 ## Archives and disk images
 
@@ -80,7 +90,7 @@ No `go env -w` command is needed. Go builds use `-trimpath` and
 make clean
 ```
 
-This removes `build/`, `resources/darwin-arm64/bin/pithd`, and the generated
+This removes `build/`, the helper, its generated identity files, and the generated
 `resources/darwin-arm64/licenses/`. It leaves source assets and caches in place.
 None of the generated binaries, archives, disk images or license copies belong
 in Git.

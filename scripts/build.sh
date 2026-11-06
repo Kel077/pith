@@ -20,6 +20,8 @@ esac
 if [[ "$mode" == clean ]]; then
     rm -rf "$repo/build"
     rm -f "$repo/resources/darwin-arm64/bin/pithd"
+    rm -f "$repo/resources/darwin-arm64/bin/pithd.identity.json"
+    rm -f "$repo/internal/client/helper_identity_generated.go"
     rm -rf "$repo/resources/darwin-arm64/licenses"
     exit 0
 fi
@@ -44,21 +46,31 @@ if [[ "$mode" == check ]]; then
     exit 0
 fi
 
+helper="$repo/resources/darwin-arm64/bin/pithd"
+helper_identity="$helper.identity.json"
+
+build_helper() {
+    mkdir -p "$(dirname "$helper")"
+    GOOS=darwin GOARCH=arm64 go build -ldflags '-s -w' -o "$helper" ./cmd/pithd
+    /usr/bin/codesign --force --sign - --identifier io.github.kel077.pith.helper --timestamp=none "$helper"
+    /usr/bin/codesign --verify --strict "$helper"
+    go run ./scripts/helperidentity -helper "$helper" -manifest "$helper_identity" \
+        -generate "$repo/internal/client/helper_identity_generated.go"
+    printf 'Built pithd %s for darwin/arm64\n' "$("$helper" --version)"
+}
+
+# The helper build never reads the app version or links it into the artifact.
+if [[ "$mode" == helper ]]; then
+    build_helper
+    exit 0
+fi
+
 version=$(/usr/bin/plutil -extract version raw -expect string mygo.json)
 name=$(/usr/bin/plutil -extract name raw -expect string mygo.json)
 identifier=$(/usr/bin/plutil -extract identifier raw -expect string mygo.json)
 [[ "$version" =~ ^[0-9][0-9A-Za-z.+-]*$ ]] || fail 'mygo.json version must be a nonempty version without spaces'
 [[ -n "$name" && "$name" != */* && "$name" != . && "$name" != .. ]] || fail 'mygo.json name must be a single path component'
-
-helper="$repo/resources/darwin-arm64/bin/pithd"
 app="$repo/build/darwin-arm64/$name.app"
-
-build_helper() {
-    mkdir -p "$(dirname "$helper")"
-    GOOS=darwin GOARCH=arm64 go build -ldflags "-s -w -X main.version=$version" -o "$helper" ./cmd/pithd
-    [[ $("$helper" --version) == "$version" ]] || fail 'built helper version differs from mygo.json'
-    printf 'Built pithd %s for darwin/arm64\n' "$version"
-}
 
 verify_app() {
     local plist="$app/Contents/Info.plist"
@@ -70,7 +82,7 @@ verify_app() {
     executable=$(/usr/bin/plutil -extract CFBundleExecutable raw "$plist")
     [[ $(/usr/bin/lipo -archs "$app/Contents/MacOS/$executable") == arm64 ]] || fail 'app executable is not ARM64 only'
     [[ $(/usr/bin/lipo -archs "$bundled_helper") == arm64 ]] || fail 'embedded helper is not ARM64 only'
-    [[ $("$bundled_helper" --version) == "$version" ]] || fail 'embedded helper version differs from the app'
+    go run ./scripts/helperidentity -helper "$bundled_helper" -manifest "$helper_identity" -verify
     go run ./scripts/licenses -verify "$app/Contents/Resources/licenses"
     /usr/bin/codesign --verify --strict "$bundled_helper"
     /usr/bin/codesign --verify --deep --strict "$app"
@@ -84,21 +96,49 @@ build_app() {
     if [[ "$mode" != dmg ]]; then
         flags+=(-skip-dmg)
     fi
-    # Keep the UI's client version, the helper and CFBundleShortVersionString equal.
+    # The app version is independent of the already frozen helper artifact.
     MYGO_LDFLAGS="${MYGO_LDFLAGS:+$MYGO_LDFLAGS }-X main.version=$version" \
         go run github.com/egoist/mygo/cmd/mygo@v0.7.4 build "${flags[@]}"
     verify_app
 }
 
+archive_app() (
+    local archive="$repo/build/pith-$version-arm64.zip"
+    local stage extracted='' entry entry_count=0
+    stage=$(mktemp -d "$repo/build/.pith-archive.XXXXXX")
+    trap 'rm -rf "$stage"; [[ -z "$extracted" ]] || rm -rf "$extracted"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    extracted=$(mktemp -d "$pith_tmp/pith-archive.XXXXXX")
+
+    # A fresh archive cannot retain stale entries from an earlier build.
+    # Store symlinks as links and omit macOS metadata without changing the app.
+    (
+        cd "$(dirname "$app")"
+        /usr/bin/zip -qry -X "$stage/app.zip" -- "$name.app"
+    )
+    /usr/bin/unzip -Z1 "$stage/app.zip" > "$stage/entries.txt"
+    while IFS= read -r entry; do
+        case "/$entry/" in
+            */._*|*/__MACOSX/*) fail "archive contains macOS metadata: $entry" ;;
+        esac
+        entry_count=$((entry_count + 1))
+    done < "$stage/entries.txt"
+
+    # Plain unzip leaves AppleDouble files in place, unlike Finder or ditto.
+    /usr/bin/unzip -q "$stage/app.zip" -d "$extracted"
+    /usr/bin/codesign --verify --deep --strict "$extracted/$name.app"
+    printf 'Verified archive: %d entries, no macOS metadata, valid extracted signature\n' "$entry_count"
+    mv -f "$stage/app.zip" "$archive"
+    printf 'Created %s\n' "${archive#"$repo/"}"
+)
+
 case "$mode" in
-    helper) build_helper ;;
     licenses) go run ./scripts/licenses ;;
     verify) verify_app ;;
     app|dmg) build_app ;;
     archive)
         build_app
-        archive="$repo/build/pith-$version-arm64.zip"
-        /usr/bin/ditto -c -k --keepParent --noextattr --noqtn --noacl "$app" "$archive"
-        printf 'Created %s\n' "${archive#"$repo/"}"
+        archive_app
         ;;
 esac

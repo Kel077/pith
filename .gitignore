@@ -4,6 +4,7 @@
 /resources/darwin-arm64/bin/
 /resources/darwin-arm64/licenses/
 /resources/darwin-arm64/.licenses-*/
+/internal/client/helper_identity_generated.go
 *.dmg
 
 # Local state, logs and captures (never commit the user's network data)
