@@ -38,3 +38,51 @@ func TestSimulation(t *testing.T) {
 		t.Errorf("Check(ads) = %+v, want blocked", res)
 	}
 }
+
+// A rule change ends the open connections it sends elsewhere, and only
+// those, as the engine does: normally, with no problem, for the app to
+// reconnect.
+func TestRuleChangeEndsAffectedConnections(t *testing.T) {
+	ctx := context.Background()
+	s := New(Options{Sample: true, HelperInstalled: true, Running: true, Seed: 1})
+	var open []api.Connection
+	wechat := func() bool {
+		open, _ = s.Connections(ctx, api.ConnectionQuery{Open: true})
+		for _, c := range open {
+			if c.RuleID == "r-wechat" {
+				return true
+			}
+		}
+		return false
+	}
+	for i := 0; i < 120 && !wechat(); i++ {
+		s.Simulate(time.Second)
+	}
+	st, _ := s.Status(ctx)
+	cfg, _ := s.LoadConfig(ctx)
+	changed := false
+	for i := range cfg.Scenes {
+		for j := range cfg.Scenes[i].Rules {
+			if r := &cfg.Scenes[i].Rules[j]; cfg.Scenes[i].ID == st.SceneID && r.ID == "r-wechat" {
+				r.Action, r.Via, changed = api.Block, nil, true
+			}
+		}
+	}
+	if !changed || !wechat() {
+		t.Fatal("no open connection of the running scene's WeChat rule")
+	}
+	if err := s.SaveConfig(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := s.Connections(ctx, api.ConnectionQuery{})
+	now := map[uint64]api.Connection{}
+	for _, c := range after {
+		now[c.ID] = c
+	}
+	for _, c := range open {
+		n, affected := now[c.ID], c.RuleID == "r-wechat"
+		if affected == n.Ended.IsZero() || affected != (n.EndReason == api.EndRulesChanged) || n.Problem != "" || n.Outcome != c.Outcome {
+			t.Errorf("connection %d of rule %q: ended %v, reason %q, problem %q, outcome %s", c.ID, c.RuleID, !n.Ended.IsZero(), n.EndReason, n.Problem, n.Outcome)
+		}
+	}
+}

@@ -157,12 +157,52 @@ func (s *Service) SaveConfig(ctx context.Context, cfg api.Config) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	old := s.scene(s.status.SceneID)
 	s.cfg = clone(cfg)
-	if s.status.State == api.Running && s.scene(s.status.SceneID) == nil {
-		s.stopLocked()
+	if s.status.State == api.Running {
+		if sc := s.scene(s.status.SceneID); sc == nil {
+			s.stopLocked()
+		} else if old != nil {
+			s.reconnectLocked(old, sc)
+		}
 	}
 	s.refreshWarningsLocked()
 	return nil
+}
+
+// reconnectLocked ends the open connections that the running scene's new
+// rules send elsewhere, as the engine does, for their apps to reconnect.
+func (s *Service) reconnectLocked(old, sc *api.Scene) {
+	now := s.now()
+	for id, f := range s.open {
+		addr, err := netip.ParseAddrPort(f.c.Remote)
+		if err != nil {
+			continue
+		}
+		was, _ := match(old.Rules, f.c.App, f.c.Domain, addr.Addr(), f.c.Protocol)
+		is, _ := match(sc.Rules, f.c.App, f.c.Domain, addr.Addr(), f.c.Protocol)
+		if sameRoute(was, is) {
+			continue
+		}
+		f.c.Ended, f.c.EndReason = now, api.EndRulesChanged
+		delete(s.open, id)
+		s.publishConnLocked(f.c)
+	}
+}
+
+// sameRoute says whether two rules send a connection the same way: the same
+// action and, to route, the same first interface. Fallbacks don't count.
+func sameRoute(a, b *api.Rule) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if a.Action != b.Action {
+		return false
+	}
+	if a.Action != api.Route || len(a.Via) == 0 || len(b.Via) == 0 {
+		return a.Action != api.Route || len(a.Via) == len(b.Via)
+	}
+	return a.Via[0].Name == b.Via[0].Name && a.Via[0].HardwareAddr == b.Via[0].HardwareAddr
 }
 
 func (s *Service) Status(ctx context.Context) (api.Status, error) {
