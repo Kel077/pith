@@ -11,18 +11,21 @@ import (
 type ErrorCode string
 
 const (
-	ErrHelperMissing       ErrorCode = "helper_missing"        // InstallHelper first
-	ErrHelperOutdated      ErrorCode = "helper_outdated"       // InstallHelper updates it
-	ErrHelperUntrusted     ErrorCode = "helper_untrusted"      // helper or bundled identity cannot be verified; never ready, stopped or missing
-	ErrHelperNotResponding ErrorCode = "helper_not_responding" // verified installed artifact has no answering helper; engine state is unknown
-	ErrCanceled            ErrorCode = "canceled"              // the user canceled macOS's password dialog
-	ErrInvalidConfig       ErrorCode = "invalid_config"        // Detail says what
-	ErrNoScene             ErrorCode = "no_scene"              // no scene has that ID
-	ErrRouteConflict       ErrorCode = "route_conflict"        // another app holds routes Pith needs (Detail: which)
-	ErrNetworkLost         ErrorCode = "network_lost"          // SafeStart undid a start that cut the internet
-	ErrUnsupported         ErrorCode = "unsupported"           // Pith can't control that device
-	ErrWrongPassword       ErrorCode = "wrong_password"        // a device refused the password Pith has, or Pith has none
-	ErrInternal            ErrorCode = "internal"
+	ErrHelperMissing        ErrorCode = "helper_missing"        // InstallHelper first
+	ErrHelperOutdated       ErrorCode = "helper_outdated"       // InstallHelper updates it
+	ErrHelperUntrusted      ErrorCode = "helper_untrusted"      // helper or bundled identity cannot be verified; never ready, stopped or missing
+	ErrHelperNotResponding  ErrorCode = "helper_not_responding" // verified installed artifact has no answering helper; engine state is unknown
+	ErrCanceled             ErrorCode = "canceled"              // the user canceled macOS's password dialog
+	ErrInvalidConfig        ErrorCode = "invalid_config"        // Detail says what
+	ErrNoScene              ErrorCode = "no_scene"              // no scene has that ID
+	ErrRouteConflict        ErrorCode = "route_conflict"        // another app holds routes Pith needs (Detail: which)
+	ErrNetworkLost          ErrorCode = "network_lost"          // SafeStart undid a start that cut the internet
+	ErrUnsupported          ErrorCode = "unsupported"           // Pith can't control that device
+	ErrWrongPassword        ErrorCode = "wrong_password"        // a device refused the password Pith has, or Pith has none
+	ErrPortInUse            ErrorCode = "port_in_use"           // another listener owns the requested local proxy port
+	ErrInterfaceUnavailable ErrorCode = "interface_unavailable" // the selected local proxy exit cannot be resolved or used
+	ErrDNSUnavailable       ErrorCode = "dns_unavailable"       // the selected local proxy exit has no usable DNS servers
+	ErrInternal             ErrorCode = "internal"
 )
 
 // Error is an error of the backend with a code the interface translates.
@@ -128,7 +131,9 @@ func (r Rule) Problems() []Problem {
 
 // Validate checks what SaveConfig requires: the current version, at least
 // one scene, IDs that are set and unique, a selected scene that exists,
-// and rules without problems.
+// rules without problems, and bounded unique local proxy ports with an exit.
+// Physical-interface eligibility is checked by the client when Via resolves;
+// an offline or not-yet-present adapter does not invalidate saved configuration.
 func (c Config) Validate() error {
 	bad := func(format string, args ...any) error {
 		return &Error{Code: ErrInvalidConfig, Detail: fmt.Sprintf(format, args...)}
@@ -161,6 +166,22 @@ func (c Config) Validate() error {
 	}
 	if c.Settings.LogDays < 0 {
 		return bad("logDays %d is negative", c.Settings.LogDays)
+	}
+	if len(c.Proxies) > MaxProxies {
+		return bad("proxies: %d entries exceed the limit of %d", len(c.Proxies), MaxProxies)
+	}
+	ports := make(map[int]bool, len(c.Proxies))
+	for i, proxy := range c.Proxies {
+		if proxy.Port < 1024 || proxy.Port > 65535 {
+			return bad("proxy %d: port %d is outside 1024..65535", i+1, proxy.Port)
+		}
+		if ports[proxy.Port] {
+			return bad("proxy %d: port %d is not unique", i+1, proxy.Port)
+		}
+		ports[proxy.Port] = true
+		if proxy.Via.Name == "" {
+			return bad("proxy %d: via name is empty", i+1)
+		}
 	}
 	return nil
 }
