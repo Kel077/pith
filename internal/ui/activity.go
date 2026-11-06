@@ -363,7 +363,7 @@ func (a *App) outcomeView(c *ui.Context, cn *api.Connection) {
 	}
 	// Closed by a change of the rules, for its app to reconnect: not a failure.
 	if cn.EndReason == api.EndRulesChanged {
-		ui.Text(c, locales.EndRulesChanged()).FontSize(11).TextColor(t.TextMuted).SingleLine().Shrink(1).Tooltip(locales.ClosedWhenTheRulesChanged())
+		ui.Text(c, locales.EndRulesChanged()).FontSize(11).TextColor(t.TextMuted).SingleLine().Shrink(1).Tooltip(locales.ClosedToReconnect())
 	}
 }
 
@@ -386,7 +386,7 @@ func (a *App) connTooltip(cn *api.Connection) string {
 		b.WriteString("\n" + cn.Problem)
 	}
 	if cn.EndReason == api.EndRulesChanged {
-		b.WriteString("\n" + locales.ClosedWhenTheRulesChanged())
+		b.WriteString("\n" + locales.ClosedToReconnect())
 	}
 	return b.String()
 }

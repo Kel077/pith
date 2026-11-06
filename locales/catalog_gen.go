@@ -236,14 +236,14 @@ func (msgs Messages) EndRulesChanged() string {
 	return Catalog.Format(msgs.locale, "endRulesChanged", nil)
 }
 
-// ClosedWhenTheRulesChanged says "Closed when the rules changed, for the app to reconnect under the new ones"
+// ClosedToReconnect says "Closed to reconnect under the new rules"
 // in the language the app shows.
-func ClosedWhenTheRulesChanged() string { return In(i18n.Locale()).ClosedWhenTheRulesChanged() }
+func ClosedToReconnect() string { return In(i18n.Locale()).ClosedToReconnect() }
 
-// ClosedWhenTheRulesChanged says "Closed when the rules changed, for the app to reconnect under the new ones"
+// ClosedToReconnect says "Closed to reconnect under the new rules"
 // in the language of msgs.
-func (msgs Messages) ClosedWhenTheRulesChanged() string {
-	return Catalog.Format(msgs.locale, "closedWhenTheRulesChanged", nil)
+func (msgs Messages) ClosedToReconnect() string {
+	return Catalog.Format(msgs.locale, "closedToReconnect", nil)
 }
 
 // Block says "Block"
@@ -3088,20 +3088,6 @@ func (msgs Messages) LocalProxies() string {
 	return Catalog.Format(msgs.locale, "localProxies", nil)
 }
 
-// Socks5OnThisMacOnly says "SOCKS5 for apps on this Mac, without a password. Each port goes out through its interface alone, and fails while that…"
-// in the language the app shows.
-//
-// Under the local proxies, beside Add Proxy: what they are.
-func Socks5OnThisMacOnly() string { return In(i18n.Locale()).Socks5OnThisMacOnly() }
-
-// Socks5OnThisMacOnly says "SOCKS5 for apps on this Mac, without a password. Each port goes out through its interface alone, and fails while that…"
-// in the language of msgs.
-//
-// Under the local proxies, beside Add Proxy: what they are.
-func (msgs Messages) Socks5OnThisMacOnly() string {
-	return Catalog.Format(msgs.locale, "socks5OnThisMacOnly", nil)
-}
-
 // AddProxy says "Add Proxy"
 // in the language the app shows.
 //
@@ -3146,13 +3132,13 @@ func (msgs Messages) ProxyOff() string {
 	return Catalog.Format(msgs.locale, "proxyOff", nil)
 }
 
-// PortInUse says "Another app uses this port"
+// PortInUse says "Port in use"
 // in the language the app shows.
 //
 // A local proxy that can't listen: another program holds its port.
 func PortInUse() string { return In(i18n.Locale()).PortInUse() }
 
-// PortInUse says "Another app uses this port"
+// PortInUse says "Port in use"
 // in the language of msgs.
 //
 // A local proxy that can't listen: another program holds its port.
@@ -3160,36 +3146,20 @@ func (msgs Messages) PortInUse() string {
 	return Catalog.Format(msgs.locale, "portInUse", nil)
 }
 
-// ItsInterfaceIsnTConnected says "Its interface isn't connected"
-// in the language the app shows.
-//
-// A local proxy whose interface is unplugged or down: its connections fail
-// rather than use another interface.
-func ItsInterfaceIsnTConnected() string { return In(i18n.Locale()).ItsInterfaceIsnTConnected() }
-
-// ItsInterfaceIsnTConnected says "Its interface isn't connected"
-// in the language of msgs.
-//
-// A local proxy whose interface is unplugged or down: its connections fail
-// rather than use another interface.
-func (msgs Messages) ItsInterfaceIsnTConnected() string {
-	return Catalog.Format(msgs.locale, "itsInterfaceIsnTConnected", nil)
-}
-
-// ItsInterfaceHasNoDns says "Its interface has no DNS server"
+// NoDns says "No DNS"
 // in the language the app shows.
 //
 // A local proxy whose interface has no DNS server: it can reach IP
 // addresses, not names.
-func ItsInterfaceHasNoDns() string { return In(i18n.Locale()).ItsInterfaceHasNoDns() }
+func NoDns() string { return In(i18n.Locale()).NoDns() }
 
-// ItsInterfaceHasNoDns says "Its interface has no DNS server"
+// NoDns says "No DNS"
 // in the language of msgs.
 //
 // A local proxy whose interface has no DNS server: it can reach IP
 // addresses, not names.
-func (msgs Messages) ItsInterfaceHasNoDns() string {
-	return Catalog.Format(msgs.locale, "itsInterfaceHasNoDns", nil)
+func (msgs Messages) NoDns() string {
+	return Catalog.Format(msgs.locale, "noDns", nil)
 }
 
 // ProxyListening says "Listening"
@@ -3222,18 +3192,18 @@ func (msgs Messages) ProxyStarting() string {
 	return Catalog.Format(msgs.locale, "proxyStarting", nil)
 }
 
-// UseAPortFrom1024To65535 says "Use a port from 1024 to 65535 that no other proxy uses."
+// UseAFreePort says "Use a free port, 1024–65535"
 // in the language the app shows.
 //
 // Shown when a local proxy's new port is out of range or taken by another
 // proxy.
-func UseAPortFrom1024To65535() string { return In(i18n.Locale()).UseAPortFrom1024To65535() }
+func UseAFreePort() string { return In(i18n.Locale()).UseAFreePort() }
 
-// UseAPortFrom1024To65535 says "Use a port from 1024 to 65535 that no other proxy uses."
+// UseAFreePort says "Use a free port, 1024–65535"
 // in the language of msgs.
 //
 // Shown when a local proxy's new port is out of range or taken by another
 // proxy.
-func (msgs Messages) UseAPortFrom1024To65535() string {
-	return Catalog.Format(msgs.locale, "useAPortFrom1024To65535", nil)
+func (msgs Messages) UseAFreePort() string {
+	return Catalog.Format(msgs.locale, "useAFreePort", nil)
 }

@@ -12,7 +12,7 @@ import (
 
 // proxiesGroup is the settings' group of local SOCKS5 proxies: a row a port,
 // each with the one interface it goes out through, and a last row that
-// says what they are and adds one.
+// adds one.
 func (a *App) proxiesGroup(c *ui.Context) {
 	group(c, locales.LocalProxies(), func() {
 		for k := range a.cfg.Proxies {
@@ -20,7 +20,7 @@ func (a *App) proxiesGroup(c *ui.Context) {
 		}
 		exits, _ := a.proxyExits(api.InterfaceRef{})
 		ui.Row(c).Gap(16).Padding(9, settingsInset).MinHeight(52).Children(func() {
-			muted(c, locales.Socks5OnThisMacOnly()).FontSize(12).Grow(1).Shrink(1)
+			ui.Spacer(c)
 			full := len(a.cfg.Proxies) >= api.MaxProxies
 			add := glassCapsuleButton(c, "add-proxy", icPlus, locales.AddProxy()).Focusable().Shrink(0).Disabled(len(exits) == 0 || full)
 			if add.Clicked() && len(exits) > 0 && !full {
@@ -103,9 +103,9 @@ func (a *App) proxyState(c *ui.Context, p api.Proxy) {
 		case code == api.ErrPortInUse:
 			line(t.Danger, false, locales.PortInUse(), t.Danger)
 		case code == api.ErrInterfaceUnavailable:
-			line(t.Warning, true, locales.ItsInterfaceIsnTConnected(), t.Warning)
+			line(t.Warning, true, locales.NotConnected(), t.Warning)
 		case code == api.ErrDNSUnavailable:
-			line(t.Warning, true, locales.ItsInterfaceHasNoDns(), t.Warning)
+			line(t.Warning, true, locales.NoDns(), t.Warning)
 		case st.Error != nil:
 			line(t.Danger, false, errorText(st.Error), t.Danger)
 		case st.Listening:
@@ -182,7 +182,7 @@ func (a *App) setProxyPort(k int, text string) {
 		}
 	}
 	if !ok {
-		a.toast(locales.UseAPortFrom1024To65535())
+		a.toast(locales.UseAFreePort())
 		return
 	}
 	s.editingPort = 0

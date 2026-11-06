@@ -33,7 +33,7 @@
   "@endRulesChanged": {
     "description": "Beside the interface of a connection in Activity that Pith closed because the rules changed, so that its app reconnects under the new rules. Not a failure. Lowercase, like \"backup\"."
   },
-  "closedWhenTheRulesChanged": "Closed when the rules changed, for the app to reconnect under the new ones",
+  "closedToReconnect": "Closed to reconnect under the new rules",
   "block": "Block",
   "blockRulesAlwaysWinOtherwiseThe": "Block rules always win; otherwise the first matching rule from the top decides. Drag to reorder.",
   "blocked": "Blocked",
@@ -672,10 +672,6 @@
   "@localProxies": {
     "description": "The title of the settings' group of local SOCKS5 proxies, each a port on this Mac going out through one interface."
   },
-  "socks5OnThisMacOnly": "SOCKS5 for apps on this Mac, without a password. Each port goes out through its interface alone, and fails while that isn't connected.",
-  "@socks5OnThisMacOnly": {
-    "description": "Under the local proxies, beside Add Proxy: what they are."
-  },
   "addProxy": "Add Proxy",
   "@addProxy": {
     "description": "Button: adds a local proxy on the next free port, through a connected interface."
@@ -688,16 +684,12 @@
   "@proxyOff": {
     "description": "A local proxy that is turned off."
   },
-  "portInUse": "Another app uses this port",
+  "portInUse": "Port in use",
   "@portInUse": {
     "description": "A local proxy that can't listen: another program holds its port."
   },
-  "itsInterfaceIsnTConnected": "Its interface isn't connected",
-  "@itsInterfaceIsnTConnected": {
-    "description": "A local proxy whose interface is unplugged or down: its connections fail rather than use another interface."
-  },
-  "itsInterfaceHasNoDns": "Its interface has no DNS server",
-  "@itsInterfaceHasNoDns": {
+  "noDns": "No DNS",
+  "@noDns": {
     "description": "A local proxy whose interface has no DNS server: it can reach IP addresses, not names."
   },
   "proxyListening": "Listening",
@@ -708,8 +700,8 @@
   "@proxyStarting": {
     "description": "A local proxy turned on that isn't listening yet."
   },
-  "useAPortFrom1024To65535": "Use a port from 1024 to 65535 that no other proxy uses.",
-  "@useAPortFrom1024To65535": {
+  "useAFreePort": "Use a free port, 1024–65535",
+  "@useAFreePort": {
     "description": "Shown when a local proxy's new port is out of range or taken by another proxy."
   }
 }
