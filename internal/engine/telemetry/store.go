@@ -97,7 +97,10 @@ func (s *Store) AddBytes(id uint64, sent, received uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r := s.records[id]
-	if r == nil || !r.connection.Ended.IsZero() {
+	// Reload publishes normal closure before joining the relay workers. A write
+	// that completed before cancellation may report its bytes afterward; keep
+	// that accounting without reopening the record or changing its end time.
+	if r == nil || !r.connection.Ended.IsZero() && r.connection.EndReason != api.EndRulesChanged {
 		return
 	}
 	r.connection.Sent += sent

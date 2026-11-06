@@ -51,3 +51,36 @@ func TestCanceledPublicationWaitsForStoreWithoutCreatingRecord(t *testing.T) {
 		t.Fatal("canceled telemetry publication did not finish")
 	}
 }
+
+func TestReloadRetainsAccountingFromCompletedWrites(t *testing.T) {
+	for _, reason := range []api.EndReason{"", api.EndRulesChanged} {
+		t.Run(string(reason), func(t *testing.T) {
+			s, _ := testStore(t, Options{})
+			id := s.Add(fixture())
+			s.AddBytes(id, 17, 23)
+			s.EndWithReason(id, "", reason)
+			before := s.Connections(api.ConnectionQuery{})[0]
+			flush(t, s, true)
+			// The relay can finish Write before Reload, then lose the scheduler
+			// until after Reload has published the end record. Its successful
+			// bytes are still part of the original connection, not a new flow.
+			s.AddBytes(id, 7, 11)
+			after := s.Connections(api.ConnectionQuery{})[0]
+			wantSent, wantReceived := uint64(17), uint64(23)
+			if reason == api.EndRulesChanged {
+				wantSent, wantReceived = 24, 34
+			}
+			open, sent, received := s.Totals()
+			if after.Sent != wantSent || after.Received != wantReceived || sent != wantSent || received != wantReceived || open != 0 {
+				t.Fatal("late completion changed closure or lost committed bytes", after, open, sent, received)
+			}
+			if !after.Ended.Equal(before.Ended) || after.EndReason != reason || after.Outcome != before.Outcome || after.Problem != "" {
+				t.Fatal("late accounting reopened or rewrote the connection", after)
+			}
+			rows := flush(t, s, true)
+			if reason == api.EndRulesChanged && (len(rows) != 1 || rows[0].Sent != wantSent || rows[0].Received != wantReceived) {
+				t.Fatal("late bytes did not publish a final update", rows)
+			}
+		})
+	}
+}
