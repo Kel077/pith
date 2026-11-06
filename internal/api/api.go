@@ -21,14 +21,15 @@ type Service interface {
 	// nothing is saved yet.
 	LoadConfig(ctx context.Context) (Config, error)
 	// SaveConfig validates and saves cfg. When the running scene changed,
-	// the engine applies its new rules to new connections at once; open
-	// connections keep the route they have.
+	// the engine applies new rules at once. Open captured connections whose
+	// decision or first-choice interface changes are closed to reconnect;
+	// unaffected connections retain their route.
 	SaveConfig(ctx context.Context, cfg Config) error
 
 	// Status reports the helper and the engine.
 	Status(ctx context.Context) (Status, error)
-	// InstallHelper installs the privileged helper, or updates an outdated
-	// one. macOS asks for an administrator's password: ErrCanceled when the
+	// InstallHelper explicitly installs, updates or repairs the privileged
+	// helper. macOS asks for an administrator's password: ErrCanceled when the
 	// user cancels.
 	InstallHelper(ctx context.Context) error
 	// UninstallHelper stops routing and removes the helper.
