@@ -1322,14 +1322,20 @@ func (msgs Messages) NotRouting() string {
 	return Catalog.Format(msgs.locale, "notRouting", nil)
 }
 
-// NotTested says "Not tested"
+// TestToSeeItsPublicIp says "Test to see its public IP"
 // in the language the app shows.
-func NotTested() string { return In(i18n.Locale()).NotTested() }
+//
+// On an interface's card before it has been tested, beside the Test button,
+// which measures its latency and finds its public IP.
+func TestToSeeItsPublicIp() string { return In(i18n.Locale()).TestToSeeItsPublicIp() }
 
-// NotTested says "Not tested"
+// TestToSeeItsPublicIp says "Test to see its public IP"
 // in the language of msgs.
-func (msgs Messages) NotTested() string {
-	return Catalog.Format(msgs.locale, "notTested", nil)
+//
+// On an interface's card before it has been tested, beside the Test button,
+// which measures its latency and finds its public IP.
+func (msgs Messages) TestToSeeItsPublicIp() string {
+	return Catalog.Format(msgs.locale, "testToSeeItsPublicIp", nil)
 }
 
 // Note says "Note"

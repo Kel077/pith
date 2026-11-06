@@ -253,7 +253,10 @@
   "notInstalledRoutingNeedsItMacos": "Not installed. Routing needs it; macOS asks for your password once.",
   "notNow": "Not Now",
   "notRouting": "Not routing",
-  "notTested": "Not tested",
+  "testToSeeItsPublicIp": "Test to see its public IP",
+  "@testToSeeItsPublicIp": {
+    "description": "On an interface's card before it has been tested, beside the Test button, which measures its latency and finds its public IP."
+  },
   "note": "Note",
   "offQuittingPithStopsRouting": "Off: quitting Pith stops routing.",
   "onlyWhatPithRoutedTheBytes": "Only what Pith routed: the bytes apps sent and received, without the network's own overhead.",

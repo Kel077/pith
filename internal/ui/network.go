@@ -196,7 +196,7 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 					ui.Text(c, p.Problem).FontSize(12).TextColor(t.TextMuted).SingleLine().Shrink(1)
 				}
 			default:
-				muted(c, locales.NotTested())
+				muted(c, locales.TestToSeeItsPublicIp()).SingleLine().Shrink(1)
 			}
 			ui.Spacer(c)
 			if isHotspot {

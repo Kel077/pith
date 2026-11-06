@@ -128,7 +128,7 @@
   "notInstalledRoutingNeedsItMacos": "还没安装。分流要靠它，安装时 macOS 会让你输一次密码。",
   "notNow": "以后再说",
   "notRouting": "没有在分流",
-  "notTested": "尚未测试",
+  "testToSeeItsPublicIp": "点「测试」查看公网 IP",
   "note": "备注",
   "offQuittingPithStopsRouting": "关掉的话，退出橘核时会一起停止分流。",
   "onlyWhatPithRoutedTheBytes": "只统计经过橘核的流量，也就是应用实际收发的数据，不含协议开销。",
