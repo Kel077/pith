@@ -667,5 +667,49 @@
   },
   "roaming": "Roaming",
   "pithCanTControlThisDevice": "Pith can't control this device.",
-  "theHotspotRefusedItsPassword": "The hotspot refused its admin password."
+  "theHotspotRefusedItsPassword": "The hotspot refused its admin password.",
+  "localProxies": "Local proxies",
+  "@localProxies": {
+    "description": "The title of the settings' group of local SOCKS5 proxies, each a port on this Mac going out through one interface."
+  },
+  "socks5OnThisMacOnly": "SOCKS5 for apps on this Mac, without a password. Each port goes out through its interface alone, and fails while that isn't connected.",
+  "@socks5OnThisMacOnly": {
+    "description": "Under the local proxies, beside Add Proxy: what they are."
+  },
+  "addProxy": "Add Proxy",
+  "@addProxy": {
+    "description": "Button: adds a local proxy on the next free port, through a connected interface."
+  },
+  "doubleClickToChangeThePort": "Double-click to change the port",
+  "@doubleClickToChangeThePort": {
+    "description": "Tooltip of a local proxy's address, 127.0.0.1:1080."
+  },
+  "proxyOff": "Off",
+  "@proxyOff": {
+    "description": "A local proxy that is turned off."
+  },
+  "portInUse": "Another app uses this port",
+  "@portInUse": {
+    "description": "A local proxy that can't listen: another program holds its port."
+  },
+  "itsInterfaceIsnTConnected": "Its interface isn't connected",
+  "@itsInterfaceIsnTConnected": {
+    "description": "A local proxy whose interface is unplugged or down: its connections fail rather than use another interface."
+  },
+  "itsInterfaceHasNoDns": "Its interface has no DNS server",
+  "@itsInterfaceHasNoDns": {
+    "description": "A local proxy whose interface has no DNS server: it can reach IP addresses, not names."
+  },
+  "proxyListening": "Listening",
+  "@proxyListening": {
+    "description": "A local proxy that is taking connections; followed by its open connections and bytes."
+  },
+  "proxyStarting": "Starting…",
+  "@proxyStarting": {
+    "description": "A local proxy turned on that isn't listening yet."
+  },
+  "useAPortFrom1024To65535": "Use a port from 1024 to 65535 that no other proxy uses.",
+  "@useAPortFrom1024To65535": {
+    "description": "Shown when a local proxy's new port is out of range or taken by another proxy."
+  }
 }

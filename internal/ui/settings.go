@@ -13,7 +13,10 @@ import (
 )
 
 // settingsPage is the state of the settings page.
-type settingsPage struct{}
+type settingsPage struct {
+	editingPort int    // the local proxy port being changed; 0: none
+	port        string // its new text
+}
 
 const repoURL = "https://github.com/Kel077/pith"
 
@@ -122,6 +125,8 @@ func (a *App) settingsView(c *ui.Context) {
 					}
 				})
 			})
+
+			a.proxiesGroup(c)
 
 			group(c, locales.Helper(), func() {
 				h := a.status.Helper

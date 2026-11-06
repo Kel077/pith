@@ -3071,3 +3071,169 @@ func TheHotspotRefusedItsPassword() string { return In(i18n.Locale()).TheHotspot
 func (msgs Messages) TheHotspotRefusedItsPassword() string {
 	return Catalog.Format(msgs.locale, "theHotspotRefusedItsPassword", nil)
 }
+
+// LocalProxies says "Local proxies"
+// in the language the app shows.
+//
+// The title of the settings' group of local SOCKS5 proxies, each a port on
+// this Mac going out through one interface.
+func LocalProxies() string { return In(i18n.Locale()).LocalProxies() }
+
+// LocalProxies says "Local proxies"
+// in the language of msgs.
+//
+// The title of the settings' group of local SOCKS5 proxies, each a port on
+// this Mac going out through one interface.
+func (msgs Messages) LocalProxies() string {
+	return Catalog.Format(msgs.locale, "localProxies", nil)
+}
+
+// Socks5OnThisMacOnly says "SOCKS5 for apps on this Mac, without a password. Each port goes out through its interface alone, and fails while that…"
+// in the language the app shows.
+//
+// Under the local proxies, beside Add Proxy: what they are.
+func Socks5OnThisMacOnly() string { return In(i18n.Locale()).Socks5OnThisMacOnly() }
+
+// Socks5OnThisMacOnly says "SOCKS5 for apps on this Mac, without a password. Each port goes out through its interface alone, and fails while that…"
+// in the language of msgs.
+//
+// Under the local proxies, beside Add Proxy: what they are.
+func (msgs Messages) Socks5OnThisMacOnly() string {
+	return Catalog.Format(msgs.locale, "socks5OnThisMacOnly", nil)
+}
+
+// AddProxy says "Add Proxy"
+// in the language the app shows.
+//
+// Button: adds a local proxy on the next free port, through a connected
+// interface.
+func AddProxy() string { return In(i18n.Locale()).AddProxy() }
+
+// AddProxy says "Add Proxy"
+// in the language of msgs.
+//
+// Button: adds a local proxy on the next free port, through a connected
+// interface.
+func (msgs Messages) AddProxy() string {
+	return Catalog.Format(msgs.locale, "addProxy", nil)
+}
+
+// DoubleClickToChangeThePort says "Double-click to change the port"
+// in the language the app shows.
+//
+// Tooltip of a local proxy's address, 127.0.0.1:1080.
+func DoubleClickToChangeThePort() string { return In(i18n.Locale()).DoubleClickToChangeThePort() }
+
+// DoubleClickToChangeThePort says "Double-click to change the port"
+// in the language of msgs.
+//
+// Tooltip of a local proxy's address, 127.0.0.1:1080.
+func (msgs Messages) DoubleClickToChangeThePort() string {
+	return Catalog.Format(msgs.locale, "doubleClickToChangeThePort", nil)
+}
+
+// ProxyOff says "Off"
+// in the language the app shows.
+//
+// A local proxy that is turned off.
+func ProxyOff() string { return In(i18n.Locale()).ProxyOff() }
+
+// ProxyOff says "Off"
+// in the language of msgs.
+//
+// A local proxy that is turned off.
+func (msgs Messages) ProxyOff() string {
+	return Catalog.Format(msgs.locale, "proxyOff", nil)
+}
+
+// PortInUse says "Another app uses this port"
+// in the language the app shows.
+//
+// A local proxy that can't listen: another program holds its port.
+func PortInUse() string { return In(i18n.Locale()).PortInUse() }
+
+// PortInUse says "Another app uses this port"
+// in the language of msgs.
+//
+// A local proxy that can't listen: another program holds its port.
+func (msgs Messages) PortInUse() string {
+	return Catalog.Format(msgs.locale, "portInUse", nil)
+}
+
+// ItsInterfaceIsnTConnected says "Its interface isn't connected"
+// in the language the app shows.
+//
+// A local proxy whose interface is unplugged or down: its connections fail
+// rather than use another interface.
+func ItsInterfaceIsnTConnected() string { return In(i18n.Locale()).ItsInterfaceIsnTConnected() }
+
+// ItsInterfaceIsnTConnected says "Its interface isn't connected"
+// in the language of msgs.
+//
+// A local proxy whose interface is unplugged or down: its connections fail
+// rather than use another interface.
+func (msgs Messages) ItsInterfaceIsnTConnected() string {
+	return Catalog.Format(msgs.locale, "itsInterfaceIsnTConnected", nil)
+}
+
+// ItsInterfaceHasNoDns says "Its interface has no DNS server"
+// in the language the app shows.
+//
+// A local proxy whose interface has no DNS server: it can reach IP
+// addresses, not names.
+func ItsInterfaceHasNoDns() string { return In(i18n.Locale()).ItsInterfaceHasNoDns() }
+
+// ItsInterfaceHasNoDns says "Its interface has no DNS server"
+// in the language of msgs.
+//
+// A local proxy whose interface has no DNS server: it can reach IP
+// addresses, not names.
+func (msgs Messages) ItsInterfaceHasNoDns() string {
+	return Catalog.Format(msgs.locale, "itsInterfaceHasNoDns", nil)
+}
+
+// ProxyListening says "Listening"
+// in the language the app shows.
+//
+// A local proxy that is taking connections; followed by its open
+// connections and bytes.
+func ProxyListening() string { return In(i18n.Locale()).ProxyListening() }
+
+// ProxyListening says "Listening"
+// in the language of msgs.
+//
+// A local proxy that is taking connections; followed by its open
+// connections and bytes.
+func (msgs Messages) ProxyListening() string {
+	return Catalog.Format(msgs.locale, "proxyListening", nil)
+}
+
+// ProxyStarting says "Starting…"
+// in the language the app shows.
+//
+// A local proxy turned on that isn't listening yet.
+func ProxyStarting() string { return In(i18n.Locale()).ProxyStarting() }
+
+// ProxyStarting says "Starting…"
+// in the language of msgs.
+//
+// A local proxy turned on that isn't listening yet.
+func (msgs Messages) ProxyStarting() string {
+	return Catalog.Format(msgs.locale, "proxyStarting", nil)
+}
+
+// UseAPortFrom1024To65535 says "Use a port from 1024 to 65535 that no other proxy uses."
+// in the language the app shows.
+//
+// Shown when a local proxy's new port is out of range or taken by another
+// proxy.
+func UseAPortFrom1024To65535() string { return In(i18n.Locale()).UseAPortFrom1024To65535() }
+
+// UseAPortFrom1024To65535 says "Use a port from 1024 to 65535 that no other proxy uses."
+// in the language of msgs.
+//
+// Shown when a local proxy's new port is out of range or taken by another
+// proxy.
+func (msgs Messages) UseAPortFrom1024To65535() string {
+	return Catalog.Format(msgs.locale, "useAPortFrom1024To65535", nil)
+}

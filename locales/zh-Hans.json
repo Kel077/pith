@@ -285,5 +285,16 @@
   "ipUnchanged": "{ip} · 没变",
   "roaming": "漫游",
   "pithCanTControlThisDevice": "橘核控制不了这台设备。",
-  "theHotspotRefusedItsPassword": "热点管理密码不对。"
+  "theHotspotRefusedItsPassword": "热点管理密码不对。",
+  "localProxies": "本地代理",
+  "socks5OnThisMacOnly": "供本机应用使用的 SOCKS5 代理，不设密码。每个端口只走它选定的网卡，网卡没连上时连接直接失败。",
+  "addProxy": "添加代理",
+  "doubleClickToChangeThePort": "双击修改端口",
+  "proxyOff": "已关闭",
+  "portInUse": "端口已被其他应用占用",
+  "itsInterfaceIsnTConnected": "网卡没有连接",
+  "itsInterfaceHasNoDns": "网卡没有 DNS 服务器",
+  "proxyListening": "正在监听",
+  "proxyStarting": "正在启动…",
+  "useAPortFrom1024To65535": "端口要在 1024 到 65535 之间，且不能和其他代理重复。"
 }
