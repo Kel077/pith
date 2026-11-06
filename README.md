@@ -106,7 +106,13 @@ One set of rules for home, another for the office. Switch between them from the 
 
 Every interface with its addresses, router and DNS; a test of its latency and public address; and one server reached through each interface, to compare them. Interfaces can be renamed.
 
-A mobile hotspot from Inseego, such as the MiFi M2000, shows its signal too: the bars, 5G or LTE, the band in use (n41, n71…) and the carrier. **Change hotspot IP** has it reconnect to its carrier for a new public IP. This takes the hotspot's admin password, which Pith keeps in your keychain.
+Some hotspots also show their signal and can change their public IP. Only these, each tested on the device itself:
+
+| Hotspot | Without its password | With its admin password |
+| :-- | :-- | :-- |
+| Inseego 5G MiFi M2000 | The bars, and 5G or LTE | Also the band in use (n41, n71…), the signal and the carrier, and **Change hotspot IP** |
+
+**Change hotspot IP** has the hotspot reconnect to its carrier for a new public IP. Pith keeps the admin password in your keychain. Any other hotspot, other Inseego models included, still works for routing as an ordinary interface, without these extras.
 
 ### Also
 
