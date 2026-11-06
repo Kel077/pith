@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Kel077/pith/internal/api"
+	"github.com/Kel077/pith/internal/helper/identity"
 	"github.com/Kel077/pith/internal/keychain"
 	"github.com/Kel077/pith/internal/netif"
 )
@@ -22,8 +23,13 @@ type Options struct {
 	ResourcesDir string
 	// ConfigDir defaults to ~/Library/Application Support/Pith.
 	ConfigDir string
-	// Version is the app/helper build version; an empty value means "dev".
+	// Version is the app's informational version, never a helper identity check.
 	Version string
+	// ExpectedHelper and HelperPath are for a controller with an independently
+	// frozen artifact (such as an acceptance session). The app leaves them empty
+	// and uses its compiled identity and bundled resources. They never skip checks.
+	ExpectedHelper *identity.Identity
+	HelperPath     string
 	// SocketPath overrides the helper socket, primarily for development tests.
 	SocketPath string
 	// Prompts supplies localized authorization dialog text. Empty fields use
@@ -38,20 +44,26 @@ type Prompts struct {
 }
 
 type Client struct {
-	opts         Options
-	configPath   string
-	mu           sync.Mutex
-	interfaces   func(context.Context) ([]api.Interface, error)
-	lookup       func(context.Context, string, string) ([]netip.Addr, error)
-	dialer       func(string, time.Duration, []string) (*net.Dialer, error)
-	probeURLs    [2]string
-	http         *http.Client
-	peerUID      uint32
-	hotspots     map[string]*hotspotSession
-	hotspotPort  string // of the hotspots' web admin: 80 when empty
-	hotspotIndex func(string) (int, error)
-	secretGet    func(ctx context.Context, service, account string) (string, error)
-	secretSet    func(ctx context.Context, service, account, secret string) error
+	opts           Options
+	configPath     string
+	mu             sync.Mutex
+	interfaces     func(context.Context) ([]api.Interface, error)
+	lookup         func(context.Context, string, string) ([]netip.Addr, error)
+	dialer         func(string, time.Duration, []string) (*net.Dialer, error)
+	probeURLs      [2]string
+	http           *http.Client
+	peerUID        uint32
+	expectedHelper identity.Identity
+	identityErr    error
+	binaryPath     string
+	artifacts      artifactCache
+	artifactOpen   func(string, bool) (*os.File, artifactStamp, error)
+	checkFile      func(string, bool) error
+	hotspots       map[string]*hotspotSession
+	hotspotPort    string // of the hotspots' web admin: 80 when empty
+	hotspotIndex   func(string) (int, error)
+	secretGet      func(ctx context.Context, service, account string) (string, error)
+	secretSet      func(ctx context.Context, service, account, secret string) error
 }
 
 var _ api.Service = (*Client)(nil)
@@ -77,6 +89,7 @@ func New(opts Options) (*Client, error) {
 			}
 			return link.Index, nil
 		}}
+	c.initIdentity()
 	c.initIPC()
 	return c, nil
 }

@@ -161,7 +161,11 @@ func run(args []string) error {
 	if args[0] == "verify-uninstalled" {
 		return verifyUninstalled(ctx, s)
 	}
-	c, err := client.New(client.Options{ConfigDir: filepath.Join(s.Dir, "config"), Version: s.Version})
+	expectedHelper, err := s.expectedHelper()
+	if err != nil {
+		return err
+	}
+	c, err := client.New(client.Options{ConfigDir: filepath.Join(s.Dir, "config"), Version: s.Version, HelperPath: s.Helper, ExpectedHelper: &expectedHelper})
 	if err != nil {
 		return err
 	}

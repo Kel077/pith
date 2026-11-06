@@ -8,11 +8,15 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Kel077/pith/internal/api"
 	"github.com/Kel077/pith/internal/helper"
 )
 
 func (c *Client) InstallHelper(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if _, err := c.checkBundledHelper(); err != nil {
 		return err
 	}
 	status, statusErr := c.Status(ctx)
@@ -69,6 +73,13 @@ func (c *Client) UninstallHelper(ctx context.Context) error {
 	status, err := c.Status(ctx)
 	if err != nil {
 		return err
+	}
+	// The installed executable cannot perform cleanup unless it was verified.
+	if status.Error != nil && status.Error.Code == api.ErrHelperUntrusted {
+		return status.Error
+	}
+	if status.Helper.Outdated {
+		return &api.Error{Code: api.ErrHelperOutdated}
 	}
 	if status.Helper.Running && !status.Helper.Outdated {
 		if err := c.Stop(ctx); err != nil {

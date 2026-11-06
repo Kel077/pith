@@ -463,7 +463,23 @@ use sub-hour history so local-calendar and DST grouping stays accurate.
 ## Helper IPC and development
 
 The Unix socket is mode 0600 and checks `LOCAL_PEERCRED` for the installing UID or
-root; the client also requires a root peer. HTTP/JSON requests are versioned and
+root. Before sending any HTTP bytes, the client verifies the root-owned installed
+file against its compiled SHA-256 and authenticates the executing peer's CDHash
+using `LOCAL_PEERTOKEN` and `csops_audittoken`. These read-only ABIs exist in macOS
+13's [Unix socket implementation](https://github.com/apple-oss-distributions/xnu/blob/xnu-8792.41.9/bsd/kern/uipc_usrreq.c)
+and [process implementation](https://github.com/apple-oss-distributions/xnu/blob/xnu-8792.41.9/bsd/kern/kern_proc.c).
+The kernel checks the PID generation; the client checks the token again after
+querying the executable. There is no numeric-PID, self-reported-version or
+unverified-manifest fallback. File hash caching includes inode, device, ownership,
+permissions, size, modification and change timestamps; peer checks are never
+cached across sockets.
+
+App versions do not authorize helper access. A different artifact/protocol requires
+replacement, even on an app downgrade. Unverifiable file/peer identity returns a
+failed status with `helper_untrusted`, no claimed version/scene, and no normal IPC.
+The helper's display version is informational. Ad-hoc identity pins the bundled
+artifact; it is not a publisher certificate or protection against compromised root.
+HTTP/JSON requests are versioned and
 bounded, with NDJSON events. A slow event subscriber is closed and can reconnect.
 Status/rates and connection updates are coalesced on a one-second tick only while
 running. See [helper protocol](../internal/helper/README.md).

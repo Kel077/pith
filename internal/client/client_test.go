@@ -221,6 +221,15 @@ func TestProbePublicAddressesAndBadResponse(t *testing.T) {
 
 func TestMissingHelperIsExplicit(t *testing.T) {
 	c := testClient(t)
+	c.identityErr = nil
+	c.opts.HelperPath = filepath.Join(t.TempDir(), "bundled-helper")
+	c.opts.SocketPath = filepath.Join(t.TempDir(), "missing-socket")
+	c.checkFile = func(_ string, installed bool) error {
+		if installed {
+			return os.ErrNotExist
+		}
+		return nil
+	}
 	ctx := context.Background()
 	status, err := c.Status(ctx)
 	if err != nil || status.Helper.Installed || status.State != api.Stopped {

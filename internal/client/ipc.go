@@ -10,7 +10,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"strconv"
 	"syscall"
 	"time"
@@ -26,6 +25,9 @@ func (c *Client) initIPC() {
 		c.opts.SocketPath = helper.SocketPath
 	}
 	transport := &http.Transport{Proxy: nil, DisableKeepAlives: true, ResponseHeaderTimeout: 15 * time.Second, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		if err := c.checkHelperArtifacts(); err != nil {
+			return nil, err
+		}
 		conn, err := (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "unix", c.opts.SocketPath)
 		if err != nil {
 			return nil, err
@@ -33,12 +35,11 @@ func (c *Client) initIPC() {
 		unixConn, ok := conn.(*net.UnixConn)
 		if !ok {
 			conn.Close()
-			return nil, errors.New("helper did not provide a Unix socket")
+			return nil, untrustedHelper("helper did not provide a Unix socket")
 		}
-		uid, err := helper.PeerUID(unixConn)
-		if err != nil || uid != c.peerUID {
+		if err := helper.VerifyPeer(unixConn, c.peerUID, c.expectedHelper.CDHash); err != nil {
 			conn.Close()
-			return nil, errors.New("helper peer is not the expected owner")
+			return nil, untrustedHelper("helper executing identity could not be verified")
 		}
 		return conn, nil
 	}}
@@ -104,19 +105,30 @@ func (c *Client) Status(ctx context.Context) (api.Status, error) {
 	if err := ctx.Err(); err != nil {
 		return status, err
 	}
-	_, statErr := os.Stat(helper.BinaryPath)
-	status.Helper.Installed = statErr == nil
+	if err := c.checkHelperArtifacts(); err != nil {
+		if problem, ok := helperProblem(err); ok {
+			return problem, nil
+		}
+		return status, err
+	}
+	status.Helper.Installed = true
 	var response helper.StatusResponse
 	err := c.request(ctx, http.MethodGet, "/v1/status", nil, &response)
-	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ECONNREFUSED) {
+	if errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED) {
 		return status, nil
 	}
 	if err != nil {
+		if problem, ok := helperProblem(err); ok {
+			return problem, nil
+		}
 		return status, err
 	}
+	if response.Protocol != c.expectedHelper.Protocol {
+		problem, _ := helperProblem(&api.Error{Code: api.ErrHelperOutdated})
+		return problem, nil
+	}
 	status = response.Status
-	status.Helper.Installed, status.Helper.Running = true, true
-	status.Helper.Outdated = response.Protocol != helper.ProtocolVersion || status.Helper.Version != c.opts.Version
+	status.Helper = api.HelperStatus{Installed: true, Running: true, Version: c.expectedHelper.Version}
 	return status, nil
 }
 
@@ -124,6 +136,9 @@ func (c *Client) requireHelper(ctx context.Context) error {
 	status, err := c.Status(ctx)
 	if err != nil {
 		return err
+	}
+	if status.Error != nil && status.Error.Code == api.ErrHelperUntrusted {
+		return status.Error
 	}
 	if !status.Helper.Installed {
 		return helperMissing()
