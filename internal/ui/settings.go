@@ -17,18 +17,15 @@ type settingsPage struct{}
 
 const repoURL = "https://github.com/Kel077/pith"
 
-const (
-	// settingsWidth is as wide as the settings get: wider, a control
-	// would be too far from its label.
-	settingsWidth = 760
-	// settingsInset is how far the rows of a group, and its title, keep
-	// from the group's edges.
-	settingsInset = 16
-)
+// settingsInset is how far the rows of a group, and its title, keep from
+// the group's edges.
+const settingsInset = 16
 
 // settingsView shows the settings as System Settings does: groups of rows
 // under small titles, each row a label on the left and its control on the
-// right.
+// right. The groups span the page between its margins, as the panes of
+// the other pages do, under a title that stays where theirs are; the
+// hairlines between the rows lead the eye from a label to its control.
 func (a *App) settingsView(c *ui.Context) {
 	t := c.Theme()
 	pageHeader(c, locales.Settings(), "", nil)
@@ -37,7 +34,7 @@ func (a *App) settingsView(c *ui.Context) {
 		a.change(func(cfg *api.Config) { fn(&cfg.Settings) })
 	}
 	ui.Scroll(c).Grow(1).Padding(0, 32, 32).Children(func() {
-		ui.Column(c).MaxWidth(settingsWidth).Gap(24).Children(func() {
+		ui.Column(c).Gap(24).Children(func() {
 			group(c, locales.General(), func() {
 				settingsRow(c, locales.OpenAtLogin(), locales.PithWaitsInTheMenuBar(), false, func() {
 					on := s.OpenAtLogin

@@ -76,14 +76,32 @@ func (a *App) dialogs(c *ui.Context) {
 
 // ---- the look of dialogs ----------------------------------------------------
 
-// sheetGlass is the material of sheets and of the popovers over them:
-// glass frosted toward the window's base, so that what is on it reads as
-// on paper while the glows behind still warm it.
-func sheetGlass(t *ui.Theme) glass.Glass {
+// sheetGlass is the material of sheets, of the popovers over them and of
+// toasts: glass frosted toward paper until it is nearly opaque, so that
+// what is on it reads as on paper, one even pane whatever the window
+// shows under it, dark pictures and bright glows alike.
+func sheetGlass(t *ui.Theme) ui.Material {
+	paper := ui.RGBA(255, 254, 252, 1)
 	if t.Dark {
-		return glass.Glass{Tint: ui.RGBA(36, 36, 40, 0.6)}
+		paper = ui.RGBA(36, 36, 40, 1)
 	}
-	return glass.Glass{Tint: ui.RGBA(255, 254, 252, 0.66)}
+	return frosted{glass.Glass{Tint: paper.Alpha(0.66)}, paper.Alpha(0.92)}
+}
+
+// frosted is glass under a face of a color: a material as opaque as the
+// face makes it, beyond the eighth of what is under it that even an
+// opaque tint lets glass show. What shows of it is the glass's, blurred
+// and toned.
+type frosted struct {
+	glass glass.Glass
+	face  ui.Color
+}
+
+// PaintMaterial paints the glass, and the face over it, under the
+// element's rim and children.
+func (f frosted) PaintMaterial(p *ui.Painter, box ui.Rect, radii [4]float32) {
+	f.glass.PaintMaterial(p, box, radii)
+	p.Fill(box, f.face, radii[0])
 }
 
 // sheet shows a dialog of Pith's look while *open is true: a sheet of
@@ -140,9 +158,27 @@ func sheetChoices(c *ui.Context, buttons func()) {
 }
 
 // sheetButton is a quiet button of a sheet: a capsule of glass that takes
-// the keyboard focus, as the system's buttons do.
+// the keyboard focus, as the system's buttons do, set apart from the
+// sheet (onSheet).
 func sheetButton(c *ui.Context, key, label string) ui.Element {
-	return glassCapsuleButton(c, key, nil, label).Padding(8, 18).Center().Focusable()
+	return onSheet(c, glassCapsuleButton(c, key, nil, label).Padding(8, 18).Center().Focusable())
+}
+
+// onSheet sets a capsule of glass apart from the sheet it is on, and
+// returns it. On a light sheet, glass is as pale as the paper under it
+// and its rim of light vanishes, leaving a button that reads as text:
+// there its glass takes a shade of the text, deeper under the pointer,
+// and its rim a hairline. On a dark sheet, glass stands out already.
+func onSheet(c *ui.Context, b ui.Element) ui.Element {
+	t := c.Theme()
+	if t.Dark {
+		return b
+	}
+	shade := float32(0.07)
+	if b.Hovered() {
+		shade = 0.11
+	}
+	return b.Material(glass.Glass{Tint: subtle(t, shade)}).Border(1, subtle(t, 0.1))
 }
 
 // sheetPrimary is the main action of a sheet: the tangerine capsule,

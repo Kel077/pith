@@ -54,7 +54,8 @@ func (a *App) networkView(c *ui.Context) {
 			}
 		}
 		if len(up) > 0 {
-			ui.Grid(c).Columns(2).Gap(16).Children(func() {
+			// As far apart as the tiles of Activity's pages.
+			ui.Grid(c).Columns(2).Gap(12).Children(func() {
 				for _, i := range up {
 					a.ifaceCard(c, i)
 				}
@@ -115,7 +116,7 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 	ref := refOf(i)
 	col := a.colorOf(i.Name)
 	n := &a.network
-	box := pane(c.Key("iface-" + i.Name)).Padding(18).Gap(14)
+	box := pane(c.Key("iface-" + i.Name)).Padding(18).Gap(12)
 	box.Children(func() {
 		ui.Row(c).Gap(12).Children(func() {
 			networkKindIcon(c, i.Kind, col, i.Up, 40)
@@ -164,56 +165,71 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 				kv(c, locales.Hardware(), i.HardwareAddr)
 			}
 		})
-		// The test, at the foot of the pane however tall its row makes it.
-		ui.Row(c).Gap(10).Margin(ui.Auto, 0, 0, 0).Children(func() {
-			p, tested := a.probes[i.Name]
-			renewal := ""
-			if r, ok := a.hotspot.renewals[i.Name]; ok {
-				renewal = renewalText(r)
+		// The test, at the foot of the pane however tall its row makes it;
+		// over it, what changing a hotspot's IP did, on a line of its own
+		// that both addresses fit, wrapping rather than cutting them.
+		r := a.hotspot.renewals[i.Name]
+		renewal := renewalText(r) // "" for none
+		ui.Column(c).Gap(8).Margin(ui.Auto, 0, 0, 0).Children(func() {
+			if renewal != "" {
+				renewalLine(c, renewal)
 			}
-			switch {
-			case a.hotspot.renewing[i.Name]:
-				ui.Spinner(c)
-				muted(c, locales.ChangingHotspotIp())
-			case renewal != "":
-				ui.Text(c, renewal).FontSize(13).FontWeight(600).FontFeatures("tnum").SingleLine().Shrink(1).Selectable()
-			case a.probing[i.Name]:
-				ui.Spinner(c)
-				muted(c, locales.Testing())
-			case tested && p.OK:
-				ui.Text(c, millis(p.Latency)).FontSize(15).FontWeight(600).FontFeatures("tnum").SingleLine().Shrink(0)
-				ip := p.PublicIPv4
-				if ip == "" {
-					ip = p.PublicIPv6
+			ui.Row(c).Gap(10).Children(func() {
+				p, tested := a.probes[i.Name]
+				switch {
+				case a.hotspot.renewing[i.Name]:
+					ui.Spinner(c)
+					muted(c, locales.ChangingHotspotIp())
+				case renewal != "":
+					// The line above says the addresses: here, how fast the
+					// new one answers.
+					if r.After.OK {
+						ui.Text(c, millis(r.After.Latency)).FontSize(15).FontWeight(600).FontFeatures("tnum").SingleLine().Shrink(0)
+					}
+				case a.probing[i.Name]:
+					ui.Spinner(c)
+					muted(c, locales.Testing())
+				case tested && p.OK:
+					ui.Text(c, millis(p.Latency)).FontSize(15).FontWeight(600).FontFeatures("tnum").SingleLine().Shrink(0)
+					ip := p.PublicIPv4
+					if ip == "" {
+						ip = p.PublicIPv6
+					}
+					if ip != "" {
+						muted(c, locales.PublicIp(ip)).FontSize(12).SingleLine().Shrink(1)
+					}
+				case tested:
+					ui.Icon(c, icAlert).FontSize(14).TextColor(t.Danger).Shrink(0)
+					ui.Text(c, locales.NoInternet()).TextColor(t.Danger).SingleLine().Shrink(0)
+					if p.Problem != "" {
+						ui.Text(c, p.Problem).FontSize(12).TextColor(t.TextMuted).SingleLine().Shrink(1)
+					}
+				default:
+					muted(c, locales.TestToSeeItsPublicIp()).SingleLine().Shrink(1)
 				}
-				if ip != "" {
-					muted(c, locales.PublicIp(ip)).FontSize(12).SingleLine().Shrink(1)
+				ui.Spacer(c)
+				if isHotspot {
+					busy := a.hotspot.renewing[i.Name] || a.probing[i.Name]
+					renew := glassCapsuleButton(c, "renew", icSwap, locales.ChangeHotspotIp()).Shrink(0).Disabled(busy || h.Locked || !h.Connected)
+					if h.Locked {
+						renew.Opacity(0.5).Tooltip(locales.HotspotPassword())
+					}
+					if renew.Clicked() && !busy && !h.Locked && h.Connected {
+						a.renewHotspot(i.Name)
+					}
 				}
-			case tested:
-				ui.Icon(c, icAlert).FontSize(14).TextColor(t.Danger).Shrink(0)
-				ui.Text(c, locales.NoInternet()).TextColor(t.Danger).SingleLine().Shrink(0)
-				if p.Problem != "" {
-					ui.Text(c, p.Problem).FontSize(12).TextColor(t.TextMuted).SingleLine().Shrink(1)
+				if glassCapsuleButton(c, "test", nil, locales.Test()).Focusable().Shrink(0).Disabled(a.probing[i.Name] || a.hotspot.renewing[i.Name]).Clicked() {
+					a.probe(i.Name)
 				}
-			default:
-				muted(c, locales.TestToSeeItsPublicIp()).SingleLine().Shrink(1)
-			}
-			ui.Spacer(c)
-			if isHotspot {
-				busy := a.hotspot.renewing[i.Name] || a.probing[i.Name]
-				renew := glassCapsuleButton(c, "renew", icSwap, locales.ChangeHotspotIp()).Shrink(0).Disabled(busy || h.Locked || !h.Connected)
-				if h.Locked {
-					renew.Opacity(0.5).Tooltip(locales.HotspotPassword())
-				}
-				if renew.Clicked() && !busy && !h.Locked && h.Connected {
-					a.renewHotspot(i.Name)
-				}
-			}
-			if glassCapsuleButton(c, "test", nil, locales.Test()).Focusable().Shrink(0).Disabled(a.probing[i.Name] || a.hotspot.renewing[i.Name]).Clicked() {
-				a.probe(i.Name)
-			}
+			})
 		})
 	})
+}
+
+// renewalLine says what changing a hotspot's IP did, in body text, with
+// figures that keep their width.
+func renewalLine(c *ui.Context, s string) ui.Element {
+	return ui.Text(c, s).FontFeatures("tnum").Selectable()
 }
 
 // downRow is a row for an interface that is not connected.
