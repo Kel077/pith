@@ -47,7 +47,8 @@ The harness now provides `verify-uninstalled --accept-external-change` for an
 explicit review after removal. Synthetic tests cover the expired-prefix case and
 reject Pith residue, missing closure receipts, changed boot, unstable snapshots
 and persistence failures. It retains the old baseline and records external
-acceptance separately; this addition has not yet been exercised on hardware.
+acceptance separately. At `a226e80` the retained hardware session passed this
+explicit verification; its earlier strict comparison remains incomplete.
 
 Further hardware coverage includes full-capture and IPv6 reconnection, preserving
 an unaffected open flow, closing an existing match with a new block and QUIC
@@ -56,6 +57,45 @@ evidence and reload during sniffing/handshake/dial have synthetic and race tests
 the older HTTP/3 hardware result does not establish these new boundaries.
 Native pre-capture passthrough and ICMP are outside this change. Future routing
 checks still require a separate reviewed scoped installation with its short lease.
+
+## Local SOCKS5 acceptance
+
+The unprivileged App listener needs no helper installation or administrator
+approval. Before a run, choose two supported physical interfaces, two unused
+ports in 1024--65535 and a small HTTPS public-exit echo endpoint. Keep these values
+in private test notes. Do not change system proxy or DNS settings. Start one
+listener and make one request before enabling the second and expanding the checks.
+
+Use remote name resolution, explicitly avoiding environment bypass lists:
+
+```sh
+curl --socks5-hostname "127.0.0.1:$PITH_PROXY_PORT" --noproxy '' \
+  --proto '=https' --max-time 15 --retry 0 --fail --silent --show-error \
+  "https://$PITH_PROXY_HOST/"
+```
+
+For each port require the reviewed exit and bidirectional local counters, with
+no TUN traffic attributed to the proxy. Public cellular addresses can drift;
+compare the selected exits with contemporaneous evidence rather than requiring
+an old address to stay constant. A user may then unplug/disable one chosen
+adapter: new requests through its port must fail within the bound, and the other
+port must remain usable after interface discovery settles. Reconnect the same
+adapter and verify recovery without selecting a different exit. No automated
+interface toggle, hotspot renewal or VPN operation belongs to this stage.
+
+Change one port's interface while its test stream is open: the affected stream
+must end and a new CONNECT must use the new exit. Leave another port's stream
+open as an unaffected control. Also check a conflicting local port, disabling
+one listener and quitting the App. The App must leave no listeners or forwarding
+streams; KeepRouting is a TUN preference and cannot keep proxies alive. Where
+the selected adapters support it, separately exercise a literal IPv6 CONNECT.
+
+Concurrent TUN capture is a separate approved phase, using its existing bounded
+scope and cleanup procedure. Repeat the same proxy controls while capture runs,
+including domain resolution, and verify no self-capture loop or exit fallback.
+This document does not authorize that phase, broaden its routes or certify it
+from unit tests. Retain private before/after evidence and stop at the first
+unexplained result rather than automatically retrying network requests.
 
 ## Recorded throughput hardware comparison
 

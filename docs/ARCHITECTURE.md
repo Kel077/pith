@@ -22,6 +22,79 @@ requests are made; failures remain errors and are not reported as successful
 renewals. This is a device operation, independent of helper capture: changes to
 its public addresses, LAN addresses or DNS do not by themselves stop routing.
 
+## Local SOCKS5 listeners
+
+`internal/proxy` runs inside the unprivileged App process. Each configured port
+binds TCP on `127.0.0.1` and selects one physical interface; it needs neither an
+installed/trusted helper nor active TUN capture. `Config.Proxies` is independent
+of scenes. Empty configuration opens no ports. The service implements the
+no-auth CONNECT subset of [RFC 1928](https://www.rfc-editor.org/rfc/rfc1928.html),
+with IPv4, IPv6 and ASCII/punycode domain requests; BIND and UDP ASSOCIATE return
+`0x07`. A successful reply contains the real outbound socket's local address and
+port. The parser bounds every field, validates versions/reserved bytes and closes
+malformed requests. There is no LAN listener or authentication credential store.
+
+At most 32 unique configured ports, each in 1024--65535, are accepted, including
+disabled entries. `Interface.CanProxy` is shared by the interface and backend:
+supported physical link categories remain selectable while down, but loopback,
+VPN/TUN, bridge and peer interfaces are excluded. `SaveConfig` rejects a currently
+resolved unsupported exit; a missing or down physical adapter remains valid saved
+intent and reports `interface_unavailable`. A usable DNS configuration is required
+for domain requests; literal addresses can still work without it.
+
+`internal/proxy/egress` resolves references with `InterfaceRef.Resolve`, pins the
+current name/MAC/index and uses `IP_BOUND_IF` or `IPV6_BOUND_IF`. It validates that
+identity before and after dialing and each stream I/O. An index reused by another
+interface cannot carry the old connection. New requests can resolve a renamed USB
+adapter by its unique MAC; established streams do not migrate. Address/prefix or
+DNS changes do not shut down unrelated listeners. Interface metadata is cached
+for at most one second, while kernel identity is checked directly. Canceling one
+metadata reader does not poison the cache for healthy callers.
+
+DNS uses explicit A/AAAA packets sent only to the selected interface's configured
+servers. There is no system resolver, hosts-file/search-list lookup, environment
+proxy or other-interface fallback. Truncated UDP answers retry TCP on the same
+server and binding. IDs, question, opcode and response code are checked; replies
+are limited to 16 KiB and 128 records, CNAME chains to eight steps and candidates
+to eight addresses. Resolution has a four-second bound, at most three servers
+and 750 ms per server attempt. DNS and target sockets use the same pinned binding.
+
+Physical bound sockets use macOS's scoped routing and the full-capture split that
+preserves zero-address lookup, described below. Excluding tunnel interfaces also
+prevents selecting Pith's own utun as a proxy exit. A VPN policy can still refuse
+physical egress; that fails the request rather than selecting another interface.
+TUN scene rules, connection history and traffic totals do not include this
+independent forwarding path. A client that resolves names itself or bypasses its
+proxy is outside the service's DNS/routing guarantee.
+
+The initial handshake has five seconds; CONNECT setup has ten seconds total
+from accept. There are at most 128 sessions per port and 512 overall, including
+handshakes. Relay preserves TCP half-close and records only successfully written
+stream bytes, excluding SOCKS negotiation and DNS. `Status.Proxies` includes
+disabled entries in configuration order; its `Since` and counters belong to one
+listener instance and reset on replacement. Listening means the local bind
+succeeded, not that the internet is reachable. Target-specific errors do not
+become listener errors.
+
+`client.New` is idle. The first successful `LoadConfig` activates enabled local
+listeners; a canceled first activation retracts partial listeners. Valid saved
+changes take effect after atomic rename, even if the caller then cancels. Removing,
+disabling or changing a port's exit closes its pending/established streams before
+the replacement can forward; unrelated listeners and label-only edits stay open.
+A failed bind remains visible as `port_in_use` and is retryable by saving again.
+Proxy-only configuration changes do not reload TUN rules. A previously failed
+routing apply remains pending, so disk equality cannot turn its retry into a
+false success. Explicit identical saves still retry pending backend work.
+
+Subscriptions combine authenticated helper events with local proxy snapshots;
+missing or unverified helper status keeps its existing failure meaning. Local
+counter updates continue without a helper stream. `client.Close` cancels setup,
+closes all local listeners/streams and joins subscriptions without stopping TUN.
+App exit closes every proxy socket regardless of KeepRouting; no proxy daemon is
+installed. Protocol, DNS, lifecycle, cancellation and interface-reuse tests use
+loopback or injected state. Physical-interface and concurrent-TUN acceptance
+remain separately reviewed hardware checks.
+
 ## Capturing and forwarding
 
 ### iCloud Private Relay
