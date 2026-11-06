@@ -152,28 +152,46 @@ func (s *session) externalDifferences(after snapshot, status api.Status) (*exter
 	if err := idleReviewedStatus(s, status); err != nil {
 		return nil, err
 	}
-	if !s.Ownership.Complete || s.Ownership.Pending || len(s.Ownership.Captures) == 0 || !s.knownCapture(status.LastCapture) {
+	if !s.knownCapture(status.LastCapture) {
 		return nil, errors.New("complete capture ownership history is required for external-change evidence")
 	}
-	if err := snapshotInventory(s.Original); err != nil {
+	if err := s.externalSnapshotHistory(after); err != nil {
 		return nil, err
-	}
-	if err := snapshotInventory(after); err != nil {
-		return nil, err
-	}
-	if s.Original.BootSession != after.BootSession {
-		return nil, errors.New("boot session changed")
-	}
-	ownedNames, ownedIndices := map[string]bool{}, map[int]bool{}
-	for _, id := range s.Ownership.Captures {
-		if !s.validCapture(&id) || id.BootSession != after.BootSession {
-			return nil, errors.New("invalid capture ownership history")
-		}
-		ownedNames[id.Interface], ownedIndices[id.Index] = true, true
 	}
 	beforeOK, afterOK, migrations, err := s.permittedReuse(after, status)
 	if err != nil {
 		return nil, err
+	}
+	return s.classifyExternalDifferences(after, beforeOK, afterOK, migrations)
+}
+
+func (s *session) externalSnapshotHistory(after snapshot) error {
+	if !s.Ownership.Complete || s.Ownership.Pending || len(s.Ownership.Captures) == 0 {
+		return errors.New("complete capture ownership history is required for external-change evidence")
+	}
+	if err := snapshotInventory(s.Original); err != nil {
+		return err
+	}
+	if err := snapshotInventory(after); err != nil {
+		return err
+	}
+	if s.Original.BootSession != after.BootSession {
+		return errors.New("boot session changed")
+	}
+	for _, id := range s.Ownership.Captures {
+		if !s.validCapture(&id) || id.BootSession != after.BootSession {
+			return errors.New("invalid capture ownership history")
+		}
+	}
+	return nil
+}
+
+// Both callers validate history and snapshots first. Only the installed-helper
+// path may supply independently proven interface-reuse exceptions.
+func (s *session) classifyExternalDifferences(after snapshot, beforeOK, afterOK map[interfaceKey]bool, migrations []vpnMigration) (*externalChange, error) {
+	ownedNames, ownedIndices := map[string]bool{}, map[int]bool{}
+	for _, id := range s.Ownership.Captures {
+		ownedNames[id.Interface], ownedIndices[id.Index] = true, true
 	}
 	for name, index := range after.InterfaceIndices {
 		if (ownedNames[name] || ownedIndices[index]) && !afterOK[interfaceKey{name, index}] {

@@ -43,6 +43,12 @@ socket, process or captured `/32`; default routing was unchanged and the process
 audit returned zero. Do not call that a strict baseline-restoration pass. See the
 [detailed records](ROOT-TEST.md#recorded-affected-flow-reload-result).
 
+The harness now provides `verify-uninstalled --accept-external-change` for an
+explicit review after removal. Synthetic tests cover the expired-prefix case and
+reject Pith residue, missing closure receipts, changed boot, unstable snapshots
+and persistence failures. It retains the old baseline and records external
+acceptance separately; this addition has not yet been exercised on hardware.
+
 Further hardware coverage includes full-capture and IPv6 reconnection, preserving
 an unaffected open flow, closing an existing match with a new block and QUIC
 short-header tails under Reload. Socket-generation reuse, unknown lifetime

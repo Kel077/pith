@@ -180,6 +180,7 @@ mode-0600 files include:
 | `uninstall.sh`, `cleanup-helper` | Exact bootout, verified staged cleanup, and managed-path removal; the frozen cleanup source remains until removal succeeds |
 | `emergency-command.txt` | A standalone, single command that can be pasted into Terminal without IPC or the test executable |
 | `cleanup-*.json`, `check-*.json` | Immutable cleanup observations and separate test results, tied to the current baseline, installation, and ownership history; external-only differences have a separate classification |
+| `uninstall-verification-*.json` | Post-removal snapshots and retained capture history; explicit external-change acceptance is recorded separately from baseline restoration |
 | `rebaseline-*.json` | Immutable mode-change candidates, before/after snapshots, and system/A/B preflights; failed attempts remain archived |
 
 Set `PITH_SESSION` to the **exact canonical directory printed by prepare**.
@@ -1070,6 +1071,31 @@ credential. Success clears the stale installed/test flags and runs the independe
 process audit. If a rebuilt VPN has a different identity and strict comparison
 still fails after removal, keep the snapshots for independent review;
 this command does not silently adopt external changes or claim a cleanup pass.
+
+For reviewed external-only changes after removal, such as an expired physical
+interface's IPv6 prefix, an explicit read-only verification is available:
+
+```sh
+"$PITH_TEST_BIN/rootcheck" verify-uninstalled --session "$PITH_SESSION" --accept-external-change
+```
+
+This path requires positive absence evidence for all managed paths and the
+launchd service, complete capture history with every receipt already confirmed
+ended, the same boot, and two stable complete interface/address/route snapshots.
+It neither contacts a helper nor runs a probe, installation, removal or authorization.
+An exact capture prefix, an owned utun/name/index or any selected tunnel subnet
+remaining in the snapshots refuses acceptance. Historical utun name/index reuse
+is conservatively refused after removal; the installed-helper rebaseline path
+remains the place to validate whole-VPN migration evidence.
+
+Success records the private differences with `explicitAccepted: true` and
+`restored: false`, clears the obsolete installed/test flags and runs the process
+audit. The original baseline and earlier incomplete reports remain unchanged.
+This is acceptance of an explained external change, not a claim that the old
+network state returned or a failed routing test passed. Missing, unfinished,
+legacy or inconsistent ownership evidence cannot be repaired with this flag.
+On refusal, retain the reports for review; do not reinstall a helper merely to
+force verification through `rebaseline`.
 
 Quad100 is a [device-local service](https://tailscale.com/docs/reference/quad100);
 an [own-name MagicDNS answer](https://tailscale.com/docs/features/magicdns) does
