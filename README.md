@@ -115,6 +115,12 @@ A mobile hotspot from Inseego, such as the MiFi M2000, shows its signal too: the
 - **Import and export** a scene's rules, or back up everything.
 - **English and Simplified Chinese**, light and dark.
 
+## With a VPN or iCloud Private Relay
+
+- **A VPN to your own devices**, like Tailscale without an exit node, is left alone: its traffic still goes through the VPN, and Pith doesn't touch its addresses or routes. If it disconnects and reconnects while routing is on, routing carries on: traffic meant for the VPN never leaves through another interface, and other apps stay online.
+- **A VPN that carries all traffic**, like a Tailscale exit node, hasn't been tested with Pith yet.
+- **iCloud Private Relay** sends Safari through Apple's relays, so Pith sees the relays instead of the sites, and domain and IP rules don't apply to Safari's browsing. To route Safari by site, turn Private Relay off.
+
 ## Privacy
 
 Pith reads where connections go — addresses, ports, and host names from TLS SNI, the HTTP Host or DNS — and never what they carry: no decryption, no certificates installed. Rules, the connection log and traffic totals stay on your Mac, and the log keeps as many days as Settings says. Pith sends nothing anywhere by itself; only a test you start on the Network page contacts [ipify](https://www.ipify.org) to learn an interface's public address. With a hotspot's admin password, Pith reads the hotspot's own admin page, on your local network, while the Network page is open.
