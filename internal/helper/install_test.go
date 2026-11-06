@@ -21,7 +21,7 @@ func TestInstallPlanIsQuotedAndParseable(t *testing.T) {
 	if err := os.WriteFile(source, []byte("test executable; never executed\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	plan, err := PlanInstall(source, 501)
+	plan, err := planInstall(source, 501, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,12 +31,10 @@ func TestInstallPlanIsQuotedAndParseable(t *testing.T) {
 	if len(plan.Changes) != 4 || plan.Undo == "" {
 		t.Fatal("missing review/undo information")
 	}
-	for _, script := range []string{plan.Script, PlanUninstall().Script} {
-		cmd := exec.Command("/bin/sh", "-n") // Parse only; no privileged operation runs.
-		cmd.Stdin = strings.NewReader(script)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("invalid installation script: %v: %s", err, output)
-		}
+	cmd := exec.Command("/bin/sh", "-n") // Parse only; no privileged operation runs.
+	cmd.Stdin = strings.NewReader(plan.Script)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("invalid installation script: %v: %s", err, output)
 	}
 	if runtime.GOOS == "darwin" {
 		// Compilation validates AppleScript quoting and the prompt clause without
@@ -49,10 +47,10 @@ func TestInstallPlanIsQuotedAndParseable(t *testing.T) {
 			}
 		}
 	}
-	if _, err := PlanInstall(source, 0); err == nil {
+	if _, err := planInstall(source, 0, nil); err == nil {
 		t.Fatal("accepted root as installing user")
 	}
-	if _, err := PlanInstall("relative", 501); err == nil {
+	if _, err := planInstall("relative", 501, nil); err == nil {
 		t.Fatal("accepted relative source")
 	}
 }
@@ -83,7 +81,7 @@ func TestInstallPlansOnlyCreateMissingSharedDirectories(t *testing.T) {
 	if err := os.WriteFile(source, []byte("test helper"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	regular, err := PlanInstall(source, 501)
+	regular, err := planInstall(source, 501, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

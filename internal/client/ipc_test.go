@@ -133,6 +133,9 @@ func startLocalHelper(t *testing.T, version string, backend helper.Backend) (*Cl
 	c.peerUID = uint32(os.Getuid()) // Only same-process tests accept an unprivileged helper.
 	c.binaryPath = executable
 	c.artifactOpen = func(path string, _ bool) (*os.File, artifactStamp, error) { return openArtifact(path, false) }
+	c.checkFile = func(path string, _ bool) error {
+		return c.artifacts.check(path, false, c.expectedHelper, c.artifactOpen)
+	}
 	return c, cancel, done
 }
 

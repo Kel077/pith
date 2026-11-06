@@ -116,8 +116,10 @@ func (c *Client) checkBundledHelper() (string, error) {
 }
 
 func (c *Client) checkHelperArtifacts() error {
-	if _, err := c.checkBundledHelper(); err != nil {
-		return err
+	// Existing IPC must remain usable after the app/bundle moves. Only the
+	// compiled anchor, installed artifact and executing peer authorize IPC.
+	if c.identityErr != nil {
+		return untrustedHelper("compiled helper identity is unavailable; rebuild or reinstall Pith")
 	}
 	err := c.checkFile(c.binaryPath, true)
 	if errors.Is(err, os.ErrNotExist) {
@@ -135,17 +137,22 @@ func (c *Client) checkHelperArtifacts() error {
 	return nil
 }
 
-func helperProblem(err error) (api.Status, bool) {
+func (c *Client) installedPresent() bool {
+	_, err := os.Lstat(c.binaryPath)
+	return !errors.Is(err, os.ErrNotExist)
+}
+
+func (c *Client) helperProblem(err error) (api.Status, bool) {
 	code := api.Code(err)
 	switch code {
 	case api.ErrHelperMissing:
 		return api.Status{State: api.Stopped}, true
-	case api.ErrHelperOutdated, api.ErrHelperUntrusted:
+	case api.ErrHelperOutdated, api.ErrHelperUntrusted, api.ErrHelperNotResponding:
 		var problem *api.Error
 		if !errors.As(err, &problem) {
 			problem = &api.Error{Code: code}
 		}
-		return api.Status{State: api.Failed, Error: problem, Helper: api.HelperStatus{Installed: true, Outdated: code == api.ErrHelperOutdated}}, true
+		return api.Status{State: api.Failed, Error: problem, Helper: api.HelperStatus{Installed: c.installedPresent(), Outdated: code == api.ErrHelperOutdated}}, true
 	default:
 		return api.Status{}, false
 	}

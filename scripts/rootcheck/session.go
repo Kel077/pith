@@ -24,6 +24,7 @@ import (
 	"github.com/Kel077/pith/internal/api"
 	"github.com/Kel077/pith/internal/engine/capture"
 	"github.com/Kel077/pith/internal/helper"
+	"github.com/Kel077/pith/internal/helper/identity"
 	"github.com/Kel077/pith/internal/netif"
 	"github.com/Kel077/pith/internal/testprofile"
 	"golang.org/x/sys/unix"
@@ -35,6 +36,7 @@ type session struct {
 	UID                  int                    `json:"uid"`
 	Helper               string                 `json:"helper"`
 	HelperSHA256         string                 `json:"helperSHA256"`
+	HelperIdentity       *identity.Identity     `json:"helperIdentity,omitempty"`
 	Version              string                 `json:"version"`
 	Target               string                 `json:"target"`
 	ServerName           string                 `json:"serverName"`
@@ -221,6 +223,9 @@ func prepare(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := s.freezeHelperIdentity(); err != nil {
+		return err
+	}
 	// Ordinary, interface-bound sockets are a preflight only. The check command
 	// uses unbound app sockets, which must actually pass through the new utun.
 	for _, iface := range []string{"", names[0], names[1]} {
@@ -264,7 +269,6 @@ func prepare(ctx context.Context, args []string) error {
 		return err
 	}
 	s.InstallScriptSHA256 = hashBytes([]byte(plan.Script))
-	s.UninstallScriptSHA256 = hashBytes([]byte(helper.PlanUninstall().Script))
 	s.CrashScriptSHA256 = hashBytes([]byte(crashPlan().Script))
 	s.Dir, err = os.MkdirTemp(os.TempDir(), "pith-rootcheck-")
 	if err != nil {
@@ -276,6 +280,11 @@ func prepare(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	undo, err := s.freezeCleanupHelper()
+	if err != nil {
+		return err
+	}
+	s.UninstallScriptSHA256 = hashBytes([]byte(undo.Script))
 	if err := s.save(); err != nil {
 		return err
 	}
@@ -318,7 +327,6 @@ func prepare(ctx context.Context, args []string) error {
 	if err := writePrivate(filepath.Join(s.Dir, "install.sh"), []byte(plan.Script)); err != nil {
 		return err
 	}
-	undo := helper.PlanUninstall()
 	if err := writePrivate(filepath.Join(s.Dir, "uninstall.sh"), []byte(undo.Script)); err != nil {
 		return err
 	}

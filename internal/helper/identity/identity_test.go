@@ -95,6 +95,11 @@ func TestInspectAndParse(t *testing.T) {
 	if err != nil || parsed != id {
 		t.Fatal(parsed, err)
 	}
+	merged := id
+	merged.SHA256 = merged.CDHash
+	if err := merged.Validate(); err == nil {
+		t.Fatal("SHA-256 and CDHash roles were merged instead of validating both lengths")
+	}
 	for _, raw := range []string{string(data) + "{}", strings.Replace(string(data), `"schema":1`, `"schema":2`, 1), strings.Replace(string(data), `"version":"0.1.0"`, `"unexpected":true`, 1), `{}`} {
 		if _, err := Parse([]byte(raw)); err == nil {
 			t.Fatal("accepted invalid manifest")

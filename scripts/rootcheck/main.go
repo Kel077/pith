@@ -161,17 +161,14 @@ func run(args []string) error {
 	if args[0] == "verify-uninstalled" {
 		return verifyUninstalled(ctx, s)
 	}
-	expectedHelper, err := s.expectedHelper()
-	if err != nil {
-		return err
+	if args[0] == "cancel" {
+		return cancelInstall(ctx, s, auth)
 	}
-	c, err := client.New(client.Options{ConfigDir: filepath.Join(s.Dir, "config"), Version: s.Version, HelperPath: s.Helper, ExpectedHelper: &expectedHelper})
-	if err != nil {
+	c, err := sessionClient(s)
+	if err != nil && args[0] != "uninstall" {
 		return err
 	}
 	switch args[0] {
-	case "cancel":
-		return cancelInstall(ctx, s, auth)
 	case "install":
 		return install(ctx, s, c, auth)
 	case "check":
@@ -185,6 +182,18 @@ func run(args []string) error {
 	default:
 		return fmt.Errorf("unknown command %q; use help", args[0])
 	}
+}
+
+func sessionClient(s *session) (api.Service, error) {
+	expected, err := s.expectedHelper()
+	if err != nil {
+		return nil, err
+	}
+	c, err := client.New(client.Options{ConfigDir: filepath.Join(s.Dir, "config"), Version: s.Version, HelperPath: s.Helper, ExpectedHelper: &expected})
+	if err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
 func cancelInstall(ctx context.Context, s *session, auth authorization) error {
@@ -290,7 +299,7 @@ func install(ctx context.Context, s *session, c api.Service, auth authorization)
 	if !sameCleanupBaseline(s.Original, after) {
 		return errors.New("installation changed routes or tunnel inventory while idle; run uninstall and review the snapshots")
 	}
-	fmt.Println("PASS: the reviewed helper is installed, authenticated, version-matched, and idle; no capture was added.")
+	fmt.Println("PASS: the reviewed helper is installed, authenticated, artifact-matched, and idle; no capture was added.")
 	return nil
 }
 
@@ -319,31 +328,44 @@ func stopWithOps(ctx context.Context, s *session, c api.Service, ops rootcheckOp
 }
 
 func uninstall(ctx context.Context, s *session, c api.Service, auth authorization) error {
-	if !s.AuthorizationAttempted {
-		return errors.New("this session has never attempted installation; there is nothing it is authorized to remove")
-	}
-	// A known replacement installation is not this session's cleanup target.
-	// Missing files after a partial uninstall remain recoverable, without IPC.
-	if err := s.verifyRemovalOwnership(helper.BinaryPath, helper.PlistPath); err != nil {
-		return fmt.Errorf("refuse to remove another installation: %w; review the standalone emergency command", err)
-	}
-	if err := s.invalidateCleanup(liveOps()); err != nil {
+	plan, err := prepareUninstall(ctx, s, c, liveOps(), helper.BinaryPath, helper.PlistPath)
+	if err != nil {
 		return err
-	}
-	// Uninstall remains usable when IPC, its version check, or Stop has failed.
-	// PlanUninstall boots out launchd before ownership-checked journal cleanup.
-	if s.verifyOwnedInstallation() == nil {
-		stopCtx, stopCancel := context.WithTimeout(ctx, 10*time.Second)
-		_ = c.Stop(stopCtx)
-		stopCancel()
 	}
 	authCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	fmt.Println("Authorize removal of the reviewed helper, its service, socket, and test data.")
-	if err := s.authorize(authCtx, "uninstall", helper.PlanUninstall(), auth, liveOps()); err != nil {
+	if err := s.authorize(authCtx, "uninstall", plan, auth, liveOps()); err != nil {
 		return fmt.Errorf("uninstall: %w; retain the session and use the reviewed emergency command", err)
 	}
 	return verifyUninstalled(ctx, s)
+}
+
+func prepareUninstall(ctx context.Context, s *session, c api.Service, ops rootcheckOps, binary, plist string) (helper.InstallPlan, error) {
+	if !s.AuthorizationAttempted {
+		return helper.InstallPlan{}, errors.New("this session has never attempted installation; there is nothing it is authorized to remove")
+	}
+	// A known replacement installation is not this session's cleanup target.
+	// Missing files after a partial uninstall remain recoverable, without IPC.
+	if err := s.verifyRemovalOwnership(binary, plist); err != nil {
+		return helper.InstallPlan{}, fmt.Errorf("refuse to remove another installation: %w; review the standalone emergency command", err)
+	}
+	plan, err := s.reviewedUninstallPlan(binary)
+	if err != nil {
+		return helper.InstallPlan{}, err
+	}
+	if err := s.invalidateCleanup(ops); err != nil {
+		return helper.InstallPlan{}, err
+	}
+	// Recovery remains available without compatible IPC. The verified plan stages
+	// the pinned cleanup executable before stopping launchd or touching its journal.
+	_, identityErr := s.expectedHelper()
+	if c != nil && identityErr == nil && ops.verifyInstalled(s) == nil {
+		stopCtx, stopCancel := context.WithTimeout(ctx, 10*time.Second)
+		_ = c.Stop(stopCtx)
+		stopCancel()
+	}
+	return plan, nil
 }
 
 func verifyUninstalled(ctx context.Context, s *session) error {

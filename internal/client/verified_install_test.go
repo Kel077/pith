@@ -92,20 +92,23 @@ func TestVerifiedInstallIgnoresInformationalVersions(t *testing.T) {
 	}
 }
 
-func TestVerifiedInstallOfflineMatchingArtifactOnlyRetries(t *testing.T) {
+func TestVerifiedOfflineStatusAndExplicitRepair(t *testing.T) {
 	f := newVerifiedInstallFixture(t)
 	status, err := f.client.Status(context.Background())
-	if err != nil || !status.Helper.Installed || status.Helper.Running || status.Helper.Outdated || status.Error != nil {
+	if err != nil || !status.Helper.Installed || status.Helper.Running || status.Helper.Outdated || status.State != api.Failed || status.Error == nil || status.Error.Code != api.ErrHelperNotResponding {
 		t.Fatalf("matching offline artifact status = %+v, %v", status, err)
 	}
-	for range 2 {
-		err := f.client.InstallHelper(context.Background())
-		if api.Code(err) != api.ErrInternal || !strings.Contains(err.Error(), "retry") {
-			t.Fatalf("offline matching helper should request a retry: %v", err)
-		}
-	}
 	if len(*f.plans) != 0 {
-		t.Fatal("offline matching helper reached authorization")
+		t.Fatal("status automatically requested authorization")
+	}
+	if err := os.Remove(f.bundle); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.client.InstallHelper(context.Background()); err != f.canceled {
+		t.Fatal("explicit repair did not preserve cancellation", err)
+	}
+	if len(*f.plans) != 1 || !strings.Contains((*f.plans)[0].Script, "'"+f.installed+"' \"$stage/new-helper\"") {
+		t.Fatal("repair did not use the verified installed artifact")
 	}
 }
 
@@ -113,6 +116,9 @@ func TestVerifiedInstallRejectsInvalidBundleBeforeAuthorization(t *testing.T) {
 	for _, failure := range []string{"identity", "changed-bytes", "writable", "symlink", "missing"} {
 		t.Run(failure, func(t *testing.T) {
 			f := newVerifiedInstallFixture(t)
+			if err := os.Remove(f.installed); err != nil {
+				t.Fatal(err)
+			}
 			switch failure {
 			case "identity":
 				f.client.identityErr = errors.New("missing compiled helper identity")
@@ -246,7 +252,7 @@ func TestVerifiedUninstallFallsBackOnlyToVerifiedInstalledBytes(t *testing.T) {
 				return err
 			}
 			err := f.client.UninstallHelper(context.Background())
-			if !slices.Equal(installedChecks, []string{f.installed}) {
+			if len(installedChecks) < 2 || slices.ContainsFunc(installedChecks, func(path string) bool { return path != f.installed }) {
 				t.Fatalf("fallback did not verify the installed file: %v", installedChecks)
 			}
 			if installed != "verified" {

@@ -103,7 +103,7 @@ func TestExternalClassificationRejectsOwnershipAmbiguity(t *testing.T) {
 		{"pending-start", func(s *session, _ *baselineService, _ *snapshot) { s.Ownership.Pending = true }},
 		{"missing-receipt", func(s *session, _ *baselineService, _ *snapshot) { s.Ownership.Captures = nil }},
 		{"foreign-helper-capture", func(_ *session, c *baselineService, _ *snapshot) { c.status.LastCapture.Token = "unknown" }},
-		{"version", func(_ *session, c *baselineService, _ *snapshot) { c.status.Helper.Version = "other" }},
+		{"artifact", func(_ *session, c *baselineService, _ *snapshot) { c.status.Helper.Outdated = true }},
 		{"still-running", func(_ *session, c *baselineService, _ *snapshot) { c.status.State = api.Running }},
 		{"new-boot", func(_ *session, _ *baselineService, after *snapshot) { after.BootSession = "another-boot" }},
 		{"indices-missing", func(_ *session, _ *baselineService, after *snapshot) { after.InterfaceIndices = nil }},

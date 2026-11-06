@@ -16,6 +16,7 @@ import (
 	"github.com/Kel077/pith/internal/api"
 	"github.com/Kel077/pith/internal/engine/capture"
 	"github.com/Kel077/pith/internal/helper"
+	"github.com/Kel077/pith/internal/helper/identity"
 )
 
 // installationID distinguishes separate installations with identical reviewed
@@ -142,8 +143,8 @@ func (s *session) verifyRemovalOwnership(binary, plist string) error {
 }
 
 func idleReviewedStatus(s *session, st api.Status) error {
-	if !st.Helper.Installed || !st.Helper.Running || st.Helper.Outdated || st.Helper.Version != s.Version || st.State != api.Stopped {
-		return fmt.Errorf("requires a responding, installed helper at version %q in stopped state: version=%q state=%s", s.Version, st.Helper.Version, st.State)
+	if !st.Helper.Installed || !st.Helper.Running || st.Helper.Outdated || st.State != api.Stopped {
+		return fmt.Errorf("requires a responding, trusted installed helper in stopped state: state=%s", st.State)
 	}
 	return nil
 }
@@ -166,14 +167,15 @@ func (s *session) cleanupBinding() string {
 		UID                                                           int
 		Installation                                                  *installationID
 		Ownership                                                     captureHistory
-		DNSPlanSHA256                                                 string `json:",omitempty"`
-		QUICPlanSHA256                                                string `json:",omitempty"`
-		BundlePlanSHA256                                              string `json:",omitempty"`
-		WebKitPlanSHA256                                              string `json:",omitempty"`
-		ThroughputPlanSHA256                                          string `json:",omitempty"`
-		VPNPlanSHA256                                                 string `json:",omitempty"`
+		DNSPlanSHA256                                                 string             `json:",omitempty"`
+		QUICPlanSHA256                                                string             `json:",omitempty"`
+		BundlePlanSHA256                                              string             `json:",omitempty"`
+		WebKitPlanSHA256                                              string             `json:",omitempty"`
+		ThroughputPlanSHA256                                          string             `json:",omitempty"`
+		VPNPlanSHA256                                                 string             `json:",omitempty"`
+		HelperIdentity                                                *identity.Identity `json:",omitempty"`
 	}{s.Dir, s.Helper, s.HelperSHA256, s.InstallScriptSHA256, s.Version,
-		s.Target, s.ServerName, s.DNSTarget, s.baselineDigest(), s.UID, s.Installation, s.Ownership, s.DNSPlanSHA256, s.QUICPlanSHA256, s.BundlePlanSHA256, s.WebKitPlanSHA256, s.ThroughputPlanSHA256, s.VPNPlanSHA256})
+		s.Target, s.ServerName, s.DNSTarget, s.baselineDigest(), s.UID, s.Installation, s.Ownership, s.DNSPlanSHA256, s.QUICPlanSHA256, s.BundlePlanSHA256, s.WebKitPlanSHA256, s.ThroughputPlanSHA256, s.VPNPlanSHA256, s.HelperIdentity})
 	return hashBytes(data)
 }
 
