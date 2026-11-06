@@ -34,6 +34,11 @@ identity with the same toolchain and dependencies. An actual helper, compiler or
 linked dependency change can require replacement even with the same display
 version. Compare two builds with different app versions in the build tests.
 
+Shared code linked into `pithd`, including `internal/api`, can change the helper
+artifact even when the feature itself runs only in the app. The local SOCKS5 API
+additions did so; an installed differing helper requires one explicit update,
+while subsequent app-only changes that preserve the artifact require none.
+
 ## Verification before IPC
 
 The installed file must be regular, root-owned, not writable by group/others, and

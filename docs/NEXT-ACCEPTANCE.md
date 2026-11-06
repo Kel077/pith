@@ -60,6 +60,21 @@ checks still require a separate reviewed scoped installation with its short leas
 
 ## Local SOCKS5 acceptance
 
+The unprivileged hardware subset passed at `b8b3628`, with TUN disabled and no
+running helper. Two App-owned IPv4-loopback listeners selected wired Ethernet
+and a cellular hotspot independently. HTTPS hostname requests resolved through
+the proxy's selected-interface DNS and returned the respective exits: the wired
+result matched a direct wired control, and the cellular result was different.
+After hotspot removal, its proxy immediately returned SOCKS `0x03` without
+falling back to Ethernet; the wired proxy continued to work. Reconnection
+restored cellular forwarding automatically, including normal public-address
+drift, without disturbing the wired proxy. See the
+[recorded result](ROOT-TEST.md#recorded-local-socks5-result).
+
+Concurrent TUN capture and remapping a port while a test stream is open were
+not exercised. This pass does not establish the other lifecycle or IPv6 checks
+below; retain the following procedure for the remaining checks and regressions.
+
 The unprivileged App listener needs no helper installation or administrator
 approval. Before a run, choose two supported physical interfaces, two unused
 ports in 1024--65535 and a small HTTPS public-exit echo endpoint. Keep these values
