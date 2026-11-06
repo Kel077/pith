@@ -218,6 +218,34 @@ func (msgs Messages) OutcomeBackup() string {
 	return Catalog.Format(msgs.locale, "outcomeBackup", nil)
 }
 
+// EndRulesChanged says "rules changed"
+// in the language the app shows.
+//
+// Beside the interface of a connection in Activity that Pith closed because
+// the rules changed, so that its app reconnects under the new rules. Not a
+// failure. Lowercase, like "backup".
+func EndRulesChanged() string { return In(i18n.Locale()).EndRulesChanged() }
+
+// EndRulesChanged says "rules changed"
+// in the language of msgs.
+//
+// Beside the interface of a connection in Activity that Pith closed because
+// the rules changed, so that its app reconnects under the new rules. Not a
+// failure. Lowercase, like "backup".
+func (msgs Messages) EndRulesChanged() string {
+	return Catalog.Format(msgs.locale, "endRulesChanged", nil)
+}
+
+// ClosedWhenTheRulesChanged says "Closed when the rules changed, for the app to reconnect under the new ones"
+// in the language the app shows.
+func ClosedWhenTheRulesChanged() string { return In(i18n.Locale()).ClosedWhenTheRulesChanged() }
+
+// ClosedWhenTheRulesChanged says "Closed when the rules changed, for the app to reconnect under the new ones"
+// in the language of msgs.
+func (msgs Messages) ClosedWhenTheRulesChanged() string {
+	return Catalog.Format(msgs.locale, "closedWhenTheRulesChanged", nil)
+}
+
 // Block says "Block"
 // in the language the app shows.
 func Block() string { return In(i18n.Locale()).Block() }

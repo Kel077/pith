@@ -19,6 +19,8 @@
   "apps": "应用",
   "backUpEverything": "备份全部配置",
   "outcomeBackup": "备选",
+  "endRulesChanged": "规则已变更",
+  "closedWhenTheRulesChanged": "规则变更后橘核断开了这条连接，让应用按新规则重新连接",
   "block": "拦截",
   "blockRulesAlwaysWinOtherwiseThe": "拦截规则永远优先，其余规则从上往下比对，第一条对上的生效。拖动可以调整顺序。",
   "blocked": "已拦截",

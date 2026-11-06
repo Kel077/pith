@@ -29,6 +29,11 @@
   "apps": "Apps",
   "backUpEverything": "Back up everything",
   "outcomeBackup": "backup",
+  "endRulesChanged": "rules changed",
+  "@endRulesChanged": {
+    "description": "Beside the interface of a connection in Activity that Pith closed because the rules changed, so that its app reconnects under the new rules. Not a failure. Lowercase, like \"backup\"."
+  },
+  "closedWhenTheRulesChanged": "Closed when the rules changed, for the app to reconnect under the new ones",
   "block": "Block",
   "blockRulesAlwaysWinOtherwiseThe": "Block rules always win; otherwise the first matching rule from the top decides. Drag to reorder.",
   "blocked": "Blocked",
