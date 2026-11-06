@@ -231,7 +231,7 @@ process attribution reads `pcblist_n`, prefers the effective/delegated PID, and
 resolves the outermost app bundle and identifier. The log keeps the actual socket
 owner separately. A delegated helper cannot match its own app by accident.
 
-Each flow retains an immutable rule snapshot. Block rules win; the first other
+Rules compile into immutable snapshots. Block rules win; the first other
 matching rule supplies an ordered interface list. Every outbound socket uses
 `IP_BOUND_IF` or `IPV6_BOUND_IF`; each attempt gets three seconds. System routing
 uses the current effective interface with Pith's owned routes excluded, including
@@ -242,7 +242,8 @@ sessions for two minutes. The bridge limits active flows and pending handshakes.
 
 An ICMP port-unreachable is a per-datagram error, not a UDP close. Consuming it
 does not expire the session or refresh idle. The application endpoint and native
-outbound socket keep the original rule, attribution and binding, including final
+outbound socket keep their attribution and binding until idle or an explicit
+rule change requires reconnection, including final
 QUIC datagrams queued before the client closes. A write affected by that error
 may drop its datagram; the relay never retries it or switches interfaces. Other
 terminal transport errors still end the session and are retained separately from
@@ -384,8 +385,8 @@ remain subject to their respective rules.
 
 For a **captured** destination in `198.18.0.0/15`, a matched physical-interface
 route with an observed domain resolves that domain using only that interface's
-DNS servers and bound sockets. Fake answers are rejected. The original flow's
-immutable block rules are also checked against the real destination candidates.
+DNS servers and bound sockets. Fake answers are rejected. The selected policy's
+block rules are also checked against the real destination candidates.
 An allowed candidate may connect; if known blocked candidates remain after the
 allowed candidates fail, the flow is blocked instead of returning its fake IP
 to the proxy through fallback. System/VPN egress otherwise retains the original
@@ -398,6 +399,53 @@ fake-pool route can keep traffic entirely outside Pith. Custom fake-IP pools are
 not inferred from arbitrary tunnel routes: those routes can describe real private
 networks, including a tailnet. Compatibility tests cover synthetic route/flow
 cases; no particular proxy's TUN mode has been verified on hardware.
+
+### Reconnecting flows after rule changes
+
+A successful running Reload makes one pass over the bounded set of flows owned
+by the forwarder. It rechecks the saved application/process attribution, original
+destination, observed domain and protocol against the new policy. A different
+route/block/system decision or first-choice interface reference closes the flow;
+rule IDs, labels and backup-interface changes alone do not. Interface names and
+hardware addresses use the same exact comparison as `InterfaceRef.Resolve`.
+Unchanged flows retain their sockets and actual exits. The known real destination
+of an established fake-IP flow is also checked against newly blocking rules.
+
+Affected TCP endpoints are aborted with a reset before outbound sockets close;
+UDP endpoints are unregistered so subsequent datagrams can create a new session.
+The connection's original `Outcome` remains historical fact. Its normal `Ended`
+record uses `EndReason: rules_changed` with an empty `Problem`; it does not claim
+that the app has already reconnected successfully. A canceled unpublished flow
+does not invent an unreachable history entry. Attribution, handshake, sniffing
+and dialing in progress are conservatively canceled on Reload. Policy-generation
+checks prevent late dial results or old workers from publishing under new rules.
+
+TCP cancellation also covers endpoint registration during the synchronous
+handshake: a tuple-specific check and the first observable SYN-ACK event close
+the gap, without polling or aborting unrelated endpoints. If the output queue
+drops that event, cancellation waits for a later SYN-ACK, handshake timeout or
+shutdown; no outbound dial or application data can pass in the meantime. Socket
+and telemetry work occur outside the flow-registry lock; all affected sockets
+close before terminal log updates can wait for disk-backed telemetry.
+
+UDP/QUIC reconstruction retains a bounded, tuple-specific name context rather
+than adding an IP-wide SNI cache. The initial lifetime evidence and reconstruction
+checks use fresh PCB snapshots. Only a uniquely matched, nonzero socket generation
+and unchanged attribution permit inheriting the old name for a short-header tail.
+A proven new socket does not inherit it. Unknown lifetimes are held conservatively.
+A canceled first packet whose classification is still pending retains an explicit
+unclassified marker: a nameless tail cannot pass simply because fresh ownership
+is now known. A fresh complete Initial, or a complete ordinary DNS query to port
+53, can classify that pending tuple again. DNS query names are never treated as
+the resolver's own name. Valid protection contexts are not evicted under capacity
+pressure, and failed fresh checks are rate-limited.
+Current-worker, policy-generation and saved-context checks prevent a retired
+worker from deleting a successor's protection.
+
+This affects forwarder-owned sessions established after capture starts. Native
+pre-capture passthrough, ICMP and the VPN-prefix ingress gate retain their existing
+behavior. Revised TCP/UDP rule-change acceptance requires fresh hardware results;
+earlier tests that preserved affected sessions do not establish this behavior.
 
 ## Lifecycle and recovery
 
@@ -436,7 +484,8 @@ Only matching owned routes are considered; a rebuilt external VPN is preserved.
 
 Stop restores routes before waiting on relays or disk. TCP half-close is retained;
 shutdown aborts incomplete handshakes and waits for all workers. Hot rule/scene
-changes affect new connections. Changing the IPv6 capture preference restarts
+changes apply to new connections and close affected existing forwarder sessions
+as described above. Changing the IPv6 capture preference restarts
 capture, because it changes the actual route set; existing proxied connections
 end in that case. Interface availability is refreshed by notifications.
 

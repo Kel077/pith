@@ -19,6 +19,31 @@ proves fresh kernel delegation and the selected exit, not automatic page-body
 verification or Private Relay support. The bounded throughput comparison has also
 passed its scoped hardware subset; sustained capacity remains unverified.
 
+## Rule-change reconnection acceptance
+
+The current Reload behavior closes affected forwarder-owned sessions instead of
+keeping their old route. Its implementation and synthetic/race tests do not
+extend the older hardware results below. Repeat scoped TCP smoke and the bounded
+TCP batch with a connection established **after** capture starts: a rule change
+from A to B must reset that connection, end its original record normally with
+`EndReason: rules_changed` and an empty `Problem`, and route a newly established
+connection through B. Adding an unrelated rule or retaining the same decision
+and first-choice interface must leave an established connection alone. A new
+matching block must close it without forwarding more application payload.
+
+Repeat the UDP/DNS batch on its reviewed host scope. The same native UDP socket's
+next query after A-to-B Reload must create a new B session, while the old A record
+retains its original outcome, tuple and bytes with the normal end reason. Preserve
+the existing query budgets and independent idle-expiry case. QUIC short-header
+tails must not lose a previously observed domain and fall back to system routing;
+socket-generation reuse, unknown lifetime evidence and reload during sniffing
+also have synthetic guards. Do not infer their hardware coverage from the older
+HTTP/3 result. Native pre-capture passthrough and ICMP are outside this change.
+
+Use a short-lease scoped installation for routing acceptance. Helper identity
+installation checks that require an unchanged network are a separate phase;
+they do not start capture or establish reconnection behavior.
+
 ## Recorded throughput hardware comparison
 
 The throughput comparison was verified on hardware at `8a9094f` in a `host-ipv4`

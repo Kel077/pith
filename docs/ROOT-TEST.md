@@ -98,6 +98,7 @@ PITH_TEST_BIN=$(/usr/bin/mktemp -d "${TMPDIR%/}/pith-rootcheck-bin.XXXXXXXX")
 export GOCACHE="${TMPDIR%/}/pith-go-build"
 export GOMODCACHE="${TMPDIR%/}/pith-go-mod"
 CGO_ENABLED=0 go build -trimpath -ldflags '-X main.version=acceptance' -o "$PITH_TEST_BIN/pithd" ./cmd/pithd
+chmod 0755 "$PITH_TEST_BIN/pithd"
 CGO_ENABLED=0 go build -trimpath -o "$PITH_TEST_BIN/rootcheck" ./scripts/rootcheck
 ```
 
@@ -395,8 +396,9 @@ belong to one case, and the existing three-minute controller deadline still
 applies independently of the helper's lease.
 
 For each resolver the batch checks unmatched system egress, A and AAAA through
-A, reuse of that engine session and its source tuples, preservation of A after
-hot reload to B, a new session through B, missing-interface fallback to A,
+A, reuse of that engine session and its source tuples, normal closure of A after
+hot reload to B, a replacement session through B from the same native socket,
+another new session through B, missing-interface fallback to A,
 explicit system fallback, block priority, and strict missing-interface failure.
 On the first resolver it also waits at most 14 seconds for the ten-second DNS
 idle timeout, then uses the same native UDP socket/source port to require a new
@@ -438,7 +440,8 @@ tuple had ended early and been recreated without owner/name on the system path.
 Cleanup restored the baseline. A synthetic IPv4/IPv6 reproduction identified the
 UDP ICMP teardown path: late server replies after client close must not release
 the original binding before its queued tail is forwarded. The relay now consumes
-port-unreachable as a datagram error and keeps the session until normal idle;
+port-unreachable as a datagram error and keeps the session until normal idle or
+an explicit policy change requires reconnection;
 other terminal errors remain visible instead of being hidden by paired close.
 The old hardware report did not retain the triggering ICMP/error, so that exact
 packet was not directly observed. The successful hardware repeat above exercises
@@ -1067,7 +1070,7 @@ alternative removal operation, not an automatic extra step.
 | 1. Cancellation | `"$PITH_TEST_BIN/rootcheck" cancel --session "$PITH_SESSION"` | Cancel the administrator dialog. | Returns `ErrCanceled`; no managed path, service, route, or utun changes. If the helper is installed, this case fails; uninstall it before preparing a new session. |
 | 2. Installation | `"$PITH_TEST_BIN/rootcheck" install --session "$PITH_SESSION"` | Requires administrator approval. Creates the root-owned helper and launchd plist/data directory, plus a listed shared parent only if absent; the daemon creates its authenticated socket. It starts idle. | Version and executable checksum match; plist arguments contain only the reviewed host captures; plist inode/mtime identify this installation; engine is stopped; routes and utun inventory match the initial snapshot. Undo is step 9 or emergency cleanup. |
 | 3. One smoke check | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION"` | No dialog. Saves only a temporary config, starts the scoped utun with SafeStart, requests HTTPS through ordinary system routing, then hot-applies an IP rule for interface A. | SafeStart succeeds; both logged flows belong to this test process; outcome, rule, interface, bidirectional byte counts, and live traffic are correct. `Stop` restores routes and utun inventory before the command returns. Only a successful smoke check unlocks later cases. |
-| 4. Rule batch | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --batch` | No dialog. Starts a fresh bounded capture and changes only the test scene. | Verifies interface B, TLS SNI domain matching, the second target of one rule, block priority over an earlier route, missing-interface fallback, explicit system fallback, and strict unreachable. Opens TLS on A, changes the rule to B, completes the same connection on A, then verifies a new connection on B. The capture start timestamp stays unchanged during hot reload. Ends stopped. |
+| 4. Rule batch | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --batch` | No dialog. Starts a fresh bounded capture and changes only the test scene. | Verifies interface B, TLS SNI domain matching, the second target of one rule, block priority over an earlier route, missing-interface fallback, explicit system fallback, and strict unreachable. Opens TLS on A, records its identity, changes the rule to B, verifies a TCP reset and normal `Ended` record with `EndReason=rules_changed` and empty `Problem`, then verifies a new connection on B. The capture start timestamp stays unchanged during hot reload. Ends stopped. |
 | 4a. Optional app-specific routing | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --app-bypass` | No dialog. Requires a passed smoke check and public-IP preflight evidence. Uses the current standalone `rootcheck` executable path as the app/tool identity, and creates a checksum-verified copy at a different path inside the private session directory. Each controlled child makes exactly one ordinary TLS request to the same frozen target. No helper installation, capture expansion, or VPN setting change occurs. | The parent matches app+IP and then app+domain rules through physical interface A. Under each rule, the different executable remains unmatched and uses the saved system route. A final app block after the route rule wins. Every case checks PID, executable/app path, destination, rule, outcome, interface, and byte counts; successful requests use the public-IP drift policy below. Children are acknowledged and waited for on every outcome, their copy is removed, and routing ends stopped. Identical public exits do not prove a distinct exit-node bypass. |
 | 5. Native TCP preservation | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --preserve` | No dialog. Establishes an ordinary TLS connection **before** capture, starts capture, then sends HTTP over that same native connection. | The pre-existing kernel connection survives route activation and receives a verified HTTPS response. This flow is not claimed as a new proxied/logged connection. Ends stopped. A server that closes idle TLS before the request makes this case inconclusive; do not count it as a pass. |
 | 6. SafeStart rollback | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --safe-failure` | No dialog. Starts with a block rule for the exact SafeStart destination and SafeStart enabled. | `Start` returns `ErrNetworkLost`; status reports the same failure; routes/utun are restored. Cleanup calls `Stop` so the next command sees an idle helper. |
