@@ -23,12 +23,11 @@ import (
 )
 
 // Model is the model of the hotspot behind an interface, by the interface's
-// label, or "" when Pith can't talk to it.
+// label, or "" when Pith can't talk to it. Only the Inseego 5G MiFi M2000 has
+// been tested; other models may differ, so Pith leaves them alone.
 func Model(label string) string {
-	for _, m := range []string{"M2000", "M2100", "M3000", "MiFi"} {
-		if strings.Contains(strings.ToLower(label), strings.ToLower(m)) {
-			return m
-		}
+	if strings.Contains(strings.ToLower(label), "m2000") {
+		return "M2000"
 	}
 	return ""
 }

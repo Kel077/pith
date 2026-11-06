@@ -91,7 +91,7 @@ func TestHotspotRefreshesDialerAndRefusesReplacedAdapter(t *testing.T) {
 	_, c.hotspotPort, _ = net.SplitHostPort(srv.Listener.Addr().String())
 	mac := "02:00:5e:10:00:09"
 	c.interfaces = func(context.Context) ([]api.Interface, error) {
-		return []api.Interface{{Name: "en9", Label: "MiFi", HardwareAddr: mac, Router: "127.0.0.1", Up: true}}, nil
+		return []api.Interface{{Name: "en9", Label: "M2000", HardwareAddr: mac, Router: "127.0.0.1", Up: true}}, nil
 	}
 	dials := 0
 	c.dialer = func(name string, _ time.Duration, _ []string) (*net.Dialer, error) {
@@ -150,7 +150,7 @@ func TestHotspotRedirectStaysOnOriginalOrigin(t *testing.T) {
 	c := testClient(t)
 	c.hotspotIndex = func(string) (int, error) { return 9, nil }
 	c.interfaces = func(context.Context) ([]api.Interface, error) {
-		return []api.Interface{{Name: "en9", Label: "MiFi", HardwareAddr: "02:00:5e:10:00:09", Router: "192.0.2.1", Up: true}}, nil
+		return []api.Interface{{Name: "en9", Label: "M2000", HardwareAddr: "02:00:5e:10:00:09", Router: "192.0.2.1", Up: true}}, nil
 	}
 	s, err := c.hotspot(context.Background(), "en9")
 	if err != nil {

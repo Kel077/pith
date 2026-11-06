@@ -61,7 +61,7 @@ func TestRenewRestoresDataAfterCancellationOrLostDisableReply(t *testing.T) {
 }
 
 func TestModel(t *testing.T) {
-	for label, want := range map[string]string{"M2000": "M2000", "Inseego MiFi M2100": "M2100", "MiFi 8800L": "MiFi", "iPhone USB": "", "Ethernet": ""} {
+	for label, want := range map[string]string{"M2000": "M2000", "Inseego MiFi M2000": "M2000", "Inseego MiFi M2100": "", "M3000": "", "MiFi 8800L": "", "iPhone USB": "", "Ethernet": ""} {
 		if got := Model(label); got != want {
 			t.Errorf("Model(%q) = %q, want %q", label, got, want)
 		}
