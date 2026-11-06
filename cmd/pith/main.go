@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"flag"
+	"io"
 	"log"
 	"time"
 
@@ -60,6 +61,13 @@ func main() {
 			s.app.BeforeQuit()
 		}
 	})
+	mygo.App.OnWillQuit(func(*mygo.QuitEvent) {
+		// The local proxies close with Pith: their connections fail rather
+		// than linger.
+		if c, ok := s.svc.(io.Closer); ok {
+			c.Close()
+		}
+	})
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)
 	}
@@ -69,6 +77,7 @@ func main() {
 // main thread.
 type shell struct {
 	app      *pithui.App
+	svc      service
 	window   *mygo.Window // the main window, made hidden at launch
 	panel    *mygo.Window // the flyout under the menu bar icon, while open
 	tray     *mygo.Tray
@@ -76,6 +85,7 @@ type shell struct {
 }
 
 func (s *shell) ready(svc service, page, language string, openWindow bool) {
+	s.svc = svc
 	s.app = pithui.New(pithui.Options{
 		Page:     page,
 		Language: language,
