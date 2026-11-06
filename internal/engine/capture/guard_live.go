@@ -125,8 +125,17 @@ func (b Binding) Check() error {
 	if err := g.Err(); err != nil {
 		return err
 	}
-	index, err := g.c.opts.Driver.Index(b.Name)
-	if err != nil || index != b.Index || g.epochs[b.Name] != b.epoch || b.generation != 0 && b.generation != g.generation {
+	if reader, ok := g.c.opts.Driver.(interfaceBindingReader); ok {
+		if reader.CheckBinding(b.Name, b.Index) != nil {
+			return ErrEgressChanged
+		}
+	} else {
+		index, err := g.c.opts.Driver.Index(b.Name)
+		if err != nil || index != b.Index {
+			return ErrEgressChanged
+		}
+	}
+	if g.epochs[b.Name] != b.epoch || b.generation != 0 && b.generation != g.generation {
 		return ErrEgressChanged
 	}
 	return nil

@@ -172,6 +172,9 @@ func (nativeDriver) InterfaceState(name string) (int, bool, error) {
 	}
 	return iface.Index, iface.Flags&net.FlagUp != 0, nil
 }
+func (nativeDriver) CheckBinding(name string, index int) error {
+	return checkBoundInterface(name, index, net.InterfaceByIndex)
+}
 func (nativeDriver) Create(mtu int) (tun.Device, error) {
 	if os.Geteuid() != 0 {
 		return nil, fmt.Errorf("utun creation requires the privileged helper")

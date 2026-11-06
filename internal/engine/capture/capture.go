@@ -49,6 +49,12 @@ type interfaceStateReader interface {
 	InterfaceState(string) (index int, up bool, err error)
 }
 
+// A previously pinned binding can be checked by index without enumerating all
+// interfaces. Drivers without this capability retain the name-based check.
+type interfaceBindingReader interface {
+	CheckBinding(name string, index int) error
+}
+
 type Options struct {
 	IPv6             bool
 	Scopes           []netip.Prefix

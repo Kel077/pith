@@ -1,11 +1,35 @@
 # Root-free relay performance investigation
 
-The first optimization candidate is the per-I/O interface identity lookup.
-Production `capture.Binding.Check` calls the native driver's name lookup before
+The initial investigation identified the per-I/O interface identity lookup.
+The baseline `capture.Binding.Check` called the native driver's name lookup before
 each guarded socket read/write. Go's BSD `InterfaceByName` reads the entire
 interface table; `InterfaceByIndex` can request one index. Checking the returned
 name and index could preserve the current identity validation at much lower cost.
-This investigation changes benchmarks only, not production behavior.
+The original investigation changed benchmarks only. The first reviewed
+optimization is recorded separately below; the baseline tables are unchanged.
+
+## Applied pinned-index validation
+
+The native driver now queries an existing binding by its pinned index and verifies
+both returned name and index. `Binding.Check` still rejects changed epochs and
+pending system-route generations, propagates capture faults, and returns
+`ErrEgressChanged` for lookup/identity failure. No result is cached. New bindings
+still resolve by name, and rule references retain their name/MAC resolution.
+Drivers without the optional indexed check retain the previous name-based path.
+
+`BenchmarkBoundInterfaceCheck` compares the complete production Guard check with
+that fallback, including the same mutex and epoch checks. Three 500 ms read-only
+loopback runs measured these medians:
+
+| Guard path | Time/check | Bytes/check | Allocations/check |
+| --- | ---: | ---: | ---: |
+| Previous name lookup | 105.3 us | 34,392 | 316 |
+| Pinned index plus name/index validation | 3.72 us | 1,707 | 23 |
+
+This is about 28 times faster per check, not a claimed throughput speedup.
+Tests cover name/index reuse, missing or inconsistent lookup results, epoch and
+generation changes, capture faults and fresh name resolution after reindexing.
+Hardware CPU-per-Mbps acceptance remains pending. MTU is unchanged.
 
 ## Method and limits
 
@@ -115,17 +139,18 @@ strategy needs separate platform research; no batching gain is claimed here.
 
 ## Recommended order
 
-1. Add a native check for a **previously pinned index**, verify its returned name
+1. Implemented: native checks for a **previously pinned index** verify its returned name
    and index, and keep existing guard epochs/generations and failure behavior.
    Retain normal name/MAC resolution for new bindings and rule references. Never
-   substitute a cached result for lifetime validation. Review before changing code.
+   substitute a cached result for lifetime validation. Hardware confirmation is pending.
 2. Evaluate output-buffer reuse without changing MTU or packet ownership. Keep
    real counter updates enabled in comparisons and test concurrent ICMP/TCP/UDP writers.
 3. Consider MTU and native I/O changes only after those low-risk candidates,
    with explicit IPv6/UDP/PMTU and VPN acceptance. Do not tune runtime parallelism
    from a single-flow memory model.
 
-No candidate in this list has been applied to production.
+Only the first candidate has been applied to production; buffer reuse and MTU
+changes remain separate work.
 
 ## Reproduce without root or network traffic
 
@@ -135,6 +160,8 @@ Bound individual runs; do not run these during an attended hardware/network test
 
 ```sh
 PITH_PROFILE_DIR="$(mktemp -d "${TMPDIR%/}/pith-profile-XXXXXX")"
+CGO_ENABLED=0 go test ./internal/engine/capture -run '^$' \
+  -bench '^BenchmarkBoundInterfaceCheck$' -benchtime=500ms -count=3 -timeout=30s
 CGO_ENABLED=0 go test -c -o "$PITH_PROFILE_DIR/forward.test" ./internal/engine/forward
 "$PITH_PROFILE_DIR/forward.test" -test.run '^$' \
   -test.bench '^Benchmark(InterfaceIdentityLookup|MemoryTCPRelay|MemorySmallReads)$' \

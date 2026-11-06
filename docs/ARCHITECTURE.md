@@ -323,6 +323,10 @@ Runtime guarantees:
   replacement invalidates that token without revoking other interfaces. Check
   it before binding and after dialing; established sockets keep their binding,
   never migrate, and fail locally if that interface lifetime ends.
+  Per-I/O checks query the pinned native index and verify both name and index,
+  retaining epoch/generation checks without enumerating all interfaces. Fresh
+  bindings and rule references still use current name/MAC resolution; no identity
+  result is cached to bypass validation.
 * System dials and ICMP select the most-specific unscoped route from the verified
   live view. Ambiguous ties, stale indices or a missing route fail that request
   immediately. After an unscoped VPN default is withdrawn, public system fallback is held
