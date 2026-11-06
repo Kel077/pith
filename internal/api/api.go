@@ -21,14 +21,15 @@ type Service interface {
 	// nothing is saved yet.
 	LoadConfig(ctx context.Context) (Config, error)
 	// SaveConfig validates and saves cfg. When the running scene changed,
-	// the engine applies its new rules to new connections at once; open
-	// connections keep the route they have.
+	// the engine applies new rules at once. Open captured connections whose
+	// decision or first-choice interface changes are closed to reconnect;
+	// unaffected connections retain their route.
 	SaveConfig(ctx context.Context, cfg Config) error
 
 	// Status reports the helper and the engine.
 	Status(ctx context.Context) (Status, error)
-	// InstallHelper installs the privileged helper, or updates an outdated
-	// one. macOS asks for an administrator's password: ErrCanceled when the
+	// InstallHelper explicitly installs, updates or repairs the privileged
+	// helper. macOS asks for an administrator's password: ErrCanceled when the
 	// user cancels.
 	InstallHelper(ctx context.Context) error
 	// UninstallHelper stops routing and removes the helper.
@@ -433,15 +434,24 @@ const (
 	Unreachable Outcome = "unreachable" // no interface of its rule connected, and Fallback was off
 )
 
+// EndReason explains a normal connection termination that was not a failure.
+// Empty means no additional termination reason was recorded.
+type EndReason string
+
+// EndRulesChanged closes a connection so its app can reconnect under new rules.
+// It does not claim that the app has already reconnected successfully.
+const EndRulesChanged EndReason = "rules_changed"
+
 // Connection is a TCP connection or a UDP flow that Pith handled.
 type Connection struct {
-	ID       uint64    `json:"id"`
-	Started  time.Time `json:"started"`
-	Ended    time.Time `json:"ended,omitzero"`  // zero while open
-	App      AppRef    `json:"app"`             // the app it is attributed to
-	Process  Process   `json:"process"`         // the process that owns the socket
-	Protocol Protocol  `json:"protocol"`        // TCP or UDP
-	Local    string    `json:"local,omitempty"` // application-side "ip:port" or "[ip6]:port"
+	ID        uint64    `json:"id"`
+	Started   time.Time `json:"started"`
+	Ended     time.Time `json:"ended,omitzero"`      // zero while open
+	EndReason EndReason `json:"endReason,omitempty"` // normal termination; Outcome is retained and Problem is empty
+	App       AppRef    `json:"app"`                 // the app it is attributed to
+	Process   Process   `json:"process"`             // the process that owns the socket
+	Protocol  Protocol  `json:"protocol"`            // TCP or UDP
+	Local     string    `json:"local,omitempty"`     // application-side "ip:port" or "[ip6]:port"
 	// OutboundLocal is the outbound socket's local ip:port before NAT. It is
 	// empty when blocked or dialing did not succeed; it is not the public NAT tuple.
 	OutboundLocal string  `json:"outboundLocal,omitempty"`

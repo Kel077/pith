@@ -98,6 +98,7 @@ PITH_TEST_BIN=$(/usr/bin/mktemp -d "${TMPDIR%/}/pith-rootcheck-bin.XXXXXXXX")
 export GOCACHE="${TMPDIR%/}/pith-go-build"
 export GOMODCACHE="${TMPDIR%/}/pith-go-mod"
 CGO_ENABLED=0 go build -trimpath -ldflags '-X main.version=acceptance' -o "$PITH_TEST_BIN/pithd" ./cmd/pithd
+chmod 0755 "$PITH_TEST_BIN/pithd"
 CGO_ENABLED=0 go build -trimpath -o "$PITH_TEST_BIN/rootcheck" ./scripts/rootcheck
 ```
 
@@ -143,7 +144,7 @@ mode-0600 files include:
 | `throughput-a-attempt.json`, `throughput-b-attempt.json` | Exclusive durable reservations created before any measurement request; interruption, failure, rebaseline and reinstall never refund these attempts |
 | `vpn-plan.json`, `vpn-restart-attempt.json` | Optional frozen own-name/device-local resolver and original VPN identity, human timing/request limits, and one durable non-repeatable restart attempt |
 | `install-plan.json`, `install.sh` | Exact scoped launchd arguments, fixed destinations, helper SHA-256 check, rollback, and authorization prompt |
-| `uninstall.sh` | Exact bootout, ownership-checked route cleanup, and managed-path removal |
+| `uninstall.sh`, `cleanup-helper` | Exact bootout, verified staged cleanup, and managed-path removal; the frozen cleanup source remains until removal succeeds |
 | `emergency-command.txt` | A standalone, single command that can be pasted into Terminal without IPC or the test executable |
 | `cleanup-*.json`, `check-*.json` | Immutable cleanup observations and separate test results, tied to the current baseline, installation, and ownership history; external-only differences have a separate classification |
 | `rebaseline-*.json` | Immutable mode-change candidates, before/after snapshots, and system/A/B preflights; failed attempts remain archived |
@@ -395,8 +396,9 @@ belong to one case, and the existing three-minute controller deadline still
 applies independently of the helper's lease.
 
 For each resolver the batch checks unmatched system egress, A and AAAA through
-A, reuse of that engine session and its source tuples, preservation of A after
-hot reload to B, a new session through B, missing-interface fallback to A,
+A, reuse of that engine session and its source tuples, normal closure of A after
+hot reload to B, a replacement session through B from the same native socket,
+another new session through B, missing-interface fallback to A,
 explicit system fallback, block priority, and strict missing-interface failure.
 On the first resolver it also waits at most 14 seconds for the ten-second DNS
 idle timeout, then uses the same native UDP socket/source port to require a new
@@ -438,7 +440,8 @@ tuple had ended early and been recreated without owner/name on the system path.
 Cleanup restored the baseline. A synthetic IPv4/IPv6 reproduction identified the
 UDP ICMP teardown path: late server replies after client close must not release
 the original binding before its queued tail is forwarded. The relay now consumes
-port-unreachable as a datagram error and keeps the session until normal idle;
+port-unreachable as a datagram error and keeps the session until normal idle or
+an explicit policy change requires reconnection;
 other terminal errors remain visible instead of being hidden by paired close.
 The old hardware report did not retain the triggering ICMP/error, so that exact
 packet was not directly observed. The successful hardware repeat above exercises
@@ -1067,7 +1070,7 @@ alternative removal operation, not an automatic extra step.
 | 1. Cancellation | `"$PITH_TEST_BIN/rootcheck" cancel --session "$PITH_SESSION"` | Cancel the administrator dialog. | Returns `ErrCanceled`; no managed path, service, route, or utun changes. If the helper is installed, this case fails; uninstall it before preparing a new session. |
 | 2. Installation | `"$PITH_TEST_BIN/rootcheck" install --session "$PITH_SESSION"` | Requires administrator approval. Creates the root-owned helper and launchd plist/data directory, plus a listed shared parent only if absent; the daemon creates its authenticated socket. It starts idle. | Version and executable checksum match; plist arguments contain only the reviewed host captures; plist inode/mtime identify this installation; engine is stopped; routes and utun inventory match the initial snapshot. Undo is step 9 or emergency cleanup. |
 | 3. One smoke check | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION"` | No dialog. Saves only a temporary config, starts the scoped utun with SafeStart, requests HTTPS through ordinary system routing, then hot-applies an IP rule for interface A. | SafeStart succeeds; both logged flows belong to this test process; outcome, rule, interface, bidirectional byte counts, and live traffic are correct. `Stop` restores routes and utun inventory before the command returns. Only a successful smoke check unlocks later cases. |
-| 4. Rule batch | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --batch` | No dialog. Starts a fresh bounded capture and changes only the test scene. | Verifies interface B, TLS SNI domain matching, the second target of one rule, block priority over an earlier route, missing-interface fallback, explicit system fallback, and strict unreachable. Opens TLS on A, changes the rule to B, completes the same connection on A, then verifies a new connection on B. The capture start timestamp stays unchanged during hot reload. Ends stopped. |
+| 4. Rule batch | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --batch` | No dialog. Starts a fresh bounded capture and changes only the test scene. | Verifies interface B, TLS SNI domain matching, the second target of one rule, block priority over an earlier route, missing-interface fallback, explicit system fallback, and strict unreachable. Opens TLS on A, records its identity, changes the rule to B, verifies a TCP reset and normal `Ended` record with `EndReason=rules_changed` and empty `Problem`, then verifies a new connection on B. The capture start timestamp stays unchanged during hot reload. Ends stopped. |
 | 4a. Optional app-specific routing | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --app-bypass` | No dialog. Requires a passed smoke check and public-IP preflight evidence. Uses the current standalone `rootcheck` executable path as the app/tool identity, and creates a checksum-verified copy at a different path inside the private session directory. Each controlled child makes exactly one ordinary TLS request to the same frozen target. No helper installation, capture expansion, or VPN setting change occurs. | The parent matches app+IP and then app+domain rules through physical interface A. Under each rule, the different executable remains unmatched and uses the saved system route. A final app block after the route rule wins. Every case checks PID, executable/app path, destination, rule, outcome, interface, and byte counts; successful requests use the public-IP drift policy below. Children are acknowledged and waited for on every outcome, their copy is removed, and routing ends stopped. Identical public exits do not prove a distinct exit-node bypass. |
 | 5. Native TCP preservation | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --preserve` | No dialog. Establishes an ordinary TLS connection **before** capture, starts capture, then sends HTTP over that same native connection. | The pre-existing kernel connection survives route activation and receives a verified HTTPS response. This flow is not claimed as a new proxied/logged connection. Ends stopped. A server that closes idle TLS before the request makes this case inconclusive; do not count it as a pass. |
 | 6. SafeStart rollback | `"$PITH_TEST_BIN/rootcheck" check --session "$PITH_SESSION" --safe-failure` | No dialog. Starts with a block rule for the exact SafeStart destination and SafeStart enabled. | `Start` returns `ErrNetworkLost`; status reports the same failure; routes/utun are restored. Cleanup calls `Stop` so the next command sees an idle helper. |
@@ -1445,14 +1448,21 @@ an earlier mode's interface index.
 ## Emergency undo
 
 During preparation, `emergency-command.txt` contains the exact standalone
-one-command undo generated by `helper.PlanUninstall`. Copy it before the root
-session starts. It does not require working IPC, the test executable, or a
-network connection. The following equivalent command is included for review;
-it opens the standard removal authorization dialog:
+one-command undo generated by `helper.PlanVerifiedUninstall`. Review and copy
+that session-specific command before the root session starts. It opens the
+standard removal authorization dialog and requires an administrator's approval.
+It needs neither working IPC, the original build directory, the test executable,
+nor a network connection. Keep the private session's `cleanup-helper`: its exact
+path and expected SHA-256 are embedded in the reviewed command. A generic command
+that directly executes the installed helper cannot establish that identity and
+must not replace the frozen command.
 
-```sh
-/usr/bin/osascript -e 'do shell script "set -eu\nservice=system/io.github.kel077.pith.helper\nbinary=/Library/PrivilegedHelperTools/io.github.kel077.pith.helper\nplist=/Library/LaunchDaemons/io.github.kel077.pith.helper.plist\ndata=\"/Library/Application Support/Pith\"\nsocket=/var/run/io.github.kel077.pith.helper.sock\nfor path in \"$binary\" \"$plist\" \"$data\"; do [ ! -L \"$path\" ] || exit 1; done\nif /bin/launchctl print \"$service\" >/dev/null 2>&1; then /bin/launchctl bootout \"$service\"; fi\nattempt=0; while [ -S \"$socket\" ] && [ \"$attempt\" -lt 60 ]; do /bin/sleep 0.1; attempt=$((attempt+1)); done\nif [ -f \"$data/capture.json\" ]; then \"$binary\" --cleanup; fi\n/bin/rm -f \"$binary\" \"$plist\"\nif [ -S \"$socket\" ]; then /bin/rm -f \"$socket\"; fi\n/bin/rm -rf \"$data\"" with administrator privileges with prompt "Pith needs your password to remove its routing helper."'
-```
+Before bootout, the command copies the frozen source into a root-owned staging
+directory and verifies the staged bytes against the pinned SHA-256. Only that
+verified copy may execute `--cleanup`; an unreadable or replaced installed
+binary is never used as a cleanup executable. A missing or changed frozen source
+fails before removal begins. Preserve the session and restore a verified source
+from the exact build identity before trying again with administrator approval.
 
 The five paths are the helper binary, launchd plist, data directory, capture
 journal inside that directory, and Unix socket. The cleanup sequence boots out
@@ -1464,9 +1474,9 @@ then deletes only journaled routes whose prefix, utun name, and interface index
 still match. Legacy journals without a boot identity cannot authorize route
 deletion. Closing the owning helper removes its utun. It never runs
 a global route flush, changes the system default route, or destroys another
-utun. If ownership cannot be established or the helper binary is missing,
-cleanup fails and preserves the remaining journal for review; do not replace
-it with broad route deletion.
+utun. If ownership cannot be established, cleanup fails and preserves the
+remaining journal, binary and plist for review, with a best-effort restoration
+of the previous loaded job. Do not replace it with broad route deletion.
 
 Finally verify that the managed launchd service and all five paths are gone,
 and compare the latest accepted route and utun baseline. Remove the private session

@@ -13,7 +13,6 @@ import (
 	"github.com/Kel077/pith/internal/engine/attribution"
 	"github.com/Kel077/pith/internal/engine/domains"
 	"github.com/Kel077/pith/internal/engine/egress"
-	"github.com/Kel077/pith/internal/engine/telemetry"
 	"golang.zx2c4.com/wireguard/tun"
 	"gvisor.dev/gvisor/pkg/buffer"
 	"gvisor.dev/gvisor/pkg/tcpip"
@@ -29,15 +28,33 @@ import (
 
 type LookupFunc func(context.Context, api.Protocol, netip.AddrPort, netip.AddrPort) (attribution.Attribution, error)
 
+// ConnectionStore isolates relay bookkeeping from telemetry's disk lifecycle.
+// No method is called while the active-flow registry is locked.
+type ConnectionStore interface {
+	Add(api.Connection) uint64
+	AddContext(context.Context, api.Connection) uint64
+	AddBytes(uint64, uint64, uint64)
+	EndWithReason(uint64, string, api.EndReason)
+}
+
 type Options struct {
-	Device   tun.Device
-	Router   *egress.Router
-	Store    *telemetry.Store
-	Lookup   LookupFunc
-	IPv6     bool
-	MaxFlows int
-	UDPIdle  time.Duration
-	DNSIdle  time.Duration
+	Device tun.Device
+	Router *egress.Router
+	Store  ConnectionStore
+	Lookup LookupFunc
+	// LookupFresh must bypass cached PCB snapshots. Nil with an injected Lookup
+	// conservatively holds UDP tails whose socket lifetime cannot be verified.
+	LookupFresh LookupFunc
+	IPv6        bool
+	MaxFlows    int
+	UDPIdle     time.Duration
+	DNSIdle     time.Duration
+	// beforeTCPHandshake is a test seam for cancellation before gVisor registers
+	// its endpoint. It is nil in the engine and must be set before New.
+	beforeTCPHandshake func()
+	// beforeUDPClassify is a test seam for cancellation after the first datagram
+	// has been read and sniffed but before its classification is published.
+	beforeUDPClassify func(context.Context)
 	// Existing packets retain their native kernel socket across Start. Packet
 	// runs before netstack; Unknown runs only when it has no transport endpoint.
 	Packet       func([]byte) bool
@@ -58,6 +75,12 @@ type Forwarder struct {
 	mu           sync.Mutex
 	closing      bool
 	active       int
+	live         map[*flow]struct{}
+	pendingTCP   map[[2]netip.AddrPort]*flow
+	udpCurrent   map[[2]netip.AddrPort]*flow
+	udpReload    map[[2]netip.AddrPort]*udpReloadContext
+	udpFreshAt   time.Time
+	udpPruneAt   time.Time
 	seenTCP      map[[2]netip.AddrPort]struct{}
 	flows        sync.WaitGroup
 	io           sync.WaitGroup
@@ -83,7 +106,8 @@ func New(opts Options) (*Forwarder, error) {
 		opts.DNSIdle = 10 * time.Second
 	}
 	if opts.Lookup == nil {
-		opts.Lookup = attribution.New().Lookup
+		resolver := attribution.New()
+		opts.Lookup, opts.LookupFresh = resolver.Lookup, resolver.LookupFresh
 	}
 	networks := []stack.NetworkProtocolFactory{ipv4.NewProtocol}
 	if opts.IPv6 {
@@ -114,6 +138,10 @@ func New(opts Options) (*Forwarder, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	f := &Forwarder{opts: opts, stack: s, link: link, cache: domains.NewCache(0), ctx: ctx, cancel: cancel, faults: make(chan error, 1)}
 	f.seenTCP = make(map[[2]netip.AddrPort]struct{})
+	f.live = make(map[*flow]struct{})
+	f.pendingTCP = make(map[[2]netip.AddrPort]*flow)
+	f.udpCurrent = make(map[[2]netip.AddrPort]*flow)
+	f.udpReload = make(map[[2]netip.AddrPort]*udpReloadContext)
 	tcpForward := tcp.NewForwarder(s, 0, 1024, f.tcp)
 	udpForward := udp.NewForwarder(s, f.udp)
 	legacy := func(id stack.TransportEndpointID, pkt *stack.PacketBuffer, proto api.Protocol) bool {
@@ -158,18 +186,6 @@ func (f *Forwarder) fault(err error) {
 		}
 	}
 }
-
-func (f *Forwarder) begin() bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.closing || f.active >= f.opts.MaxFlows {
-		return false
-	}
-	f.active++
-	f.flows.Add(1)
-	return true
-}
-func (f *Forwarder) end() { f.mu.Lock(); f.active--; f.mu.Unlock(); f.flows.Done() }
 
 // SawTCP lets SafeStart prove its exact native socket crossed the tunnel. The
 // bounded recent set is diagnostic only and never influences routing policy.
@@ -235,6 +251,10 @@ func (f *Forwarder) write() {
 		pkt := f.link.ReadContext(f.ctx)
 		if pkt == nil {
 			return
+		}
+		if f.dropRevokedSYNACK(pkt) {
+			pkt.DecRef()
+			continue
 		}
 		view := pkt.ToView()
 		pkt.DecRef()

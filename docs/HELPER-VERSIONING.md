@@ -88,7 +88,7 @@ the error/replacement presentation. Local configuration, interface listing,
 probing and rule checking remain usable without a verified helper.
 
 An unverifiable helper is returned by `Status` as `State: Failed` with
-`Error.Code: helper_untrusted`, not a transport error. Its helper status has
+`Error.Code: helper_untrusted`, not a transport error. In its helper status,
 `Installed` reflects the actual installed file; `Running` and `Outdated` are false,
 with an empty version and no scene. Helper operations return `ErrHelperUntrusted`
 without sending commands. Missing build identity alone never invents an installation.
