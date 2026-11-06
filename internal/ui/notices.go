@@ -28,7 +28,8 @@ func (a *App) notices() []notice {
 		// No "Try again" and no password prompt: the fix is an explicit
 		// reinstall in Settings, or of Pith itself.
 		out = append(out, notice{
-			text:   locales.PithCanTVerifyItsHelper(),
+			text:   locales.CantVerifyHelper(),
+			detail: locales.PithCanTVerifyItsHelper(),
 			danger: true,
 			action: locales.Settings(),
 			do: func() {
@@ -42,7 +43,8 @@ func (a *App) notices() []notice {
 		// Pith keeps polling; Try Again asks now. Repair, in Settings, is
 		// the explicit fix that needs a password.
 		out = append(out, notice{
-			text:   locales.TheHelperIsnTAnswering(),
+			text:   locales.HelperNotAnsweringState(),
+			detail: locales.TheHelperIsnTAnswering(),
 			action: locales.TryAgain(),
 			do:     a.refreshStatus,
 		})

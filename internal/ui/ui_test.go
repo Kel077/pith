@@ -317,7 +317,7 @@ func TestUntrustedHelper(t *testing.T) {
 	if got := a.stateText(); got != locales.CantVerifyHelper() {
 		t.Errorf("state %q", got)
 	}
-	if n := a.notices(); len(n) == 0 || n[0].text != locales.PithCanTVerifyItsHelper() {
+	if n := a.notices(); len(n) == 0 || n[0].text != locales.CantVerifyHelper() || n[0].detail != locales.PithCanTVerifyItsHelper() {
 		t.Errorf("notices %+v", n)
 	}
 	a.toggle()
@@ -338,7 +338,7 @@ func TestSilentHelper(t *testing.T) {
 		t.Errorf("state %q", got)
 	}
 	n := a.notices()
-	if len(n) == 0 || n[0].text != locales.TheHelperIsnTAnswering() || n[0].danger {
+	if len(n) == 0 || n[0].text != locales.HelperNotAnsweringState() || n[0].detail != locales.TheHelperIsnTAnswering() || n[0].danger {
 		t.Fatalf("notices %+v", n)
 	}
 	n[0].do()
