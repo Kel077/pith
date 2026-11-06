@@ -234,7 +234,7 @@ func settingsRow(c *ui.Context, label, help string, info bool, control func()) {
 // settingsSelect is a drop-down of a row, shaped as a capsule of glass as
 // the page's buttons are.
 func settingsSelect(c *ui.Context, chosen *string, options []string) ui.Element {
-	return ui.Select(c, chosen, options).Width(150).Padding(8, 14, 8, 16).Radius(999).
+	return ui.Select(c, chosen, options).Width(150).Height(controlHeight).Padding(0, 14, 0, 16).Radius(999).
 		Material(glass.Glass{}).Border(1, rim(c.Theme()))
 }
 

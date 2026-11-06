@@ -111,11 +111,15 @@ func accentGradient(t *ui.Theme) ui.LinearGradient {
 	return ui.LinearGradient{From: from, To: to, Angle: 180, Oklab: true}
 }
 
+// controlHeight is the height of the capsules, buttons, fields and
+// drop-downs that stand side by side.
+const controlHeight = 34
+
 // primaryCapsule is the primary action of a page: a tangerine capsule. It
 // takes the keyboard focus, and Space or Return presses it.
 func primaryCapsule(c *ui.Context, key string, ic *ui.SVG, label string) ui.Element {
 	t := c.Theme()
-	b := ui.Row(c.Key(key)).Gap(6).Padding(8, 16, 8, 14).Radius(999).Cursor(ui.CursorPointer).Label(label).
+	b := ui.Row(c.Key(key)).Gap(6).Height(controlHeight).Padding(0, 16, 0, 14).AlignItems(ui.Center).Radius(999).Cursor(ui.CursorPointer).Label(label).
 		Focusable().LinearGradient(accentGradient(t)).Shadow(0, 4, 14, -4, t.Accent.Alpha(0.45))
 	switch {
 	case b.Pressed():
@@ -138,9 +142,9 @@ func glassCapsuleButton(c *ui.Context, key string, ic *ui.SVG, label string) ui.
 	t := c.Theme()
 	b := capsule(c.Key(key)).Gap(6).Cursor(ui.CursorPointer).Label(label).Focusable()
 	if label == "" {
-		b.Size(34, 34).Center()
+		b.Size(controlHeight, controlHeight).Center()
 	} else {
-		b.Padding(8, 14, 8, 12)
+		b.Height(controlHeight).Padding(0, 14, 0, 12).AlignItems(ui.Center)
 	}
 	b.Children(func() {
 		if ic != nil {
@@ -162,10 +166,10 @@ func segmentedCapsule(c *ui.Context, key, label string, chosen *int, labels []st
 	before := *chosen
 	seg := ui.SegmentedBase(c.Key(key), chosen, len(labels))
 	g := glass.Glass{}
-	seg.Track.Padding(4).Gap(2).Radius(999).Material(g).Border(1, rim(t)).Label(label)
+	seg.Track.Height(controlHeight).Padding(3).Gap(2).Radius(999).Material(g).Border(1, rim(t)).Label(label)
 	seg.Track.Children(func() {
 		for i, text := range labels {
-			s := seg.Segment(i).Gap(6).Padding(6, 14).Radius(999).Cursor(ui.CursorPointer).Label(text)
+			s := seg.Segment(i).Gap(6).Height(controlHeight-8).Padding(0, 14).AlignItems(ui.Center).Radius(999).Cursor(ui.CursorPointer).Label(text)
 			on := i == *chosen
 			switch {
 			case on && t.Dark:

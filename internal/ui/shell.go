@@ -73,7 +73,7 @@ func (a *App) topBar(c *ui.Context) {
 func (a *App) routingCapsule(c *ui.Context) {
 	t := c.Theme()
 	on := a.isRunning() || a.status.State == api.Starting
-	capsule(c.Key("routing")).Gap(8).Padding(5, 6, 5, 12).Tooltip(a.stateDetail()).Children(func() {
+	capsule(c.Key("routing")).Gap(8).Height(controlHeight).Padding(0, 6, 0, 12).AlignItems(ui.Center).Tooltip(a.stateDetail()).Children(func() {
 		col := t.TextMuted
 		switch {
 		case helperNotResponding(a.status):
@@ -106,8 +106,8 @@ func pageHeader(c *ui.Context, title, subtitle string, actions func()) {
 				ui.Text(c, subtitle).TextColor(c.Theme().TextMuted).SingleLine()
 			}
 		})
-		// The actions stand in a box as high as the highest of any page's,
-		// centered on it, and so does the title: every page's title stands
+		// The actions stand in a box of one height on every page, centered
+		// on it, and so does the title: every page's title stands
 		// at one height, whatever its actions, or none.
 		box := ui.Row(c).Height(headerActionsHeight).Gap(10).AlignItems(ui.Center).Shrink(0)
 		if actions != nil {
@@ -116,9 +116,9 @@ func pageHeader(c *ui.Context, title, subtitle string, actions func()) {
 	})
 }
 
-// headerActionsHeight is the height of the box of a page's actions: room
-// for the highest of them, Activity's capsule of views.
-const headerActionsHeight = 44
+// headerActionsHeight is the height of the box of a page's actions: the
+// controls' height, and room around them.
+const headerActionsHeight = controlHeight + 10
 
 // stateText says in a word whether routing runs.
 func (a *App) stateText() string {

@@ -188,7 +188,7 @@ func sheetPrimary(c *ui.Context, key, label string, disabled bool) ui.Element {
 		// As macOS shows a default button that can't be pressed yet: a quiet
 		// capsule with dim text, rather than tangerine faded past reading.
 		t := c.Theme()
-		b := ui.Row(c.Key(key)).Padding(8, 20).Radius(999).Center().Label(label).Disabled(true).
+		b := ui.Row(c.Key(key)).Height(controlHeight).Padding(0, 20).Radius(999).Center().Label(label).Disabled(true).
 			Background(subtle(t, 0.06)).Border(1, subtle(t, 0.08))
 		b.Children(func() { ui.Text(c, label).FontWeight(600).TextColor(t.TextMuted).SingleLine() })
 		return b
