@@ -169,16 +169,19 @@ func (s *shell) togglePanel() {
 		s.panel.Close()
 		return
 	}
+	// It drops down from the menu bar, centered under the icon, without
+	// the arrow of a popover.
 	p := mygo.NewFlyout(mygo.FlyoutOptions{
-		Tray:      s.tray,
-		Placement: mygo.PlacementBottom,
-		Gap:       4,
-		Width:     pithui.PanelWidth,
-		Height:    s.app.PanelHeight(),
-		Focusable: true,
-		Shadow:    true,
-		Popover:   true,
-		Content:   ui.View(s.app.PanelView),
+		Tray:         s.tray,
+		Placement:    mygo.PlacementBottom,
+		Gap:          5,
+		Width:        pithui.PanelWidth,
+		Height:       s.app.PanelHeight(),
+		Focusable:    true,
+		Shadow:       true,
+		Vibrancy:     mygo.VibrancyPopover,
+		CornerRadius: 20,
+		Content:      ui.View(s.app.PanelView),
 	})
 	s.panel = p
 	p.OnClosed(func() {

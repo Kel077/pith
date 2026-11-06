@@ -50,7 +50,7 @@ func (a *App) PanelHeight() int {
 
 // PanelView is the panel under the menu bar icon: the switch, the scenes,
 // the interfaces and their speed. It draws on the material of the
-// system's popover, and so on a background of the same light where there
+// system's popovers, and so on a background of the same light where there
 // is none, as in tests.
 func (a *App) PanelView(c *ui.Context) {
 	t := theme(c)

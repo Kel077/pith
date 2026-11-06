@@ -81,9 +81,10 @@ page has a large title and its actions on the right.
 ## The menu bar
 
 A template icon, faint while routing is off and solid while it runs,
-optionally followed by the download speed. A click opens a native popover:
-the switch, the scenes, the interfaces with their speed, and buttons to
-open the window or quit.
+optionally followed by the download speed. A click drops a panel down from
+the menu bar, centered under the icon, on the popover's material but
+without its arrow: the switch, the scenes, the interfaces with their speed,
+and buttons to open the window or quit.
 
 ## Language
 
