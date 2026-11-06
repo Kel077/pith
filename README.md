@@ -134,43 +134,38 @@ If the Mac loses the internet right after routing starts, Pith undoes it by itse
 
 1. **Turn Routing off** in the menu bar. This takes no password. Quitting Pith isn't enough while **Keep routing after quitting** is on.
 2. **Remove the helper**: Settings → Helper → **Uninstall…**, with your administrator password. This also deletes the connection log and traffic totals; your rules stay.
-3. **If Pith doesn't respond**, quit it and paste the block below into Terminal. It asks for your administrator password (nothing shows as you type), stops only Pith's helper, undoes what the helper added to the routing table, and deletes the helper's files.
+3. **If Pith doesn't respond**, force quit it (⌥⌘⎋) and paste the block below into Terminal. It asks for your administrator password (nothing shows as you type) and has macOS stop Pith's helper, and nothing else: it runs no part of Pith, deletes no files and edits no routes. Then reopen Pith and remove the helper as in step 2; if you deleted Pith, install it again first. Until you do, the helper starts again with the Mac.
 
 <details>
-<summary>Remove the helper from Terminal</summary>
+<summary>Stop the helper from Terminal</summary>
 
 ```sh
-sudo /bin/sh <<'PITH_REMOVE'
+sudo /bin/sh <<'PITH_STOP'
 set -eu
+export LC_ALL=C
 service='system/io.github.kel077.pith.helper'
-binary='/Library/PrivilegedHelperTools/io.github.kel077.pith.helper'
-plist='/Library/LaunchDaemons/io.github.kel077.pith.helper.plist'
-data='/Library/Application Support/Pith'
-socket='/var/run/io.github.kel077.pith.helper.sock'
-
-for path in "$binary" "$plist" "$data"; do
-  [ ! -L "$path" ] || { echo 'Refusing a symlink installation path.' >&2; exit 1; }
-done
-if /bin/launchctl print "$service" >/dev/null 2>&1; then
-  /bin/launchctl bootout "$service"
+fail() {
+  printf '%s\n' 'Pith could not be stopped or its state could not be verified.' \
+    'Keep any remaining files and capture journal. Stop here and open an issue:' \
+    'https://github.com/Kel077/pith/issues/new' >&2
+  exit 1
+}
+if state=$(/bin/launchctl print "$service" 2>&1); then
+  /bin/launchctl bootout "$service" || fail
+  printf '%s\n' 'macOS was asked to stop the Pith helper.'
+else
+  case "$state" in
+    *'Could not find service "io.github.kel077.pith.helper"'*)
+      printf '%s\n' 'Pith is not registered with launchd; nothing was changed.' ;;
+    *) fail ;;
+  esac
 fi
-attempt=0
-while [ -S "$socket" ] && [ "$attempt" -lt 60 ]; do
-  /bin/sleep 0.1
-  attempt=$((attempt+1))
-done
-if [ -f "$data/capture.json" ]; then
-  "$binary" --cleanup
-fi
-/bin/rm -f "$binary" "$plist"
-if [ -S "$socket" ]; then
-  /bin/rm -f "$socket"
-fi
-/bin/rm -rf "$data"
-PITH_REMOVE
+printf '%s\n' 'No manual file or route deletion was performed.' \
+  'Finish removal using the Uninstall action in Settings in a verified copy of Pith.'
+PITH_STOP
 ```
 
-If it reports an error, stop there and [open an issue](https://github.com/Kel077/pith/issues/new?template=bug.yml): what's left is the record of what Pith changed. Don't delete routes by hand.
+If it reports an error, or you're still offline once the helper is removed, stop there and [open an issue](https://github.com/Kel077/pith/issues/new?template=bug.yml). Keep the helper's files, which record what Pith changed, but don't post them publicly. Don't delete routes by hand.
 
 </details>
 

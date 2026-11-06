@@ -136,43 +136,38 @@ flowchart LR
 
 1. **在菜单栏关掉「分流」**，不需要密码。开着「退出后继续分流」时，光退出橘核是不够的。
 2. **卸载后台助手**：「设置 → 后台助手 → 卸载…」，输入管理员密码。连接记录和流量统计会一起删掉，规则还在。
-3. **橘核没反应时**，先退出它，再把下面这段粘贴到「终端」里运行。它会要你输入管理员密码（输入时屏幕上不显示），只停掉橘核的后台助手，撤回它加进路由表的内容，再删掉它的文件。
+3. **橘核没反应时**，先强制退出它（⌥⌘⎋），再把下面这段粘贴到「终端」里运行。它会要你输入管理员密码（输入时屏幕上不显示），只让 macOS 停掉橘核的后台助手，别的什么都不做：不运行橘核的任何程序，不删文件，也不改路由。之后重新打开橘核，按第 2 步卸载后台助手；如果已经把橘核删了，先重新装上。在那之前，Mac 重启后后台助手还会再启动。
 
 <details>
-<summary>在终端里卸载后台助手</summary>
+<summary>在终端里停掉后台助手</summary>
 
 ```sh
-sudo /bin/sh <<'PITH_REMOVE'
+sudo /bin/sh <<'PITH_STOP'
 set -eu
+export LC_ALL=C
 service='system/io.github.kel077.pith.helper'
-binary='/Library/PrivilegedHelperTools/io.github.kel077.pith.helper'
-plist='/Library/LaunchDaemons/io.github.kel077.pith.helper.plist'
-data='/Library/Application Support/Pith'
-socket='/var/run/io.github.kel077.pith.helper.sock'
-
-for path in "$binary" "$plist" "$data"; do
-  [ ! -L "$path" ] || { echo 'Refusing a symlink installation path.' >&2; exit 1; }
-done
-if /bin/launchctl print "$service" >/dev/null 2>&1; then
-  /bin/launchctl bootout "$service"
+fail() {
+  printf '%s\n' 'Pith could not be stopped or its state could not be verified.' \
+    'Keep any remaining files and capture journal. Stop here and open an issue:' \
+    'https://github.com/Kel077/pith/issues/new' >&2
+  exit 1
+}
+if state=$(/bin/launchctl print "$service" 2>&1); then
+  /bin/launchctl bootout "$service" || fail
+  printf '%s\n' 'macOS was asked to stop the Pith helper.'
+else
+  case "$state" in
+    *'Could not find service "io.github.kel077.pith.helper"'*)
+      printf '%s\n' 'Pith is not registered with launchd; nothing was changed.' ;;
+    *) fail ;;
+  esac
 fi
-attempt=0
-while [ -S "$socket" ] && [ "$attempt" -lt 60 ]; do
-  /bin/sleep 0.1
-  attempt=$((attempt+1))
-done
-if [ -f "$data/capture.json" ]; then
-  "$binary" --cleanup
-fi
-/bin/rm -f "$binary" "$plist"
-if [ -S "$socket" ]; then
-  /bin/rm -f "$socket"
-fi
-/bin/rm -rf "$data"
-PITH_REMOVE
+printf '%s\n' 'No manual file or route deletion was performed.' \
+  'Finish removal using the Uninstall action in Settings in a verified copy of Pith.'
+PITH_STOP
 ```
 
-如果它报错，就停在那里，并[提一个 issue](https://github.com/Kel077/pith/issues/new?template=bug.yml)：剩下的文件记录着橘核改过什么，是排查的依据。不要自己手动删路由。
+如果它报错，或者卸载后台助手后还是上不了网，就停在那里，并[提一个 issue](https://github.com/Kel077/pith/issues/new?template=bug.yml)。后台助手的文件记录着橘核改过什么，请留着，但不要公开贴出来。不要自己手动删路由。
 
 </details>
 
