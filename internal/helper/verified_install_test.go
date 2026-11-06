@@ -1,7 +1,9 @@
 package helper
 
 import (
+	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,9 +11,11 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Kel077/pith/internal/api"
 	"github.com/Kel077/pith/internal/helper/identity"
+	"howett.net/plist"
 )
 
 func verifiedPlanSource(t *testing.T) (string, identity.Identity) {
@@ -37,7 +41,7 @@ func TestVerifiedPlansRejectUntrustedIdentity(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			for name, change := range map[string]func(*identity.Identity){
 				"schema":          func(id *identity.Identity) { id.Schema++ },
-				"protocol":        func(id *identity.Identity) { id.Protocol++ },
+				"protocol":        func(id *identity.Identity) { id.Protocol = 0 },
 				"missing-version": func(id *identity.Identity) { id.Version = "" },
 				"invalid-version": func(id *identity.Identity) { id.Version = "test\nhelper" },
 				"short-sha256":    func(id *identity.Identity) { id.SHA256 = id.SHA256[:63] },
@@ -93,8 +97,8 @@ func TestVerifiedPlansRejectChangedSource(t *testing.T) {
 	}
 }
 
-func TestVerifiedPlansRejectNonExecutableSource(t *testing.T) {
-	for _, kind := range []string{"non-executable", "directory", "missing", "relative"} {
+func TestVerifiedPlansRejectUntrustedSource(t *testing.T) {
+	for _, kind := range []string{"non-executable", "group-writable", "other-writable", "symlink", "directory", "empty", "missing", "relative"} {
 		t.Run(kind, func(t *testing.T) {
 			source, expected := verifiedPlanSource(t)
 			switch kind {
@@ -102,8 +106,26 @@ func TestVerifiedPlansRejectNonExecutableSource(t *testing.T) {
 				if err := os.Chmod(source, 0600); err != nil {
 					t.Fatal(err)
 				}
+			case "group-writable":
+				if err := os.Chmod(source, 0770); err != nil {
+					t.Fatal(err)
+				}
+			case "other-writable":
+				if err := os.Chmod(source, 0702); err != nil {
+					t.Fatal(err)
+				}
+			case "symlink":
+				link := source + ".link"
+				if err := os.Symlink(source, link); err != nil {
+					t.Fatal(err)
+				}
+				source = link
 			case "directory":
 				source = filepath.Dir(source)
+			case "empty":
+				if err := os.Truncate(source, 0); err != nil {
+					t.Fatal(err)
+				}
 			case "missing":
 				source += ".missing"
 			case "relative":
@@ -117,6 +139,141 @@ func TestVerifiedPlansRejectNonExecutableSource(t *testing.T) {
 				if err == nil || got.Script != "" {
 					t.Fatalf("%s accepted %s source: error=%v script=%q", operation, kind, err, got.Script)
 				}
+			}
+		})
+	}
+}
+
+func TestVerifiedUninstallAcceptsFrozenProtocolWithoutIPC(t *testing.T) {
+	source, expected := verifiedPlanSource(t)
+	expected.Protocol--
+	if expected.Protocol == 0 {
+		// Protocol 1 has no earlier valid value; any different valid protocol
+		// establishes that CLI cleanup is independent of the current IPC version.
+		expected.Protocol = ProtocolVersion + 1
+	}
+	plan, err := PlanVerifiedUninstall(source, expected)
+	if err != nil {
+		t.Fatal("frozen cleanup identity was incorrectly tied to the current IPC protocol", err)
+	}
+	if !strings.Contains(plan.Script, "[ \"${actual%% *}\" = "+shellQuote(expected.SHA256)+" ]") || !strings.Contains(plan.Script, "\"$stage/cleanup-helper\" --cleanup") {
+		t.Fatal("frozen protocol bypassed the staged cleanup identity check")
+	}
+	if plan, err := PlanVerifiedInstall(source, 501, expected); api.Code(err) != api.ErrHelperUntrusted || plan.Script != "" {
+		t.Fatal("installation accepted an incompatible IPC protocol", err)
+	}
+}
+
+func TestVerifiedInstallRepairsRegistrationFromVerifiedSource(t *testing.T) {
+	source, expected := verifiedPlanSource(t)
+	plan, err := PlanVerifiedInstall(source, 501, expected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := strings.Index(plan.Script, "<?xml")
+	end := strings.Index(plan.Script, "</plist>")
+	if start < 0 || end < start {
+		t.Fatal("repair omitted the rebuilt launchd registration")
+	}
+	var launch map[string]any
+	if _, err := plist.Unmarshal([]byte(plan.Script[start:end+len("</plist>")]), &launch); err != nil {
+		t.Fatal(err)
+	}
+	args, ok := launch["ProgramArguments"].([]any)
+	if !ok || len(args) != 3 || args[0] != BinaryPath || args[1] != "--owner-uid" || args[2] != "501" {
+		t.Fatalf("repair did not rebuild the fixed installed executable and owner: %v", launch)
+	}
+	if launch["Label"] != Label || launch["RunAtLoad"] != true || launch["KeepAlive"] != true {
+		t.Fatalf("repair did not rebuild the fixed launchd job: %v", launch)
+	}
+	if !strings.Contains(plan.Script, shellQuote(source)+" \"$stage/new-helper\"") || !strings.Contains(plan.Script, "[ \"${actual%% *}\" = "+shellQuote(expected.SHA256)+" ]") || !strings.Contains(plan.Script, "/bin/launchctl bootstrap system \"$plist\"") {
+		t.Fatal("repair bypassed verified staging or registration")
+	}
+	if plan, err := PlanVerifiedInstall(source, 0, expected); api.Code(err) != api.ErrHelperUntrusted || plan.Script != "" {
+		t.Fatal("repair accepted a root installation owner", err)
+	}
+}
+
+func TestVerifiedUninstallPreservesInstallationUntilCleanupSucceeds(t *testing.T) {
+	source, expected := verifiedPlanSource(t)
+	plan, err := PlanVerifiedUninstall(source, expected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := plan.Script
+	checkAt := strings.Index(script, "[ \"${actual%% *}\" = "+shellQuote(expected.SHA256)+" ]")
+	loadedAt := strings.Index(script, "  was_loaded=1\n")
+	changedAt := strings.Index(script, "\nchanged=1\n")
+	bootoutAt := strings.Index(script, "/bin/launchctl bootout \"$service\"")
+	cleanupLine := "if [ -f \"$data/capture.json\" ]; then \"$stage/cleanup-helper\" --cleanup; fi\n"
+	cleanupAt := strings.Index(script, cleanupLine)
+	completeAt := strings.Index(script, "\ncleanup_done=1\n")
+	removeAt := strings.Index(script, "/bin/rm -f "+shellQuote(BinaryPath)+" "+shellQuote(PlistPath))
+	if checkAt < 0 || loadedAt <= checkAt || changedAt <= loadedAt || bootoutAt <= changedAt || cleanupAt <= bootoutAt || completeAt < cleanupAt+len(cleanupLine)-1 || removeAt <= completeAt {
+		t.Fatalf("unsafe uninstall order: hash=%d loaded=%d changed=%d bootout=%d cleanup=%d complete=%d remove=%d", checkAt, loadedAt, changedAt, bootoutAt, cleanupAt, completeAt, removeAt)
+	}
+	beforeCleanup := script[:cleanupAt]
+	if strings.Contains(beforeCleanup, "/bin/rm -f ") || strings.Contains(beforeCleanup, "/bin/rm -rf \"$data\"") || strings.Contains(beforeCleanup, "/bin/mv ") {
+		t.Fatal("uninstall can delete or replace installed files before cleanup succeeds")
+	}
+	if !strings.Contains(script[:loadedAt], "[ -f \"$plist\" ] && [ \"$(/usr/bin/stat -f %u \"$plist\")\" = 0 ]") || !strings.Contains(script[:loadedAt], "$((0$pith_plist_mode & 022))") {
+		t.Fatal("rollback can bootstrap an unverified registration file")
+	}
+}
+
+func TestVerifiedUninstallRollbackRestoresOnlyInterruptedLoadedJob(t *testing.T) {
+	source, expected := verifiedPlanSource(t)
+	plan, err := PlanVerifiedUninstall(source, expected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := strings.Index(plan.Script, "rollback() {\n")
+	end := strings.Index(plan.Script, "\n}\ntrap rollback EXIT\n")
+	if start < 0 || end <= start {
+		t.Fatal("uninstall omitted its rollback handler")
+	}
+	rollback := plan.Script[start : end+2]
+	// Execute only the rollback function, with every external command replaced
+	// by a shell builtin recorder. No installation plan or system command runs.
+	rollback = strings.ReplaceAll(rollback, "/bin/launchctl ", "record_launchctl ")
+	rollback = strings.ReplaceAll(rollback, "/bin/rm ", "record_remove ")
+	if strings.Contains(rollback, "/bin/") || strings.Contains(rollback, "$data") || strings.Contains(rollback, "$binary") {
+		t.Fatal("rollback contains an unmocked system command or installation deletion")
+	}
+	for _, tc := range []struct {
+		name                              string
+		loaded, changed, cleaned, present int
+		status                            int
+		want                              string
+	}{
+		{name: "cleanup-failed-loaded", loaded: 1, changed: 1, status: 17, want: "print\nbootstrap\nremove-stage\n"},
+		{name: "cleanup-failed-unloaded", changed: 1, status: 17, want: "remove-stage\n"},
+		{name: "failed-before-bootout", loaded: 1, status: 17, want: "remove-stage\n"},
+		{name: "bootout-failed-still-loaded", loaded: 1, changed: 1, present: 1, status: 17, want: "print\nremove-stage\n"},
+		{name: "cleanup-succeeded", loaded: 1, changed: 1, cleaned: 1, want: "remove-stage\n"},
+		{name: "removal-failed-after-cleanup", loaded: 1, changed: 1, cleaned: 1, status: 17, want: "remove-stage\n"},
+		{name: "interrupted-after-bootout", loaded: 1, changed: 1, status: 1, want: "print\nbootstrap\nremove-stage\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			log := filepath.Join(dir, "commands")
+			script := "set +e\nlog=" + shellQuote(log) + "\nservice='system/test-helper'\nplist=" + shellQuote(filepath.Join(dir, "helper.plist")) + "\nstage=" + shellQuote(filepath.Join(dir, "stage")) + "\n" +
+				fmt.Sprintf("was_loaded=%d\nchanged=%d\ncleanup_done=%d\npresent=%d\n", tc.loaded, tc.changed, tc.cleaned, tc.present) +
+				"record_launchctl() {\n  case \"$1\" in\n    print) [ \"$2\" = \"$service\" ] || return 97; printf 'print\\n' >>\"$log\"; [ \"$present\" -eq 1 ];;\n    bootstrap) [ \"$2\" = system ] && [ \"$3\" = \"$plist\" ] || return 97; printf 'bootstrap\\n' >>\"$log\";;\n    *) return 97;;\n  esac\n}\n" +
+				"record_remove() { [ \"$1\" = -rf ] && [ \"$2\" = \"$stage\" ] || return 97; printf 'remove-stage\\n' >>\"$log\"; }\n" +
+				rollback + fmt.Sprintf("\n(exit %d)\nrollback\n", tc.status)
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, "/bin/sh")
+			cmd.Stdin = strings.NewReader(script)
+			output, err := cmd.CombinedOutput()
+			var exit *exec.ExitError
+			if tc.status == 0 && err != nil || tc.status != 0 && (!errors.As(err, &exit) || exit.ExitCode() != tc.status) {
+				t.Fatalf("rollback did not preserve exit status %d: %v: %s", tc.status, err, output)
+			}
+			got, err := os.ReadFile(log)
+			if err != nil || string(got) != tc.want {
+				t.Fatalf("rollback commands = %q, %v; want %q", got, err, tc.want)
 			}
 		})
 	}

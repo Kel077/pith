@@ -271,8 +271,6 @@ func TestRebaselineRejectsInvalidPrerequisitesBeforeProbe(t *testing.T) {
 		{"different-helper", func(_ *session, _ *baselineService, ops *rootcheckOps) {
 			ops.verifyInstalled = func(*session) error { return errors.New("different helper") }
 		}},
-		{"wrong-version", func(_ *session, c *baselineService, _ *rootcheckOps) { c.status.Helper.Version = "other" }},
-		{"unknown-version", func(_ *session, c *baselineService, _ *rootcheckOps) { c.status.Helper.Version = "" }},
 		{"outdated", func(_ *session, c *baselineService, _ *rootcheckOps) { c.status.Helper.Outdated = true }},
 		{"not-responding", func(_ *session, c *baselineService, _ *rootcheckOps) { c.status.Helper.Running = false }},
 		{"not-stopped", func(_ *session, c *baselineService, _ *rootcheckOps) { c.status.State = api.Running }},
@@ -351,7 +349,7 @@ func TestRebaselineRejectsInvalidPrerequisitesBeforeProbe(t *testing.T) {
 }
 
 func TestRebaselineFailureKeepsPreviousBaselineAndHistory(t *testing.T) {
-	for _, failure := range []string{"before-snapshot", "probe-system", "probe-a", "probe-b", "after-snapshot", "changed-route", "changed-interface", "changed-helper", "changed-version", "not-stopped-after", "archive", "save", "canceled"} {
+	for _, failure := range []string{"before-snapshot", "probe-system", "probe-a", "probe-b", "after-snapshot", "changed-route", "changed-interface", "changed-helper", "changed-artifact", "not-stopped-after", "archive", "save", "canceled"} {
 		t.Run(failure, func(t *testing.T) {
 			s, c, ops := baselineFixture(t)
 			old := privateArtifacts(t, s)
@@ -392,8 +390,8 @@ func TestRebaselineFailureKeepsPreviousBaselineAndHistory(t *testing.T) {
 				return nil
 			}
 			c.onStatus = func(call int, st *api.Status) error {
-				if call == 2 && failure == "changed-version" {
-					st.Helper.Version = "other"
+				if call == 2 && failure == "changed-artifact" {
+					st.Helper.Outdated = true
 				}
 				if call == 2 && failure == "not-stopped-after" {
 					st.State = api.Running
@@ -443,7 +441,7 @@ func TestCaptureInvalidatesCleanupBeforeEveryStart(t *testing.T) {
 }
 
 func TestStopUsesCurrentBaselineAndInvalidatesFailedProof(t *testing.T) {
-	for _, failure := range []string{"", "verify", "stop", "status", "version", "not-stopped", "snapshot", "routes", "tunnels", "archive", "save"} {
+	for _, failure := range []string{"", "verify", "stop", "status", "artifact", "not-stopped", "snapshot", "routes", "tunnels", "archive", "save"} {
 		t.Run(failure, func(t *testing.T) {
 			s, c, ops := baselineFixture(t)
 			// Simulate an already committed newer mode. The initial file is retained
@@ -470,8 +468,8 @@ func TestStopUsesCurrentBaselineAndInvalidatesFailedProof(t *testing.T) {
 			if failure == "status" {
 				c.statusErr = errors.New("status failed")
 			}
-			if failure == "version" {
-				c.status.Helper.Version = "other"
+			if failure == "artifact" {
+				c.status.Helper.Outdated = true
 			}
 			if failure == "not-stopped" {
 				c.onStatus = func(_ int, st *api.Status) error { st.State = api.Running; return nil }
@@ -571,8 +569,8 @@ func TestCheckTracksRollbackSeparatelyFromAssertions(t *testing.T) {
 	}
 }
 
-func TestStartRechecksInstallationAndIdleVersionBeforeIPC(t *testing.T) {
-	for _, failure := range []string{"installation", "running", "version", "status"} {
+func TestStartRechecksInstallationAndIdleIdentityBeforeIPC(t *testing.T) {
+	for _, failure := range []string{"installation", "running", "artifact", "status"} {
 		t.Run(failure, func(t *testing.T) {
 			s, c, ops := baselineFixture(t)
 			if failure == "installation" {
@@ -581,8 +579,8 @@ func TestStartRechecksInstallationAndIdleVersionBeforeIPC(t *testing.T) {
 			if failure == "running" {
 				c.status.State = api.Running
 			}
-			if failure == "version" {
-				c.status.Helper.Version = "other"
+			if failure == "artifact" {
+				c.status.Helper.Outdated = true
 			}
 			if failure == "status" {
 				c.statusErr = errors.New("IPC failed")

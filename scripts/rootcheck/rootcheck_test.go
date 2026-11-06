@@ -88,7 +88,11 @@ func TestPrivateSessionStaysInsideTemporaryDirectory(t *testing.T) {
 }
 
 func TestEmergencyCommandUsesOwnedCleanupWithoutGlobalRouteChanges(t *testing.T) {
-	plan := helper.PlanUninstall()
+	s, _, _ := identitySessionFixture(t)
+	plan, err := s.reviewedUninstallPlan(filepath.Join(s.Dir, "absent-installed"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	command := emergencyCommand(plan)
 	if strings.Contains(command, "\n") || !strings.HasPrefix(command, "/usr/bin/osascript -e '") {
 		t.Fatal("emergency command must be one shell-quoted command line")

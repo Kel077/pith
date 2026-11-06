@@ -170,9 +170,9 @@ func (s *session) authorize(ctx context.Context, operation string, plan helper.I
 	if operation != "install" && operation != "uninstall" && operation != "crash" {
 		return errors.New("unknown authorization operation")
 	}
-	// Legacy dialog removal stays available; managed execution always requires
-	// the concrete reviewed script frozen by this version's prepare command.
-	if a.service != "" || operation == "crash" {
+	// Legacy dialog removal stays available; frozen-identity sessions and managed
+	// execution require the concrete reviewed script on every invocation.
+	if a.service != "" || operation == "crash" || operation == "uninstall" && s.HelperIdentity != nil {
 		saved, err := fileHash(filepath.Join(s.Dir, operation+".sh"))
 		if err != nil || want == "" || saved != want || hashBytes([]byte(plan.Script)) != want {
 			return errors.New("reviewed authorization script is absent or changed; prepare and review a new session")

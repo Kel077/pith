@@ -20,10 +20,11 @@ import (
 
 func testClient(t *testing.T) *Client {
 	t.Helper()
-	c, err := New(Options{ConfigDir: filepath.Join(t.TempDir(), "config")})
+	c, err := New(Options{ConfigDir: filepath.Join(t.TempDir(), "config"), SocketPath: filepath.Join(t.TempDir(), "missing-socket")})
 	if err != nil {
 		t.Fatal(err)
 	}
+	c.binaryPath = filepath.Join(t.TempDir(), "missing-installed-helper")
 	c.interfaces = func(context.Context) ([]api.Interface, error) {
 		return []api.Interface{{Name: "en0", Label: "Example Ethernet", HardwareAddr: "02:00:00:00:00:01", Up: true, Primary: true}, {Name: "en2", Label: "Example USB", Up: true}}, nil
 	}

@@ -39,7 +39,7 @@ func observeHotspot(parent context.Context, s *session, c api.Service, initial a
 	check := func() error {
 		st, err := c.Status(ctx)
 		record.Statuses = append(record.Statuses, st)
-		if err != nil || st.State != api.Running || !st.Since.Equal(initial.Since) || st.LastCapture == nil || !sameCapture(*st.LastCapture, *initial.LastCapture) || !st.LastCapture.EndedAt.IsZero() || !st.Helper.Running || st.Helper.Outdated || st.Helper.Version != s.Version {
+		if err != nil || st.State != api.Running || !st.Since.Equal(initial.Since) || st.LastCapture == nil || !sameCapture(*st.LastCapture, *initial.LastCapture) || !st.LastCapture.EndedAt.IsZero() || !st.Helper.Running || st.Helper.Outdated {
 			return fmt.Errorf("capture stopped, restarted, or changed during hotspot renewal: state=%s error=%v", st.State, err)
 		}
 		return ops.verifyInstalled(s)

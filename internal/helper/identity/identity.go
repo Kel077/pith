@@ -35,9 +35,12 @@ func (id Identity) Validate() error {
 			return errors.New("invalid helper display version")
 		}
 	}
-	for value, size := range map[string]int{id.SHA256: sha256.Size, id.CDHash: 20} {
-		decoded, err := hex.DecodeString(value)
-		if err != nil || len(decoded) != size || strings.ToLower(value) != value || bytes.Equal(decoded, make([]byte, size)) {
+	for _, digest := range []struct {
+		value string
+		size  int
+	}{{id.SHA256, sha256.Size}, {id.CDHash, 20}} {
+		decoded, err := hex.DecodeString(digest.value)
+		if err != nil || len(decoded) != digest.size || strings.ToLower(digest.value) != digest.value || bytes.Equal(decoded, make([]byte, digest.size)) {
 			return errors.New("invalid helper identity digest")
 		}
 	}

@@ -109,7 +109,7 @@ func (c *Client) Status(ctx context.Context) (api.Status, error) {
 		return status, err
 	}
 	if err := c.checkHelperArtifacts(); err != nil {
-		if problem, ok := helperProblem(err); ok {
+		if problem, ok := c.helperProblem(err); ok {
 			return problem, nil
 		}
 		return status, err
@@ -118,16 +118,17 @@ func (c *Client) Status(ctx context.Context) (api.Status, error) {
 	var response helper.StatusResponse
 	err := c.request(ctx, http.MethodGet, "/v1/status", nil, &response)
 	if errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED) {
-		return status, nil
+		problem, _ := c.helperProblem(&api.Error{Code: api.ErrHelperNotResponding, Detail: "verified installed helper is not answering; routing state is unknown"})
+		return problem, nil
 	}
 	if err != nil {
-		if problem, ok := helperProblem(err); ok {
+		if problem, ok := c.helperProblem(err); ok {
 			return problem, nil
 		}
 		return status, err
 	}
 	if response.Protocol != c.expectedHelper.Protocol {
-		problem, _ := helperProblem(&api.Error{Code: api.ErrHelperOutdated})
+		problem, _ := c.helperProblem(&api.Error{Code: api.ErrHelperOutdated})
 		return problem, nil
 	}
 	status = response.Status
@@ -140,7 +141,7 @@ func (c *Client) requireHelper(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if status.Error != nil && status.Error.Code == api.ErrHelperUntrusted {
+	if status.Error != nil && (status.Error.Code == api.ErrHelperUntrusted || status.Error.Code == api.ErrHelperNotResponding) {
 		return status.Error
 	}
 	if !status.Helper.Installed {

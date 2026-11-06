@@ -23,7 +23,7 @@ func crashCapture(parent context.Context, s *session, c api.Service, a authoriza
 	if err != nil {
 		return err
 	}
-	if st.State != api.Running || !st.Helper.Running || !st.Helper.Installed || st.Helper.Outdated || st.Helper.Version != s.Version || !s.validCapture(st.LastCapture) || !s.knownCapture(st.LastCapture) || !st.LastCapture.EndedAt.IsZero() {
+	if st.State != api.Running || !st.Helper.Running || !st.Helper.Installed || st.Helper.Outdated || !s.validCapture(st.LastCapture) || !s.knownCapture(st.LastCapture) || !st.LastCapture.EndedAt.IsZero() {
 		return errors.New("crash target is not this session's active reviewed helper")
 	}
 	id := *st.LastCapture

@@ -117,6 +117,9 @@ func TestRejectedPeerReceivesNoHTTPBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer listener.Close()
+	if err := listener.(*net.UnixListener).SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -133,6 +136,9 @@ func TestRejectedPeerReceivesNoHTTPBytes(t *testing.T) {
 	c.peerUID = uint32(os.Getuid())
 	c.binaryPath = executable
 	c.artifactOpen = func(path string, _ bool) (*os.File, artifactStamp, error) { return openArtifact(path, false) }
+	c.checkFile = func(path string, _ bool) error {
+		return c.artifacts.check(path, false, c.expectedHelper, c.artifactOpen)
+	}
 	done := make(chan error, 1)
 	go func() {
 		conn, err := listener.Accept()
@@ -172,6 +178,49 @@ func TestInvalidBundleCannotAuthorizeInstall(t *testing.T) {
 	}
 	status, err := c.Status(context.Background())
 	if err != nil || status.State != api.Failed || status.Error == nil || status.Error.Code != api.ErrHelperUntrusted {
+		t.Fatal(status, err)
+	}
+}
+
+func TestMovedBundleDoesNotPreventStatusSubscribeOrStop(t *testing.T) {
+	c, _, _ := startLocalHelper(t, "test", newFakeEngine())
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := c.Start(ctx, "default"); err != nil {
+		t.Fatal(err)
+	}
+	c.opts.HelperPath = filepath.Join(t.TempDir(), "bundle-was-moved")
+	if _, err := c.checkBundledHelper(); api.Code(err) != api.ErrHelperUntrusted {
+		t.Fatal("test bundle is still available", err)
+	}
+	if status, err := c.Status(ctx); err != nil || status.State != api.Running {
+		t.Fatal("moved bundle revoked verified helper status", status, err)
+	}
+	events, err := c.Subscribe(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case event := <-events:
+		if event.Status == nil || event.Status.State != api.Running {
+			t.Fatal(event)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	if err := c.Stop(ctx); err != nil {
+		t.Fatal("moved bundle prevented safe Stop", err)
+	}
+	if status, err := c.Status(ctx); err != nil || status.State != api.Stopped {
+		t.Fatal(status, err)
+	}
+}
+
+func TestMissingAnchorDoesNotInventAnInstallation(t *testing.T) {
+	c := testClient(t)
+	c.identityErr = errors.New("missing anchor")
+	status, err := c.Status(context.Background())
+	if err != nil || status.State != api.Failed || status.Error == nil || status.Error.Code != api.ErrHelperUntrusted || status.Helper.Installed {
 		t.Fatal(status, err)
 	}
 }

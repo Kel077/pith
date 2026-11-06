@@ -17,10 +17,6 @@ func (c *Client) InstallHelper(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	source, err := c.checkBundledHelper()
-	if err != nil {
-		return err
-	}
 	status, statusErr := c.Status(ctx)
 	if statusErr != nil {
 		return statusErr
@@ -28,8 +24,20 @@ func (c *Client) InstallHelper(ctx context.Context) error {
 	if status.Helper.Running && !status.Helper.Outdated {
 		return nil
 	}
-	if status.Helper.Installed && !status.Helper.Outdated && status.Error == nil {
-		return &api.Error{Code: api.ErrInternal, Detail: "expected helper is not responding; retry without reinstalling"}
+	var source string
+	var err error
+	if status.Error != nil && status.Error.Code == api.ErrHelperNotResponding {
+		// Repair is an explicit authorized action. It reuses only the verified
+		// installed bytes, so a moved or damaged app cannot prevent recovery.
+		if err := c.checkFile(c.binaryPath, true); err != nil {
+			return untrustedHelper("installed helper changed before repair")
+		}
+		source = c.binaryPath
+	} else {
+		source, err = c.checkBundledHelper()
+		if err != nil {
+			return err
+		}
 	}
 	plan, err := helper.PlanVerifiedInstall(source, uint32(os.Getuid()), c.expectedHelper)
 	if err != nil {

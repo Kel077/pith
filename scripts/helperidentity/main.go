@@ -55,6 +55,13 @@ func run(args []string) error {
 	if flags.NArg() != 0 || *source == "" || *manifest == "" || (*verify && *generated != "") || (!*verify && *generated == "") {
 		return errors.New("specify helper, manifest and either generate or verify")
 	}
+	info, err := os.Lstat(*source)
+	if err != nil {
+		return err
+	}
+	if info.Mode().Perm()&0022 != 0 {
+		return errors.New("helper must not be group- or other-writable")
+	}
 	actual, err := identity.Inspect(*source, helper.Version, helper.ProtocolVersion)
 	if err != nil {
 		return err

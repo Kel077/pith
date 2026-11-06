@@ -101,7 +101,7 @@ func (s *session) startWithIdentity(ctx context.Context, c api.Service, scene st
 	if receiptErr == nil {
 		receiptErr = ops.verifyInstalled(s)
 	}
-	if receiptErr == nil && (!st.Helper.Installed || !st.Helper.Running || st.Helper.Outdated || st.Helper.Version != s.Version || !s.validCapture(st.LastCapture) || previous != nil && st.LastCapture.Token == previous.Token || s.knownCapture(st.LastCapture)) {
+	if receiptErr == nil && (!st.Helper.Installed || !st.Helper.Running || st.Helper.Outdated || !s.validCapture(st.LastCapture) || previous != nil && st.LastCapture.Token == previous.Token || s.knownCapture(st.LastCapture)) {
 		receiptErr = errors.New("Start did not provide a new, reviewed capture identity")
 	}
 	if receiptErr != nil {

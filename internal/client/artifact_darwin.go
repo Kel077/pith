@@ -45,6 +45,8 @@ func openArtifact(path string, installed bool) (*os.File, artifactStamp, error) 
 }
 
 func artifactMetadata(f *os.File, installed bool) (artifactStamp, error) {
+	// POSIX ownership/mode and content identity are checked here; extended
+	// macOS ACL entries are not enumerated by this metadata check.
 	var st unix.Stat_t
 	if err := unix.Fstat(int(f.Fd()), &st); err != nil {
 		return artifactStamp{}, err

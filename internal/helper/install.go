@@ -47,19 +47,17 @@ func launchPlist(uid uint32, extraArgs ...string) ([]byte, error) {
 	}, plist.XMLFormat, "  ")
 }
 
-func PlanInstall(source string, uid uint32) (InstallPlan, error) {
-	return planInstall(source, uid, nil)
-}
-
 // PlanVerifiedInstall pins the source to the client's compiled identity before
 // authorization and again after the privileged copy. Cleanup uses that copy.
+// A separately verified installed BinaryPath can repair launchd registration
+// without a bundled source; callers still verify its installed-file metadata.
 func PlanVerifiedInstall(source string, uid uint32, expected identity.Identity) (InstallPlan, error) {
 	if err := expected.Validate(); err != nil || expected.Protocol != ProtocolVersion {
-		return InstallPlan{}, &api.Error{Code: api.ErrHelperUntrusted, Detail: "invalid bundled helper identity"}
+		return InstallPlan{}, &api.Error{Code: api.ErrHelperUntrusted, Detail: "invalid helper identity"}
 	}
 	plan, err := planInstallChecked(source, uid, nil, expected.SHA256)
 	if err != nil {
-		return InstallPlan{}, &api.Error{Code: api.ErrHelperUntrusted, Detail: "bundled helper could not be verified before authorization"}
+		return InstallPlan{}, &api.Error{Code: api.ErrHelperUntrusted, Detail: "helper source could not be verified before authorization"}
 	}
 	return plan, nil
 }
@@ -72,7 +70,7 @@ type ScopedOptions struct {
 	ProbeServerName string // certificate-verified TLS name
 }
 
-// PlanScopedInstall has the same review/authorization boundary as PlanInstall.
+// PlanScopedInstall has the same review/authorization boundary as PlanVerifiedInstall.
 // Only /32 and /128 capture routes are accepted; launchd still starts idle.
 func PlanScopedInstall(source string, uid uint32, opts ScopedOptions) (InstallPlan, error) {
 	if len(opts.Prefixes) == 0 || len(opts.Prefixes) > 16 {
@@ -127,6 +125,13 @@ func planInstallChecked(source string, uid uint32, args []string, expectedHash s
 	if !filepath.IsAbs(source) || strings.ContainsAny(source, "\x00\r\n") {
 		return InstallPlan{}, fmt.Errorf("helper source must be an absolute single-line path")
 	}
+	before, err := os.Lstat(source)
+	if err != nil {
+		return InstallPlan{}, err
+	}
+	if !validHelperSource(before) {
+		return InstallPlan{}, fmt.Errorf("helper source must be a bounded regular executable not writable by group or others")
+	}
 	f, err := os.Open(source)
 	if err != nil {
 		return InstallPlan{}, err
@@ -136,8 +141,8 @@ func planInstallChecked(source string, uid uint32, args []string, expectedHash s
 	if err != nil {
 		return InstallPlan{}, err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 || info.Size() <= 0 || info.Size() > identity.MaxFileSize {
-		return InstallPlan{}, fmt.Errorf("helper source is not an executable regular file")
+	if !os.SameFile(before, info) || !validHelperSource(info) {
+		return InstallPlan{}, fmt.Errorf("helper source changed while opening")
 	}
 	hash := sha256.New()
 	if _, err := io.Copy(hash, f); err != nil {
@@ -145,7 +150,7 @@ func planInstallChecked(source string, uid uint32, args []string, expectedHash s
 	}
 	checksum := fmt.Sprintf("%x", hash.Sum(nil))
 	if expectedHash != "" && checksum != expectedHash {
-		return InstallPlan{}, &api.Error{Code: api.ErrHelperUntrusted, Detail: "bundled helper changed before authorization"}
+		return InstallPlan{}, &api.Error{Code: api.ErrHelperUntrusted, Detail: "helper source changed before authorization"}
 	}
 	launch, err := launchPlist(uid, args...)
 	if err != nil {
@@ -193,6 +198,10 @@ func planInstallChecked(source string, uid uint32, args []string, expectedHash s
 	}, nil
 }
 
+func validHelperSource(info os.FileInfo) bool {
+	return info.Mode().IsRegular() && info.Mode().Perm()&0111 != 0 && info.Mode().Perm()&0022 == 0 && info.Size() > 0 && info.Size() <= identity.MaxFileSize
+}
+
 // install -d changes metadata even when a directory already exists. Only a
 // successful exclusive mkdir permits setting ownership: another installer can
 // create the shared directory between the existence check and mkdir.
@@ -213,27 +222,20 @@ func createSharedDirectory(path, mode string) string {
 		"[ \"$pith_parent_owner\" = 0 ] && [ \"$((0$pith_parent_mode & 022))\" -eq 0 ] || { echo 'installation parent must be root-owned and not writable by group or others' >&2; exit 1; }\n"
 }
 
-func PlanUninstall() InstallPlan {
-	script := "set -eu\nservice=" + shellQuote("system/"+Label) + "\n" +
-		"for path in " + shellQuote(BinaryPath) + " " + shellQuote(PlistPath) + " " + shellQuote(DataDir) + "; do [ ! -L \"$path\" ] || { echo 'refusing symlink installation path' >&2; exit 1; }; done\n" +
-		"if /bin/launchctl print \"$service\" >/dev/null 2>&1; then /bin/launchctl bootout \"$service\"; fi\n" +
-		waitForSocket() +
-		"if [ -f " + shellQuote(DataDir+"/capture.json") + " ]; then " + shellQuote(BinaryPath) + " --cleanup; fi\n" +
-		"/bin/rm -f " + shellQuote(BinaryPath) + " " + shellQuote(PlistPath) + "\n" +
-		"if [ -S " + shellQuote(SocketPath) + " ]; then /bin/rm -f " + shellQuote(SocketPath) + "; fi\n" +
-		"/bin/rm -rf " + shellQuote(DataDir) + "\n"
-	return InstallPlan{Script: script, Prompt: UninstallPrompt, Changes: []string{BinaryPath, PlistPath, DataDir, SocketPath}, Undo: "InstallHelper reinstalls the bundled helper; removed connection logs and traffic history are not restored."}
-}
-
 // PlanVerifiedUninstall never executes the installed path for recovery. The
 // source can be the verified bundle or a separately verified installed file;
 // either is copied and hash-checked in a private root-owned stage first.
+// Cleanup is a CLI operation, so a frozen identity may use a different IPC protocol.
 func PlanVerifiedUninstall(source string, expected identity.Identity) (InstallPlan, error) {
-	if err := expected.Validate(); err != nil || expected.Protocol != ProtocolVersion {
+	if err := expected.Validate(); err != nil {
 		return InstallPlan{}, &api.Error{Code: api.ErrHelperUntrusted, Detail: "invalid cleanup helper identity"}
 	}
 	if !filepath.IsAbs(source) || strings.ContainsAny(source, "\x00\r\n") {
 		return InstallPlan{}, &api.Error{Code: api.ErrHelperUntrusted, Detail: "invalid cleanup helper path"}
+	}
+	before, err := os.Lstat(source)
+	if err != nil || !validHelperSource(before) {
+		return InstallPlan{}, &api.Error{Code: api.ErrHelperUntrusted, Detail: "invalid cleanup helper file"}
 	}
 	f, err := os.Open(source)
 	if err != nil {
@@ -241,7 +243,7 @@ func PlanVerifiedUninstall(source string, expected identity.Identity) (InstallPl
 	}
 	defer f.Close()
 	info, err := f.Stat()
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 || info.Size() <= 0 || info.Size() > identity.MaxFileSize {
+	if err != nil || !os.SameFile(before, info) || !validHelperSource(info) {
 		return InstallPlan{}, &api.Error{Code: api.ErrHelperUntrusted, Detail: "invalid cleanup helper file"}
 	}
 	h := sha256.New()
@@ -251,21 +253,31 @@ func PlanVerifiedUninstall(source string, expected identity.Identity) (InstallPl
 	if fmt.Sprintf("%x", h.Sum(nil)) != expected.SHA256 {
 		return InstallPlan{}, &api.Error{Code: api.ErrHelperUntrusted, Detail: "cleanup helper changed before authorization"}
 	}
-	script := "set -eu\nservice=" + shellQuote("system/"+Label) + "\ndata=" + shellQuote(DataDir) + "\n" +
-		"for path in " + shellQuote(BinaryPath) + " " + shellQuote(PlistPath) + " \"$data\"; do [ ! -L \"$path\" ] || { echo 'refusing symlink installation path' >&2; exit 1; }; done\n" +
+	script := "set -eu\nservice=" + shellQuote("system/"+Label) + "\nplist=" + shellQuote(PlistPath) + "\ndata=" + shellQuote(DataDir) + "\n" +
+		"for path in " + shellQuote(BinaryPath) + " \"$plist\" \"$data\"; do [ ! -L \"$path\" ] || { echo 'refusing symlink installation path' >&2; exit 1; }; done\n" +
 		"if [ -e \"$data\" ]; then [ -d \"$data\" ] && [ \"$(/usr/bin/stat -f %u \"$data\")\" = 0 ] || exit 1; fi\n" +
 		"/usr/bin/install -d -o root -g wheel -m 0700 \"$data\"\n" +
 		"stage=$(/usr/bin/mktemp -d \"$data/.uninstall.XXXXXXXX\")\n" +
-		"trap '/bin/rm -rf \"$stage\"' EXIT\ntrap 'exit 1' HUP INT TERM\n" +
+		"was_loaded=0\nchanged=0\ncleanup_done=0\n" +
+		"rollback() {\n  code=$?\n  set +e\n  trap - EXIT HUP INT TERM\n" +
+		"  if [ \"$code\" -ne 0 ] && [ \"$changed\" -eq 1 ] && [ \"$was_loaded\" -eq 1 ] && [ \"$cleanup_done\" -eq 0 ]; then\n" +
+		"    if ! /bin/launchctl print \"$service\" >/dev/null 2>&1; then /bin/launchctl bootstrap system \"$plist\" || true; fi\n" +
+		"  fi\n  /bin/rm -rf \"$stage\"\n  exit \"$code\"\n}\ntrap rollback EXIT\ntrap 'exit 1' HUP INT TERM\n" +
 		"/usr/bin/install -o root -g wheel -m 0755 " + shellQuote(source) + " \"$stage/cleanup-helper\"\n" +
 		"actual=$(/usr/bin/shasum -a 256 \"$stage/cleanup-helper\")\n[ \"${actual%% *}\" = " + shellQuote(expected.SHA256) + " ] || { echo 'cleanup helper changed during authorization' >&2; exit 1; }\n" +
-		"if /bin/launchctl print \"$service\" >/dev/null 2>&1; then /bin/launchctl bootout \"$service\"; fi\n" +
+		"if /bin/launchctl print \"$service\" >/dev/null 2>&1; then\n" +
+		"  [ -f \"$plist\" ] && [ \"$(/usr/bin/stat -f %u \"$plist\")\" = 0 ] || { echo 'cannot preserve the loaded helper registration' >&2; exit 1; }\n" +
+		"  pith_plist_mode=$(/usr/bin/stat -f %OLp \"$plist\")\n" +
+		"  [ \"$((0$pith_plist_mode & 022))\" -eq 0 ] || { echo 'refusing writable helper registration' >&2; exit 1; }\n" +
+		"  was_loaded=1\nfi\n" +
+		"changed=1\nif [ \"$was_loaded\" -eq 1 ]; then /bin/launchctl bootout \"$service\"; fi\n" +
 		waitForSocket() +
 		"if [ -f \"$data/capture.json\" ]; then \"$stage/cleanup-helper\" --cleanup; fi\n" +
+		"cleanup_done=1\n" +
 		"/bin/rm -f " + shellQuote(BinaryPath) + " " + shellQuote(PlistPath) + "\n" +
 		"if [ -S " + shellQuote(SocketPath) + " ]; then /bin/rm -f " + shellQuote(SocketPath) + "; fi\n" +
 		"/bin/rm -rf \"$data\"\n"
-	return InstallPlan{Script: script, Prompt: UninstallPrompt, Changes: []string{BinaryPath, PlistPath, DataDir, SocketPath}, Undo: "InstallHelper reinstalls the bundled helper; removed logs and traffic history are not restored. Cleanup failures preserve the installation and ownership journal."}, nil
+	return InstallPlan{Script: script, Prompt: UninstallPrompt, Changes: []string{BinaryPath, PlistPath, DataDir, SocketPath}, Undo: "InstallHelper reinstalls the bundled helper; removed logs and traffic history are not restored. Cleanup failures preserve the executable, plist and ownership journal and attempt to restore the service only if it was previously loaded."}, nil
 }
 
 // A bounded grace period lets the old helper finish route cleanup before its

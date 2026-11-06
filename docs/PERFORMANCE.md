@@ -61,12 +61,12 @@ test is also run under the race detector.
 
 ## Hardware comparison after both optimizations
 
-The coordinator verified `20ae914` using the same privately frozen endpoint and
-per-adapter budgets as `8a9094f`, with 32 MiB downloads and 4 MiB uploads per
-sample. Both adapters' throughput stages passed. Installation and removal used
-two delegated authorizations; independent cleanup verification passed and the
-default route was unchanged. This is the combined result of pinned-index checks
-and output-buffer reuse, not a measurement of either change in isolation.
+The combined optimizations were verified on hardware at `20ae914` using the same
+privately frozen endpoint and per-adapter budgets as `8a9094f`, with 32 MiB downloads
+and 4 MiB uploads per sample. Both adapters' throughput stages passed. Independent
+cleanup verification passed and the default route was unchanged. This is the
+combined result of pinned-index checks and output-buffer reuse, not a measurement
+of either change in isolation.
 
 All rates below are application Mbps, download / upload; each value is one
 bounded hardware sample rather than an average of repeated runs.
@@ -222,7 +222,7 @@ one packet, and loops over writes with one file write per packet. Passing more
 buffers alone is not syscall batching on this backend. A different native I/O
 strategy needs separate platform research; no batching gain is claimed here.
 
-## Recommended order
+## Optimization status and remaining work
 
 1. Implemented: native checks for a **previously pinned index** verify its returned name
    and index, and keep existing guard epochs/generations and failure behavior.
@@ -232,9 +232,8 @@ strategy needs separate platform research; no batching gain is claimed here.
 2. Implemented: output-buffer reuse without changing MTU or packet ownership.
    Real counter updates remain enabled in relay comparisons; concurrent
    ICMP/TCP/UDP-shaped writer tests preserve lengths, headers and data lifetime.
-3. Consider MTU and native I/O changes only after those low-risk candidates,
-   with explicit IPv6/UDP/PMTU and VPN acceptance. Do not tune runtime parallelism
-   from a single-flow memory model.
+3. MTU and native I/O changes require explicit IPv6/UDP/PMTU and VPN acceptance.
+   Do not tune runtime parallelism from a single-flow memory model.
 
 The first two candidates have been applied to production and the combined bounded
 hardware rerun is recorded above. Native I/O and MTU changes remain separate work;
