@@ -53,7 +53,9 @@ func (a *App) WindowView(c *ui.Context) {
 // the traffic lights need.
 func (a *App) topBar(c *ui.Context) {
 	bar := c.TitleBar()
-	const edge = 20
+	// As far from the window's edges as the pages' content: the routing
+	// capsule stands over the pages' actions.
+	const edge = 32
 	side := max(max(bar.Left, 76)+12, bar.Right+edge) - edge
 	ui.Row(c).Height(64).Padding(0, edge, 0, edge).Gap(12).DragWindow().Shrink(0).Children(func() {
 		ui.Row(c).Grow(1).Basis(0).MinWidth(side).Children(func() {})
