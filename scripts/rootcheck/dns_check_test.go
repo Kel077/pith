@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,11 +24,40 @@ type dnsService struct {
 	sockets []*dnsConn
 	queries []dnsmessage.Message
 	corrupt func(*api.Connection)
+	reload  func(*api.Connection)
 }
 
 func (s *dnsService) SaveConfig(_ context.Context, cfg api.Config) error {
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	policy, err := rules.New(cfg.Scenes[0])
+	if err != nil {
+		return err
+	}
+	for i := range s.logRows {
+		row := &s.logRows[i]
+		if !row.Ended.IsZero() {
+			continue
+		}
+		remote, err := netip.ParseAddrPort(row.Remote)
+		if err != nil {
+			return err
+		}
+		decision := policy.Match(rules.Flow{Protocol: api.UDP, Address: remote.Addr()})
+		outcome, iface := decision.Predict(s.session.Original.Interfaces)
+		if outcome == api.System {
+			iface = "example0"
+		}
+		if outcome != row.Outcome || iface != row.Interface {
+			row.Ended, row.EndReason, row.Problem = time.Now(), api.EndRulesChanged, ""
+			if s.reload != nil {
+				s.reload(row)
+			}
+		}
+	}
 	s.config = cfg
-	return cfg.Validate()
+	return nil
 }
 
 type dnsConn struct {
@@ -167,13 +197,15 @@ func TestDNSChecksSmokeThenFiniteBatch(t *testing.T) {
 				}
 			}
 			if batch {
-				var reuse, hot, beforeIdle, afterIdle *checkCase
+				var reuse, ended, hot, beforeIdle, afterIdle *checkCase
 				for i := range report.Cases {
 					entry := &report.Cases[i]
 					switch entry.Name {
 					case "DNS resolver 1: A and AAAA reuse one session on A":
 						reuse = entry
-					case "DNS resolver 1: open UDP session keeps A after hot reload":
+					case "DNS resolver 1: hot reload ends the previous UDP session on A":
+						ended = entry
+					case "DNS resolver 1: same source port creates a new session on B after hot reload":
 						hot = entry
 					case "DNS resolver 1: open DNS session before idle expiry":
 						beforeIdle = entry
@@ -181,14 +213,62 @@ func TestDNSChecksSmokeThenFiniteBatch(t *testing.T) {
 						afterIdle = entry
 					}
 				}
-				if reuse == nil || hot == nil || beforeIdle == nil || afterIdle == nil {
+				if reuse == nil || ended == nil || hot == nil || beforeIdle == nil || afterIdle == nil {
 					t.Fatal("missing lifecycle evidence")
 				}
-				if reuse.Connection.ID != hot.Connection.ID || reuse.Connection.OutboundLocal != hot.Connection.OutboundLocal {
-					t.Fatal("hot reload migrated an open UDP flow")
+				if ended.Connection.ID != reuse.Connection.ID || ended.Connection.Ended.IsZero() || ended.Connection.EndReason != api.EndRulesChanged || ended.Connection.Problem != "" || ended.Connection.OutboundLocal != reuse.Connection.OutboundLocal || ended.Connection.Sent != reuse.Connection.Sent || ended.Connection.Received != reuse.Connection.Received {
+					t.Fatal("hot reload did not retain the original UDP session's closure and payload evidence")
+				}
+				if reuse.Connection.ID == hot.Connection.ID || reuse.Connection.Local != hot.Connection.Local || hot.Connection.Interface != "example1" || hot.Connection.RuleID != "dns-b" || hot.Connection.Sent != uint64(hot.DNS[0].QueryBytes) || hot.Connection.Received != uint64(hot.DNS[0].ResponseBytes) {
+					t.Fatal("hot reload did not create a new session on B with the same application source port and fresh byte counts")
 				}
 				if beforeIdle.Connection.ID == afterIdle.Connection.ID || beforeIdle.Connection.Local != afterIdle.Connection.Local || afterIdle.Connection.Interface != "example1" {
 					t.Fatal("idle replacement did not retain app port and take new policy")
+				}
+			}
+		})
+	}
+}
+
+func TestDNSReloadRejectsIncorrectOldSessionClosureBeforeNextQuery(t *testing.T) {
+	for _, variant := range []string{"still-open", "missing-reason", "wrong-reason", "problem", "route", "outbound", "bytes", "missing-record"} {
+		t.Run(variant, func(t *testing.T) {
+			s, c, deps, cfg := dnsFixture(t)
+			c.reload = func(row *api.Connection) {
+				if row.RuleID != "dns-a" {
+					return
+				}
+				switch variant {
+				case "still-open":
+					row.Ended = time.Time{}
+				case "missing-reason":
+					row.EndReason = ""
+				case "wrong-reason":
+					row.EndReason = "other"
+				case "problem":
+					row.Problem = "network failed"
+				case "route":
+					row.Interface = "example1"
+				case "outbound":
+					row.OutboundLocal = "198.51.100.10:50002"
+				case "bytes":
+					row.Sent++
+				case "missing-record":
+					row.ID += 100
+				}
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			defer cancel()
+			report := checkReport{Before: s.Original}
+			if err := runDNSChecks(ctx, s, c, cfg, c.status, &report, true, deps); err == nil {
+				t.Fatal("accepted invalid hot reload closure evidence")
+			}
+			if len(c.queries) != 3 || len(report.Cases) != 3 || !strings.Contains(report.Cases[2].Name, "hot reload ends") || report.Cases[2].Error == "" {
+				t.Fatalf("invalid closure did not stop before the next datagram: queries=%d cases=%+v", len(c.queries), report.Cases)
+			}
+			for _, conn := range c.sockets {
+				if !conn.closed {
+					t.Fatal("failed hot reload case left a native UDP socket open")
 				}
 			}
 		})
@@ -218,7 +298,7 @@ func TestDNSRecordRejectsWrongIdentityReuseBytesAndPorts(t *testing.T) {
 	if _, ok, err := checkDNSRecord([]api.Connection{row}, want); !ok || err != nil {
 		t.Fatal(ok, err)
 	}
-	for _, name := range []string{"stale", "pid", "local", "remote", "tcp", "path", "rule", "interface", "outcome", "new-id", "source-port", "missing-outbound", "sent", "received", "ended", "duplicate"} {
+	for _, name := range []string{"stale", "pid", "local", "remote", "tcp", "path", "rule", "interface", "outcome", "new-id", "source-port", "missing-outbound", "sent", "received", "ended", "end-reason", "duplicate"} {
 		t.Run(name, func(t *testing.T) {
 			bad := row
 			switch name {
@@ -252,6 +332,8 @@ func TestDNSRecordRejectsWrongIdentityReuseBytesAndPorts(t *testing.T) {
 				bad.Received++
 			case "ended":
 				bad.Ended = time.Now()
+			case "end-reason":
+				bad.EndReason = api.EndRulesChanged
 			}
 			rows := []api.Connection{bad}
 			if name == "duplicate" {
@@ -287,5 +369,9 @@ func TestDNSIdleRequiresExpiryWithoutEarlyFailure(t *testing.T) {
 	c.logRows[0].Problem = "forwarding failed"
 	if _, err := waitDNSIdle(context.Background(), c, c.status, row, time.Now().Add(-11*time.Second)); err == nil {
 		t.Fatal("forwarding error claimed idle expiry")
+	}
+	c.logRows[0].Problem, c.logRows[0].EndReason = "", api.EndRulesChanged
+	if _, err := waitDNSIdle(context.Background(), c, c.status, row, time.Now().Add(-11*time.Second)); err == nil {
+		t.Fatal("normal policy closure claimed idle expiry")
 	}
 }

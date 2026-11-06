@@ -177,10 +177,30 @@ func runDNSChecks(ctx context.Context, s *session, c api.Service, cfg api.Config
 			if err := run(label+"A and AAAA reuse one session on A", reuse, target, []dnsmessage.Type{dnsmessage.TypeA, dnsmessage.TypeAAAA}, api.Routed, s.Interfaces[0].Name, a.ID); err != nil {
 				return err
 			}
+			original := reuse.log
+			afterID, err := maxConnectionID(ctx, c)
+			if err != nil {
+				return err
+			}
 			if err := save([]api.Rule{b}); err != nil {
 				return err
 			}
-			return run(label+"open UDP session keeps A after hot reload", reuse, target, aType, api.Routed, s.Interfaces[0].Name, a.ID)
+			ended, err := waitReloadEnded(ctx, c, running, original)
+			entry := checkCase{Name: label + "hot reload ends the previous UDP session on A", Connection: ended}
+			if err != nil {
+				entry.Error = err.Error()
+			}
+			report.Cases = append(report.Cases, entry)
+			if err != nil {
+				return err
+			}
+			// The native socket and source port stay open. The next datagram must
+			// create a new engine session with fresh byte counts and policy B.
+			if reuse.conn.LocalAddr().String() != original.Local {
+				return errors.New("native UDP source tuple changed during hot reload")
+			}
+			reuse.afterID, reuse.log, reuse.sent, reuse.received = afterID, api.Connection{}, 0, 0
+			return run(label+"same source port creates a new session on B after hot reload", reuse, target, aType, api.Routed, s.Interfaces[1].Name, b.ID)
 		}()
 		if err != nil {
 			return err
@@ -277,7 +297,7 @@ func checkDNSRecord(rows []api.Connection, want dnsFlowExpectation) (api.Connect
 			continue
 		}
 		if want.ID != 0 && candidate.ID != want.ID {
-			return candidate, false, errors.New("UDP tuple unexpectedly created another engine session before idle expiry")
+			return candidate, false, errors.New("UDP tuple unexpectedly created another engine session without expiry or a policy change")
 		}
 		if row.ID != 0 {
 			return candidate, false, errors.New("multiple UDP records match one application tuple")
@@ -304,7 +324,7 @@ func checkDNSRecord(rows []api.Connection, want dnsFlowExpectation) (api.Connect
 		return row, true, nil
 	}
 	local, err := netip.ParseAddrPort(row.OutboundLocal)
-	if err != nil || !local.Addr().Is4() || local.Addr().IsUnspecified() || local.Port() == 0 || !row.Ended.IsZero() {
+	if err != nil || !local.Addr().Is4() || local.Addr().IsUnspecified() || local.Port() == 0 || !row.Ended.IsZero() || row.EndReason != "" {
 		return row, false, errors.New("successful DNS flow has no live IPv4 outbound socket tuple")
 	}
 	if want.OutboundLocal != "" && row.OutboundLocal != want.OutboundLocal {
@@ -335,7 +355,7 @@ func sameRunningCapture(ctx context.Context, c api.Service, original api.Status)
 		return err
 	}
 	if st.State != api.Running || !st.Since.Equal(original.Since) || st.LastCapture == nil || original.LastCapture == nil || !sameCapture(*st.LastCapture, *original.LastCapture) {
-		return errors.New("DNS stage stopped or restarted the reviewed capture")
+		return errors.New("acceptance stage stopped or restarted the reviewed capture")
 	}
 	return nil
 }
@@ -363,8 +383,8 @@ func waitDNSIdle(parent context.Context, c api.Service, running api.Status, orig
 			if row.Ended.IsZero() {
 				return false, nil
 			}
-			if row.Problem != "" || row.Ended.Sub(lastReply) < 9*time.Second {
-				return false, errors.New("DNS session ended before idle expiry or reported a forwarding error")
+			if row.Problem != "" || row.EndReason != "" || row.Ended.Sub(lastReply) < 9*time.Second {
+				return false, errors.New("DNS session ended before idle expiry or for another reason")
 			}
 			return true, nil
 		}

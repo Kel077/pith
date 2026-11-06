@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/Kel077/pith/internal/api"
@@ -414,11 +415,7 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 	runningSince := status.Since
 	system := capture.SystemInterface(report.Before.Routes, address.Addr())
 	echoBaseline := s
-	runCase := func(ctx context.Context, name string, rules []api.Rule, outcome api.Outcome, iface, ruleID string, existing *tls.Conn) error {
-		cfg.Scenes[0].Rules = rules
-		if err := c.SaveConfig(ctx, cfg); err != nil {
-			return err
-		}
+	runCase := func(ctx context.Context, name string, rules []api.Rule, outcome api.Outcome, iface, ruleID string) error {
 		last, err := c.Connections(ctx, api.ConnectionQuery{Limit: 500})
 		if err != nil {
 			return err
@@ -429,22 +426,12 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 				maxID = conn.ID
 			}
 		}
-		// Select the exact still-open connection before sending its HTTP request;
-		// an earlier closed connection with the same rule cannot satisfy this case.
-		var existingID uint64
-		if existing != nil {
-			maxID = 0
-			for _, conn := range last {
-				if conn.Process.PID == os.Getpid() && conn.Remote == s.Target && conn.RuleID == ruleID && conn.Ended.IsZero() && conn.ID > existingID {
-					existingID = conn.ID
-				}
-			}
-			if existingID == 0 {
-				return errors.New("the open connection has no attributed log entry before hot reload")
-			}
+		cfg.Scenes[0].Rules = rules
+		if err := c.SaveConfig(ctx, cfg); err != nil {
+			return err
 		}
 		entry := checkCase{Name: name}
-		entry.TLS, err = exchangeTLS(ctx, s, "", existing)
+		entry.TLS, err = exchangeTLS(ctx, s, "", nil)
 		expectSuccess := outcome != api.Blocked && outcome != api.Unreachable
 		if (err == nil) != expectSuccess {
 			entry.Error = fmt.Sprintf("TLS result does not match expected outcome %s: %v", outcome, err)
@@ -459,7 +446,10 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 				return false, err
 			}
 			for _, conn := range connections {
-				if conn.ID <= maxID || conn.Process.PID != os.Getpid() || conn.Remote != s.Target || conn.Protocol != api.TCP || existing != nil && conn.ID != existingID {
+				// A SYN-time block makes DialContext fail before it can return a
+				// socket or local tuple. Preserve the bounded PID/destination/ID
+				// check in that case; successful dials also have an exact tuple.
+				if conn.ID <= maxID || conn.Process.PID != os.Getpid() || entry.TLS.Local != "" && conn.Local != entry.TLS.Local || conn.Remote != s.Target || conn.Protocol != api.TCP {
 					continue
 				}
 				if conn.Ended.IsZero() {
@@ -498,7 +488,7 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		}
 		return err
 	}
-	if err := runCase(ctx, "system routing after SafeStart", nil, api.System, system, "", nil); err != nil {
+	if err := runCase(ctx, "system routing after SafeStart", nil, api.System, system, ""); err != nil {
 		return err
 	}
 	if opts.udpDNS || opts.udpDNSBatch {
@@ -562,7 +552,7 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 	}
 	a := route("route-a", []string{address.Addr().String()}, s.Interfaces[0])
 	b := route("route-b", []string{address.Addr().String()}, s.Interfaces[1])
-	if err := runCase(ctx, "IP rule through interface A", []api.Rule{a}, api.Routed, s.Interfaces[0].Name, a.ID, nil); err != nil {
+	if err := runCase(ctx, "IP rule through interface A", []api.Rule{a}, api.Routed, s.Interfaces[0].Name, a.ID); err != nil {
 		return err
 	}
 	if opts.observe > 0 {
@@ -576,7 +566,7 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 					}
 				}
 				echoBaseline = &fresh
-				return runCase(probeCtx, "new connection uses interface A after hotspot renewal", []api.Rule{a}, api.Routed, s.Interfaces[0].Name, a.ID, nil)
+				return runCase(probeCtx, "new connection uses interface A after hotspot renewal", []api.Rule{a}, api.Routed, s.Interfaces[0].Name, a.ID)
 			})
 		}
 		fmt.Printf("Manual observation window: %s. Capture mode: %s; stops when this command returns.\n", opts.observe, s.captureMode())
@@ -599,36 +589,36 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		}
 	}
 	if opts.batch {
-		if err := runCase(ctx, "IP rule through interface B", []api.Rule{b}, api.Routed, s.Interfaces[1].Name, b.ID, nil); err != nil {
+		if err := runCase(ctx, "IP rule through interface B", []api.Rule{b}, api.Routed, s.Interfaces[1].Name, b.ID); err != nil {
 			return err
 		}
 		domain := route("domain", []string{s.ServerName}, s.Interfaces[0])
-		if err := runCase(ctx, "TLS SNI domain rule", []api.Rule{domain}, api.Routed, s.Interfaces[0].Name, domain.ID, nil); err != nil {
+		if err := runCase(ctx, "TLS SNI domain rule", []api.Rule{domain}, api.Routed, s.Interfaces[0].Name, domain.ID); err != nil {
 			return err
 		}
 		multi := route("multi", []string{"unrelated.example", address.Addr().String()}, s.Interfaces[1])
-		if err := runCase(ctx, "second target of one rule", []api.Rule{multi}, api.Routed, s.Interfaces[1].Name, multi.ID, nil); err != nil {
+		if err := runCase(ctx, "second target of one rule", []api.Rule{multi}, api.Routed, s.Interfaces[1].Name, multi.ID); err != nil {
 			return err
 		}
-		if err := runCase(ctx, "block wins over an earlier route", []api.Rule{a, block}, api.Blocked, "", block.ID, nil); err != nil {
+		if err := runCase(ctx, "block wins over an earlier route", []api.Rule{a, block}, api.Blocked, "", block.ID); err != nil {
 			return err
 		}
 		missing := api.InterfaceRef{Name: "pith-missing"}
 		fallback := route("ordered-fallback", a.Targets, missing, s.Interfaces[0])
-		if err := runCase(ctx, "ordered interface fallback", []api.Rule{fallback}, api.Fallback, s.Interfaces[0].Name, fallback.ID, nil); err != nil {
+		if err := runCase(ctx, "ordered interface fallback", []api.Rule{fallback}, api.Fallback, s.Interfaces[0].Name, fallback.ID); err != nil {
 			return err
 		}
 		fallback = route("system-fallback", a.Targets, missing)
 		fallback.Fallback = true
-		if err := runCase(ctx, "explicit fallback to system routing", []api.Rule{fallback}, api.System, system, fallback.ID, nil); err != nil {
+		if err := runCase(ctx, "explicit fallback to system routing", []api.Rule{fallback}, api.System, system, fallback.ID); err != nil {
 			return err
 		}
 		strict := route("strict", a.Targets, missing)
-		if err := runCase(ctx, "missing interface without fallback", []api.Rule{strict}, api.Unreachable, "", strict.ID, nil); err != nil {
+		if err := runCase(ctx, "missing interface without fallback", []api.Rule{strict}, api.Unreachable, "", strict.ID); err != nil {
 			return err
 		}
-		// Complete TLS on A, then edit the rule before writing the HTTP request.
-		// The original connection must keep A while a new connection chooses B.
+		// Complete TLS on A and freeze its exact record before changing policy.
+		// Reload must reset the affected socket; its replacement must use B.
 		cfg.Scenes[0].Rules = []api.Rule{a}
 		if err := c.SaveConfig(ctx, cfg); err != nil {
 			return err
@@ -638,10 +628,11 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 			return err
 		}
 		defer conn.Close()
-		if err := runCase(ctx, "open connection survives hot reload", []api.Rule{b}, api.Routed, s.Interfaces[0].Name, a.ID, conn); err != nil {
+		cfg.Scenes[0].Rules = []api.Rule{b}
+		if err := runTCPReload(ctx, s, c, cfg, status, conn, s.Interfaces[0].Name, a.ID, &report); err != nil {
 			return err
 		}
-		if err := runCase(ctx, "new connection uses hot-reloaded route", []api.Rule{b}, api.Routed, s.Interfaces[1].Name, b.ID, nil); err != nil {
+		if err := runCase(ctx, "new connection uses hot-reloaded route", []api.Rule{b}, api.Routed, s.Interfaces[1].Name, b.ID); err != nil {
 			return err
 		}
 	}
@@ -651,6 +642,129 @@ func checkWithOps(parent context.Context, s *session, c api.Service, opts checkO
 		}
 	}
 	return collectTraffic(ctx, c, &report)
+}
+
+func runTCPReload(ctx context.Context, s *session, c api.Service, cfg api.Config, running api.Status, conn net.Conn, iface, rule string, report *checkReport) (resultErr error) {
+	entry := checkCase{Name: "hot reload resets the affected TCP connection", TLS: tlsEvidence{Local: conn.LocalAddr().String()}}
+	defer func() {
+		if resultErr != nil {
+			entry.Error = resultErr.Error()
+		}
+		report.Cases = append(report.Cases, entry)
+		if resultErr == nil {
+			fmt.Println("PASS:", entry.Name)
+		}
+	}()
+	path, err := executablePath()
+	if err != nil {
+		return err
+	}
+	want := api.Connection{Process: api.Process{PID: os.Getpid(), Path: path}, Protocol: api.TCP, Local: entry.TLS.Local, Remote: s.Target, Outcome: api.Routed, Interface: iface, RuleID: rule}
+	pollCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if err := waitUntil(pollCtx, func() (bool, error) {
+		rows, err := c.Connections(pollCtx, api.ConnectionQuery{Limit: 500})
+		if err != nil {
+			return false, err
+		}
+		var ok bool
+		entry.Connection, ok, err = openTCPReloadRecord(rows, want)
+		return ok, err
+	}); err != nil {
+		return fmt.Errorf("identify the open TCP connection before hot reload: %w", err)
+	}
+	if err := c.SaveConfig(ctx, cfg); err != nil {
+		return err
+	}
+	if err := expectTCPReset(ctx, conn); err != nil {
+		return err
+	}
+	entry.EvidenceNote = "The application socket returned ECONNRESET after SaveConfig."
+	ended, err := waitReloadEnded(ctx, c, running, entry.Connection)
+	if ended.ID != 0 {
+		entry.Connection = ended
+	}
+	return err
+}
+
+func openTCPReloadRecord(rows []api.Connection, want api.Connection) (api.Connection, bool, error) {
+	var found api.Connection
+	for _, row := range rows {
+		if row.Protocol != api.TCP || row.Process.PID != want.Process.PID || row.Local != want.Local || row.Remote != want.Remote || !row.Ended.IsZero() {
+			continue
+		}
+		if found.ID != 0 {
+			return row, false, errors.New("multiple open TCP records match the application socket")
+		}
+		found = row
+	}
+	if found.ID == 0 {
+		return found, false, nil
+	}
+	if found.Process.Path != want.Process.Path || found.Outcome != want.Outcome || found.Interface != want.Interface || found.RuleID != want.RuleID || found.Problem != "" || found.EndReason != "" {
+		return found, false, errors.New("open TCP connection differs from the reviewed process or route")
+	}
+	outbound, err := netip.ParseAddrPort(found.OutboundLocal)
+	if err != nil || outbound.Addr().IsUnspecified() || outbound.Port() == 0 {
+		return found, false, errors.New("open TCP connection has no outbound source tuple")
+	}
+	return found, found.Sent != 0 && found.Received != 0, nil
+}
+
+func expectTCPReset(parent context.Context, conn net.Conn) error {
+	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
+	defer cancel()
+	stopCancel := context.AfterFunc(ctx, func() { conn.Close() })
+	defer stopCancel()
+	deadline, _ := ctx.Deadline()
+	if err := conn.SetReadDeadline(deadline); err != nil {
+		return err
+	}
+	var data [1]byte
+	n, err := conn.Read(data[:])
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if n != 0 || !errors.Is(err, syscall.ECONNRESET) {
+		return fmt.Errorf("hot reload did not reset the application TCP socket: bytes=%d error=%v", n, err)
+	}
+	return nil
+}
+
+func waitReloadEnded(parent context.Context, c api.Service, running api.Status, original api.Connection) (api.Connection, error) {
+	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
+	defer cancel()
+	var ended api.Connection
+	err := waitUntil(ctx, func() (bool, error) {
+		if err := sameRunningCapture(ctx, c, running); err != nil {
+			return false, err
+		}
+		rows, err := c.Connections(ctx, api.ConnectionQuery{Limit: 500})
+		if err != nil {
+			return false, err
+		}
+		for _, row := range rows {
+			if row.ID != original.ID {
+				continue
+			}
+			ended = row
+			if !row.Started.Equal(original.Started) || row.Process != original.Process || row.Protocol != original.Protocol || row.Local != original.Local || row.Remote != original.Remote || row.OutboundLocal != original.OutboundLocal || row.Outcome != original.Outcome || row.Interface != original.Interface || row.RuleID != original.RuleID {
+				return false, errors.New("hot reload changed the original connection's identity or route")
+			}
+			if row.Sent < original.Sent || row.Received < original.Received || original.Protocol == api.UDP && (row.Sent != original.Sent || row.Received != original.Received) {
+				return false, errors.New("hot reload changed the original connection's payload accounting")
+			}
+			if row.Ended.IsZero() {
+				return false, nil
+			}
+			if row.EndReason != api.EndRulesChanged || row.Problem != "" {
+				return false, fmt.Errorf("hot reload ended the original connection with reason %q and problem %q", row.EndReason, row.Problem)
+			}
+			return true, nil
+		}
+		return false, errors.New("hot reload lost the original connection record")
+	})
+	return ended, err
 }
 
 func collectTraffic(ctx context.Context, c api.Service, report *checkReport) error {
