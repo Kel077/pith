@@ -53,3 +53,23 @@ func TestOwnTunnelHidden(t *testing.T) {
 		t.Fatalf("still shown once the status names it: %v", names())
 	}
 }
+
+// An interface keeps its color as interfaces connect and disconnect: two
+// of one kind don't trade colors by which is connected.
+func TestColorsStayWithState(t *testing.T) {
+	a, svc := testApp(t, mock.Options{Sample: true, HelperInstalled: true})
+	before := map[string]any{}
+	for _, i := range a.ifaces {
+		before[i.Name] = a.colorOf(i.Name)
+	}
+	svc.SetInterfaceUp("en7", false)
+	a.Sync(t.Context())
+	svc.SetInterfaceUp("en7", true)
+	svc.SetInterfaceUp("en9", false)
+	a.Sync(t.Context())
+	for _, i := range a.ifaces {
+		if got := a.colorOf(i.Name); got != before[i.Name] {
+			t.Errorf("%s changed color with its state: %v, was %v", i.Name, got, before[i.Name])
+		}
+	}
+}

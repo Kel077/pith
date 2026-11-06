@@ -70,15 +70,13 @@ var kindColor = map[api.InterfaceKind]int{
 	api.KindVPN: 3, api.KindThunderbolt: 4, api.KindOther: 5,
 }
 
-// colorOf is the color of the interface with the key k (InterfaceRef.Key):
-// its kind's, unless another interface took it, and stable while the
-// interfaces stay.
+// colorOf is the color of the interface named k: its kind's, unless another
+// interface has it, and then its own for as long as Pith runs, whether it
+// is connected or not.
 func (a *App) colorOf(k string) ui.Color {
-	if len(a.colors) == 0 || a.colorsFor != len(a.ifaces) {
-		a.assignColors()
-	}
-	if col, ok := a.colors[k]; ok {
-		return col
+	a.assignColors()
+	if n, ok := a.colors[k]; ok {
+		return ifacePalette[n]
 	}
 	return ifaceColor(k)
 }
@@ -91,29 +89,41 @@ func (a *App) colorFor(ref api.InterfaceRef) ui.Color {
 	return ifaceColor(ref.Key())
 }
 
+// assignColors gives the interfaces that have no color yet one, by name,
+// never by state: their kind's, or the next one no interface here has.
+// Those that have one keep it, the first by name where two share it.
 func (a *App) assignColors() {
-	a.colors = map[string]ui.Color{}
-	a.colorsFor = len(a.ifaces)
-	used := map[int]bool{}
-	// Connected interfaces choose first, so that they get their kind's
-	// color; then the rest, by name.
+	names := make([]string, len(a.ifaces))
+	for k, i := range a.ifaces {
+		names[k] = i.Name
+	}
+	slices.Sort(names)
+	sig := strings.Join(names, "\x00")
+	if a.colors != nil && sig == a.colorsFor {
+		return
+	}
+	a.colorsFor = sig
+	if a.colors == nil {
+		a.colors = map[string]int{}
+	}
 	sorted := slices.Clone(a.ifaces)
-	slices.SortFunc(sorted, func(x, y api.Interface) int {
-		if x.Up != y.Up {
-			if x.Up {
-				return -1
-			}
-			return 1
-		}
-		return strings.Compare(x.Name, y.Name)
-	})
+	slices.SortFunc(sorted, func(x, y api.Interface) int { return strings.Compare(x.Name, y.Name) })
+	used := map[int]bool{}
+	var fresh []api.Interface
 	for _, i := range sorted {
-		k := kindColor[i.Kind]
-		for n := 0; used[k] && n < len(ifacePalette); n++ {
-			k = (k + 1) % len(ifacePalette)
+		if n, ok := a.colors[i.Name]; ok && !used[n] {
+			used[n] = true
+		} else {
+			fresh = append(fresh, i)
 		}
-		used[k] = true
-		a.colors[i.Name] = ifacePalette[k]
+	}
+	for _, i := range fresh {
+		n := kindColor[i.Kind]
+		for tries := 0; used[n] && tries < len(ifacePalette); tries++ {
+			n = (n + 1) % len(ifacePalette)
+		}
+		used[n] = true
+		a.colors[i.Name] = n
 	}
 }
 

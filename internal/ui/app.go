@@ -91,9 +91,9 @@ type App struct {
 	apps      []api.AppRef
 	appsAsk   bool
 	icons     map[string]*appIcon
-	colors    map[string]ui.Color // of the interfaces, by key and BSD name
-	colorsFor int                 // how many interfaces colors was made for
-	panelH    int                 // the height the panel's content took
+	colors    map[string]int // the palette index each interface keeps, by BSD name
+	colorsFor string         // the interfaces colors was last assigned for
+	panelH    int            // the height the panel's content took
 
 	langSet   string      // the language last asked of the desktop
 	routing   atomic.Bool // routing runs: read off the main thread
@@ -318,7 +318,7 @@ func (a *App) setStatus(st api.Status) {
 	a.status = st
 	a.routing.Store(st.State == api.Running)
 	if shown := withoutOwnTunnel(a.allIfaces, st); len(shown) != len(a.ifaces) {
-		a.ifaces, a.colors = shown, nil
+		a.ifaces = shown
 	}
 	a.updateTray()
 	a.resume()
@@ -327,7 +327,6 @@ func (a *App) setStatus(st api.Status) {
 func (a *App) setIfaces(ifs []api.Interface) {
 	a.allIfaces = ifs
 	a.ifaces = withoutOwnTunnel(ifs, a.status)
-	a.colors = nil
 	// Another device may sit behind an interface now: ask again.
 	clear(a.hotspot.none)
 	a.hotspotNames()
