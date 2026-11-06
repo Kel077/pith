@@ -1,0 +1,68 @@
+name: Bug report
+description: Something in Pith doesn't work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please keep your network private here: no IP addresses, host names, Wi-Fi names or MAC addresses, and no output of `ifconfig`, `netstat`, `route` or `scutil`. Write `example.com` or `192.0.2.1` instead.
+
+        A security problem, above all one in the helper that runs as root, goes to [private vulnerability reporting](https://github.com/Kel077/pith/security/advisories/new) instead.
+  - type: input
+    id: version
+    attributes:
+      label: Pith version
+      description: Settings → About, or the commit if you built Pith yourself.
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: macOS 26.1
+    validations:
+      required: true
+  - type: dropdown
+    id: helper
+    attributes:
+      label: Is the helper installed?
+      description: Settings → Helper.
+      options:
+        - "Yes"
+        - "No"
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: offline
+    attributes:
+      label: With routing off, does the Mac reach the internet?
+      options:
+        - "Yes"
+        - "No"
+        - Didn't check
+    validations:
+      required: true
+  - type: checkboxes
+    id: alongside
+    attributes:
+      label: Also running
+      options:
+        - label: A VPN (say which below)
+        - label: iCloud Private Relay
+        - label: A proxy app
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead. Screenshots help; blur anything private.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Add a rule: …
+        2. Turn routing on.
+        3. …
