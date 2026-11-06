@@ -52,6 +52,7 @@ helper_identity="$helper.identity.json"
 build_helper() {
     mkdir -p "$(dirname "$helper")"
     GOOS=darwin GOARCH=arm64 go build -ldflags '-s -w' -o "$helper" ./cmd/pithd
+    chmod 0755 "$helper"
     /usr/bin/codesign --force --sign - --identifier io.github.kel077.pith.helper --timestamp=none "$helper"
     /usr/bin/codesign --verify --strict "$helper"
     go run ./scripts/helperidentity -helper "$helper" -manifest "$helper_identity" \
@@ -82,6 +83,7 @@ verify_app() {
     executable=$(/usr/bin/plutil -extract CFBundleExecutable raw "$plist")
     [[ $(/usr/bin/lipo -archs "$app/Contents/MacOS/$executable") == arm64 ]] || fail 'app executable is not ARM64 only'
     [[ $(/usr/bin/lipo -archs "$bundled_helper") == arm64 ]] || fail 'embedded helper is not ARM64 only'
+    # Reject group- or other-writable helpers as well as changed artifact bytes.
     go run ./scripts/helperidentity -helper "$bundled_helper" -manifest "$helper_identity" -verify
     go run ./scripts/licenses -verify "$app/Contents/Resources/licenses"
     /usr/bin/codesign --verify --strict "$bundled_helper"
