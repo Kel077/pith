@@ -16,6 +16,39 @@ The helper also limits each scoped routing run to five minutes, so a killed
 test client cannot leave routing active indefinitely. The helper remains
 installed and idle until the explicit uninstall step.
 
+## Recorded helper identity result
+
+Helper identity and replacement were verified on hardware at `54a2881` in a
+separate idle-only session. Initial installation, an app-only version change,
+a changed-helper update, an unreadable installed-file case and final removal
+passed. The app-only build requested no administrator approval and kept the same
+helper PID. The changed artifact was reported as Outdated before explicit update.
+During the unreadable-file case, Start and Stop both returned `helper_untrusted`;
+the file's mode was restored to 0755. Final removal left no managed paths or
+launchd registration, and default routing matched the baseline. No capture was
+started in this identity phase. This tests file-verification failure, not an
+independently substituted live peer or every installer rollback path.
+
+## Recorded affected-flow reload result
+
+Scoped IPv4 reconnection was verified on hardware at `54a2881` using a cellular
+hotspot and wired Ethernet. Installation, TCP smoke and the complete TCP batch
+passed, including reset of the affected established connection and a new
+connection using the changed route. UDP/DNS smoke and both resolver batches also
+passed: the same native source port created a new session on the changed exit,
+and a separately opened UDP socket selected that exit. These checks require the
+old record's normal `EndReason=rules_changed`, empty `Problem`, original outcome
+and retained byte accounting. Cancellation-dialog behavior was not tested.
+
+Removal completed, but its strict post-removal comparison was incomplete: one
+unrelated cellular IPv6 prefix expired, removing two SLAAC addresses and its
+connected `/64` route. Independent inspection found no Pith files, service,
+socket, process or captured `/32` route; default routing was unchanged, and the
+process audit reported zero remaining test-window processes. This is recorded
+as an external topology change, not a strict baseline-restoration pass. It does
+not extend the result to full capture, IPv6 reconnection or a hardware QUIC
+reload; those and pending-handshake/lifetime boundaries remain separate coverage.
+
 ## Recorded full IPv4 result
 
 Full IPv4 was verified on hardware at `9ceff5c`, with Tailscale disconnected:
@@ -147,6 +180,7 @@ mode-0600 files include:
 | `uninstall.sh`, `cleanup-helper` | Exact bootout, verified staged cleanup, and managed-path removal; the frozen cleanup source remains until removal succeeds |
 | `emergency-command.txt` | A standalone, single command that can be pasted into Terminal without IPC or the test executable |
 | `cleanup-*.json`, `check-*.json` | Immutable cleanup observations and separate test results, tied to the current baseline, installation, and ownership history; external-only differences have a separate classification |
+| `uninstall-verification-*.json` | Post-removal snapshots and retained capture history; explicit external-change acceptance is recorded separately from baseline restoration |
 | `rebaseline-*.json` | Immutable mode-change candidates, before/after snapshots, and system/A/B preflights; failed attempts remain archived |
 
 Set `PITH_SESSION` to the **exact canonical directory printed by prepare**.
@@ -1037,6 +1071,31 @@ credential. Success clears the stale installed/test flags and runs the independe
 process audit. If a rebuilt VPN has a different identity and strict comparison
 still fails after removal, keep the snapshots for independent review;
 this command does not silently adopt external changes or claim a cleanup pass.
+
+For reviewed external-only changes after removal, such as an expired physical
+interface's IPv6 prefix, an explicit read-only verification is available:
+
+```sh
+"$PITH_TEST_BIN/rootcheck" verify-uninstalled --session "$PITH_SESSION" --accept-external-change
+```
+
+This path requires positive absence evidence for all managed paths and the
+launchd service, complete capture history with every receipt already confirmed
+ended, the same boot, and two stable complete interface/address/route snapshots.
+It neither contacts a helper nor runs a probe, installation, removal or authorization.
+An exact capture prefix, an owned utun/name/index or any selected tunnel subnet
+remaining in the snapshots refuses acceptance. Historical utun name/index reuse
+is conservatively refused after removal; the installed-helper rebaseline path
+remains the place to validate whole-VPN migration evidence.
+
+Success records the private differences with `explicitAccepted: true` and
+`restored: false`, clears the obsolete installed/test flags and runs the process
+audit. The original baseline and earlier incomplete reports remain unchanged.
+This is acceptance of an explained external change, not a claim that the old
+network state returned or a failed routing test passed. Missing, unfinished,
+legacy or inconsistent ownership evidence cannot be repaired with this flag.
+On refusal, retain the reports for review; do not reinstall a helper merely to
+force verification through `rebaseline`.
 
 Quad100 is a [device-local service](https://tailscale.com/docs/reference/quad100);
 an [own-name MagicDNS answer](https://tailscale.com/docs/features/magicdns) does

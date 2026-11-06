@@ -18,15 +18,19 @@ import (
 // call from any goroutine.
 type Service interface {
 	// LoadConfig returns the saved configuration, or DefaultConfig when
-	// nothing is saved yet.
+	// nothing is saved yet. Its first successful call activates enabled local
+	// proxies; listener failures are reported in Status.Proxies.
 	LoadConfig(ctx context.Context) (Config, error)
 	// SaveConfig validates and saves cfg. When the running scene changed,
 	// the engine applies new rules at once. Open captured connections whose
 	// decision or first-choice interface changes are closed to reconnect;
-	// unaffected connections retain their route.
+	// unaffected connections retain their route. Local proxy changes apply after
+	// saving, independently of helper availability. Removed, disabled or rebound
+	// proxy listeners close their connections; unrelated listeners stay open.
+	// Listener failures do not invalidate a saved configuration: see Status.Proxies.
 	SaveConfig(ctx context.Context, cfg Config) error
 
-	// Status reports the helper and the engine.
+	// Status reports the helper, engine and independent local proxy listeners.
 	Status(ctx context.Context) (Status, error)
 	// InstallHelper explicitly installs, updates or repairs the privileged
 	// helper. macOS asks for an administrator's password: ErrCanceled when the
@@ -42,7 +46,8 @@ type Service interface {
 	Stop(ctx context.Context) error
 
 	// Subscribe streams events until ctx ends, then closes the channel.
-	// The first two events are the current Status and Interfaces.
+	// The first two events are the current Status and Interfaces. Local proxy
+	// status remains available when the helper is absent or cannot be verified.
 	Subscribe(ctx context.Context) (<-chan Event, error)
 
 	// Interfaces lists the network interfaces rules can route through.
@@ -77,7 +82,8 @@ type Service interface {
 
 // Event is one change the backend reports. Exactly one field is set.
 type Event struct {
-	// Status, on every change and once a second while routing (rates).
+	// Status, on every change and at most once a second for routing rates or
+	// active local proxy counters. Helper errors do not hide local proxy status.
 	Status *Status `json:"status,omitempty"`
 	// Connection, when one opens, closes, or (at most once a second) when
 	// its byte counts change. Connection.ID identifies it across events.
@@ -99,6 +105,9 @@ type Config struct {
 	Settings Settings `json:"settings"`
 	// Aliases are the names the user gave interfaces, by InterfaceRef.Key.
 	Aliases map[string]string `json:"aliases,omitempty"`
+	// Proxies are independent of scenes and TUN routing. Empty disables all
+	// local listeners. A port identifies one configuration entry.
+	Proxies []Proxy `json:"proxies,omitempty"`
 }
 
 // Scene is a named, ordered list of rules. One scene routes at a time.
@@ -265,7 +274,7 @@ const (
 	Failed   State = "failed" // stopped by an error, in Status.Error
 )
 
-// Status reports the helper and the engine.
+// Status reports the helper, engine and independent local proxy listeners.
 type Status struct {
 	Helper   HelperStatus `json:"helper"`
 	State    State        `json:"state"`
@@ -273,6 +282,10 @@ type Status struct {
 	Since    time.Time    `json:"since,omitzero"`    // when it started
 	Error    *Error       `json:"error,omitempty"`   // why it failed
 	Warnings []Warning    `json:"warnings,omitempty"`
+	// Proxies is local App state, in configuration order, including disabled
+	// entries. State, Error and the top-level traffic counters describe TUN only.
+	// Helper errors never replace or clear this list.
+	Proxies []ProxyStatus `json:"proxies,omitempty"`
 	// LastCapture identifies the most recently prepared capture in this helper
 	// process, including after Stop or a SafeStart failure. Nil before the first
 	// successful preparation and after a helper restart. This is historical

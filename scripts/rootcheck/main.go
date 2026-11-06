@@ -45,7 +45,7 @@ const usage = `rootcheck prepares a private, bounded acceptance session.
   stop      --session DIRECTORY
   rebaseline --session DIRECTORY --label MODE [--accept-external-change]
   uninstall --session DIRECTORY [--auth keychain:SERVICE]
-  verify-uninstalled --session DIRECTORY
+  verify-uninstalled --session DIRECTORY [--accept-external-change]
   audit-processes --session DIRECTORY
 
 prepare writes review material only to a fresh directory in TMPDIR. It reads
@@ -65,8 +65,9 @@ check --crash requires prior smoke, kills only the reviewed running helper, and
 verifies owned capture removal and idle restart. It needs separate authorization.
 rebaseline records an approved mode change only while stopped, after verified
 cleanup, without an authorization dialog. It requires a new smoke check.
-verify-uninstalled repeats only the post-removal checks after external network
-state is restored. It does not authorize, contact the helper, or remove anything.
+verify-uninstalled repeats only post-removal checks. --accept-external-change
+explicitly accepts proven external-only differences after two stable snapshots,
+without replacing the baseline. It never authorizes, contacts a helper or removes anything.
 Read docs/ROOT-TEST.md before use. Do not run from an unattended agent.
 `
 
@@ -102,6 +103,8 @@ func run(args []string) error {
 	var acceptExternal bool
 	if args[0] == "rebaseline" {
 		fs.StringVar(&label, "label", "", "generic phase label, such as vpn-off, tailnet, or exit-node")
+	}
+	if args[0] == "rebaseline" || args[0] == "verify-uninstalled" {
 		fs.BoolVar(&acceptExternal, "accept-external-change", false, "accept reviewed external-only differences after proven Pith cleanup")
 	}
 	var opts checkOptions
@@ -159,7 +162,7 @@ func run(args []string) error {
 		return s.auditProcesses(ctx, liveProcessInventory)
 	}
 	if args[0] == "verify-uninstalled" {
-		return verifyUninstalled(ctx, s)
+		return verifyUninstalled(ctx, s, acceptExternal)
 	}
 	if args[0] == "cancel" {
 		return cancelInstall(ctx, s, auth)
@@ -368,29 +371,23 @@ func prepareUninstall(ctx context.Context, s *session, c api.Service, ops rootch
 	return plan, nil
 }
 
-func verifyUninstalled(ctx context.Context, s *session) error {
-	if err := verifyUninstalledWithOps(ctx, s, liveOps()); err != nil {
-		return fmt.Errorf("post-removal verification incomplete: %w; retain the private session, restore any intentionally disconnected VPN, then use verify-uninstalled without authorization", err)
+func verifyUninstalled(ctx context.Context, s *session, acceptExternal ...bool) error {
+	record, err := verifyUninstalledReport(ctx, s, liveOps(), len(acceptExternal) != 0 && acceptExternal[0])
+	if err != nil {
+		return fmt.Errorf("post-removal verification incomplete: %w; retain the private session and review its verification report", err)
 	}
-	fmt.Println("PASS: helper, launchd registration, socket, capture journal, and helper data are absent; current baseline routes and tunnels are restored.")
+	if record.ExplicitAccepted {
+		fmt.Println("PASS: all managed paths and the launchd service are absent; reviewed external-only changes were explicitly accepted. The original baseline is retained; network state is not reported as restored.")
+	} else {
+		fmt.Println("PASS: helper, launchd registration, socket, capture journal, and helper data are absent; current baseline routes and tunnels are restored.")
+	}
 	fmt.Println("Private review artifacts remain in the session directory for inspection; remove that directory when finished.")
 	return s.auditProcesses(ctx, liveProcessInventory)
 }
 
-// This path only reads system state and writes private session evidence. It
-// never accepts changed routes, reauthorizes removal, or contacts a helper.
-func verifyUninstalledWithOps(ctx context.Context, s *session, ops rootcheckOps) error {
-	if !s.AuthorizationAttempted {
-		return errors.New("this session has never attempted installation")
-	}
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	if err := s.expectOriginalWithOps(ctx, "after-uninstall", ops); err != nil {
-		return err
-	}
-	s.Installed, s.SmokePassed, s.DNSPassed, s.QUICPassed, s.BundlePassed = false, false, false, false, false
-	s.Cleanup = nil
-	return ops.save(s)
+func verifyUninstalledWithOps(ctx context.Context, s *session, ops rootcheckOps, acceptExternal ...bool) error {
+	_, err := verifyUninstalledReport(ctx, s, ops, len(acceptExternal) != 0 && acceptExternal[0])
+	return err
 }
 
 func waitUntil(ctx context.Context, fn func() (bool, error)) error {

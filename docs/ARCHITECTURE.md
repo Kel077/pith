@@ -444,8 +444,11 @@ worker from deleting a successor's protection.
 
 This affects forwarder-owned sessions established after capture starts. Native
 pre-capture passthrough, ICMP and the VPN-prefix ingress gate retain their existing
-behavior. Revised TCP/UDP rule-change acceptance requires fresh hardware results;
-earlier tests that preserved affected sessions do not establish this behavior.
+behavior. Scoped IPv4 TCP reset/reconnection and UDP/DNS same-source-port
+replacement passed hardware acceptance at `54a2881`. Full capture, IPv6 and QUIC
+reload boundaries are not implied by that result. The strict final comparison
+was incomplete because an external cellular IPv6 prefix expired; independent
+checks found no Pith residue. See the [acceptance record](ROOT-TEST.md#recorded-affected-flow-reload-result).
 
 ## Lifecycle and recovery
 

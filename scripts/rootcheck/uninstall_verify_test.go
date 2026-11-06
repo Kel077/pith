@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/Kel077/pith/internal/helper"
 )
 
 func TestVerifyUninstalledAfterExternalNetworkRestoration(t *testing.T) {
@@ -11,6 +13,7 @@ func TestVerifyUninstalledAfterExternalNetworkRestoration(t *testing.T) {
 	s.DNSPassed, s.QUICPassed, s.BundlePassed = true, true, true
 	clean := cloneSnapshot(s.Original)
 	clean.Paths, clean.LaunchExit = absentPathStates(), 113
+	clean.Launchd = "Could not find service \"" + helper.Label + "\" in domain for system"
 	down := cloneSnapshot(clean)
 	down.Routes = nil
 	ops.snapshot = func(context.Context) (snapshot, error) { return down, nil }
@@ -36,6 +39,7 @@ func TestVerifyUninstalledRequiresAbsentPathsAndService(t *testing.T) {
 			s, _, ops := baselineFixture(t)
 			after := cloneSnapshot(s.Original)
 			after.Paths, after.LaunchExit = absentPathStates(), 113
+			after.Launchd = "Could not find service \"" + helper.Label + "\" in domain for system"
 			var readErr error
 			switch kind {
 			case "path":
