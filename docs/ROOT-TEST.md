@@ -49,6 +49,11 @@ as an external topology change, not a strict baseline-restoration pass. It does
 not extend the result to full capture, IPv6 reconnection or a hardware QUIC
 reload; those and pending-handshake/lifetime boundaries remain separate coverage.
 
+The retained session subsequently passed explicit external-only post-removal
+verification at `a226e80`. It recorded acceptance of that explained topology
+change without replacing the baseline or retroactively changing the earlier
+incomplete strict comparison.
+
 ## Recorded full IPv4 result
 
 Full IPv4 was verified on hardware at `9ceff5c`, with Tailscale disconnected:

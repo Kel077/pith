@@ -16,7 +16,11 @@ const maxConfigSize = 4 << 20
 func (c *Client) LoadConfig(ctx context.Context) (api.Config, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.loadConfig(ctx)
+	cfg, err := c.loadConfig(ctx)
+	if err != nil {
+		return cfg, err
+	}
+	return cfg, c.syncProxies(ctx, cfg.Proxies, true)
 }
 
 func (c *Client) loadConfig(ctx context.Context) (api.Config, error) {
@@ -65,6 +69,19 @@ func (c *Client) SaveConfig(ctx context.Context, cfg api.Config) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := c.validateProxyInterfaces(ctx, cfg.Proxies); err != nil {
+		return err
+	}
+	previous, previousErr := c.loadConfig(ctx)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c.proxyMu.Lock()
+	closed := c.closed
+	c.proxyMu.Unlock()
+	if closed {
+		return errClientClosed
+	}
 	if err := os.MkdirAll(c.opts.ConfigDir, 0700); err != nil {
 		return err
 	}
@@ -90,6 +107,12 @@ func (c *Client) SaveConfig(ctx context.Context, cfg api.Config) error {
 	if err := os.Rename(tmp, c.configPath); err != nil {
 		return err
 	}
+	routingUnchanged := previousErr == nil && sameRoutingConfig(previous, cfg)
+	proxyOnly := routingUnchanged && !sameProxies(previous.Proxies, cfg.Proxies)
+	c.routingPending = c.routingPending || !routingUnchanged
+	if err := c.syncProxies(ctx, cfg.Proxies, false); err != nil {
+		return fmt.Errorf("configuration saved; local proxy update failed: %w", err)
+	}
 	dir, err := os.Open(c.opts.ConfigDir)
 	if err != nil {
 		return err
@@ -98,5 +121,13 @@ func (c *Client) SaveConfig(ctx context.Context, cfg api.Config) error {
 	if err := dir.Sync(); err != nil {
 		return err
 	}
-	return c.applyConfig(ctx, cfg)
+	if proxyOnly && !c.routingPending {
+		return nil
+	}
+	// Disk equality is not proof that an earlier helper update succeeded.
+	// An identical explicit Save still retries; a pending routing failure also
+	// cannot be hidden by a later edit limited to local proxy settings.
+	err = c.applyConfig(ctx, cfg)
+	c.routingPending = err != nil
+	return err
 }

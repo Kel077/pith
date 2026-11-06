@@ -24,7 +24,10 @@ func testClient(t *testing.T) *Client {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = c.Close() })
 	c.binaryPath = filepath.Join(t.TempDir(), "missing-installed-helper")
+	c.identityErr = nil // This fixture has a known absent helper, independent of build outputs.
+	c.checkFile = func(string, bool) error { return os.ErrNotExist }
 	c.interfaces = func(context.Context) ([]api.Interface, error) {
 		return []api.Interface{{Name: "en0", Label: "Example Ethernet", HardwareAddr: "02:00:00:00:00:01", Up: true, Primary: true}, {Name: "en2", Label: "Example USB", Up: true}}, nil
 	}
@@ -239,7 +242,13 @@ func TestMissingHelperIsExplicit(t *testing.T) {
 	if err := c.Start(ctx, "default"); api.Code(err) != api.ErrHelperMissing {
 		t.Fatal(err)
 	}
-	if _, err := c.Subscribe(ctx); api.Code(err) != api.ErrHelperMissing {
+	subCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	events, err := c.Subscribe(subCtx)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if first := <-events; first.Status == nil || first.Status.Helper.Installed || first.Status.State != api.Stopped {
+		t.Fatal("local subscription hid the missing-helper status", first)
 	}
 }

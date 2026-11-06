@@ -104,6 +104,11 @@ func (c *Client) request(ctx context.Context, method, path string, in, out any) 
 }
 
 func (c *Client) Status(ctx context.Context) (api.Status, error) {
+	status, err := c.helperStatus(ctx)
+	return c.withProxyStatus(ctx, status), err
+}
+
+func (c *Client) helperStatus(ctx context.Context) (api.Status, error) {
 	status := api.Status{State: api.Stopped}
 	if err := ctx.Err(); err != nil {
 		return status, err
@@ -137,7 +142,7 @@ func (c *Client) Status(ctx context.Context) (api.Status, error) {
 }
 
 func (c *Client) requireHelper(ctx context.Context) error {
-	status, err := c.Status(ctx)
+	status, err := c.helperStatus(ctx)
 	if err != nil {
 		return err
 	}
@@ -189,15 +194,18 @@ func (c *Client) Stop(ctx context.Context) error {
 }
 
 func (c *Client) applyConfig(ctx context.Context, cfg api.Config) error {
-	status, err := c.Status(ctx)
+	status, err := c.helperStatus(ctx)
 	if err != nil {
 		return fmt.Errorf("configuration saved; helper status failed: %w", err)
 	}
-	if !status.Helper.Running || (status.State != api.Running && status.State != api.Starting) {
-		return nil
+	if status.Error != nil && (status.Error.Code == api.ErrHelperUntrusted || status.Error.Code == api.ErrHelperNotResponding) {
+		return &api.Error{Code: status.Error.Code, Detail: "configuration saved; helper must be verified and answering before routing rules can be applied"}
 	}
 	if status.Helper.Outdated {
 		return &api.Error{Code: api.ErrHelperOutdated, Detail: "configuration saved; update the helper to apply it"}
+	}
+	if !status.Helper.Running || (status.State != api.Running && status.State != api.Starting) {
+		return nil
 	}
 	for _, scene := range cfg.Scenes {
 		if scene.ID == status.SceneID {
@@ -234,7 +242,7 @@ func (c *Client) Traffic(ctx context.Context, q api.TrafficQuery) (api.Traffic, 
 	return result, err
 }
 
-func (c *Client) Subscribe(ctx context.Context) (<-chan api.Event, error) {
+func (c *Client) subscribeHelper(ctx context.Context) (<-chan api.Event, error) {
 	if err := c.requireHelper(ctx); err != nil {
 		return nil, err
 	}
@@ -247,7 +255,11 @@ func (c *Client) Subscribe(ctx context.Context) (<-chan api.Event, error) {
 		return nil, responseError(res)
 	}
 	output := make(chan api.Event, 32)
+	stopRead := context.AfterFunc(ctx, func() { _ = res.Body.Close() })
+	c.subscriptions.Add(1) // the public subscription owns a parent reference
 	go func() {
+		defer c.subscriptions.Done()
+		defer stopRead()
 		defer close(output)
 		defer res.Body.Close()
 		scanner := bufio.NewScanner(res.Body)

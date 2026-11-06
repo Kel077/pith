@@ -21,11 +21,11 @@ import (
 
 type fakeEngine struct {
 	helper.IdleBackend
-	mu              sync.Mutex
-	status          api.Status
-	lastScene       api.Scene
-	reloads, starts int
-	subs            map[chan api.Event]bool
+	mu                     sync.Mutex
+	status                 api.Status
+	lastScene              api.Scene
+	reloads, starts, stops int
+	subs                   map[chan api.Event]bool
 }
 
 func newFakeEngine() *fakeEngine {
@@ -64,6 +64,7 @@ func (e *fakeEngine) Reload(ctx context.Context, scene api.Scene, settings api.S
 func (e *fakeEngine) Stop(ctx context.Context) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.stops++
 	e.status = api.Status{State: api.Stopped}
 	e.publish()
 	return nil
@@ -131,6 +132,10 @@ func startLocalHelper(t *testing.T, version string, backend helper.Backend) (*Cl
 		t.Fatal(err)
 	}
 	c.peerUID = uint32(os.Getuid()) // Only same-process tests accept an unprivileged helper.
+	c.interfaces = func(context.Context) ([]api.Interface, error) {
+		return []api.Interface{{Name: "en0", Label: "Example", Up: true}}, nil
+	}
+	t.Cleanup(func() { _ = c.Close() })
 	c.binaryPath = executable
 	c.artifactOpen = func(path string, _ bool) (*os.File, artifactStamp, error) { return openArtifact(path, false) }
 	c.checkFile = func(path string, _ bool) error {

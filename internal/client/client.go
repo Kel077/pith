@@ -17,6 +17,7 @@ import (
 	"github.com/Kel077/pith/internal/helper/identity"
 	"github.com/Kel077/pith/internal/keychain"
 	"github.com/Kel077/pith/internal/netif"
+	"github.com/Kel077/pith/internal/proxy"
 )
 
 type Options struct {
@@ -67,6 +68,15 @@ type Client struct {
 	hotspotIndex   func(string) (int, error)
 	secretGet      func(ctx context.Context, service, account string) (string, error)
 	secretSet      func(ctx context.Context, service, account, secret string) error
+	proxyMu        sync.Mutex
+	proxies        *proxy.Manager
+	newProxies     func() (*proxy.Manager, error) // tests inject loopback-only forwarding
+	proxiesLoaded  bool
+	closed         bool
+	lifetime       context.Context
+	closeLifetime  context.CancelFunc
+	subscriptions  sync.WaitGroup
+	routingPending bool // guarded by mu; persisted configuration has not reached the helper
 }
 
 var _ api.Service = (*Client)(nil)
@@ -93,6 +103,7 @@ func New(opts Options) (*Client, error) {
 			return link.Index, nil
 		}}
 	c.initIdentity()
+	c.lifetime, c.closeLifetime = context.WithCancel(context.Background())
 	c.executePlan = func(ctx context.Context, plan helper.InstallPlan) error { return plan.Execute(ctx) }
 	c.initIPC()
 	return c, nil
