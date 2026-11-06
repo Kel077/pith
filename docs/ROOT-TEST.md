@@ -32,8 +32,19 @@ restored its proxy automatically, still through the cellular exit, while the
 wired proxy remained unaffected. The cellular public address changed during
 recovery; that expected address drift was not treated as a routing failure.
 
-This result does not cover concurrent TUN capture or changing a port's exit
-while a test stream is open. Those remain hardware acceptance items in the
+The later pre-release check at `2f9d14b` exercised both proxies while a normal
+user scene was capturing traffic. Both retained their intended exits, and the
+engine log contained no connections attributed to the Pith App process, with
+no observed self-capture loop. After Stop, the default route and utun count
+matched their pre-run state. This extends the result to that scene's concurrent
+TUN operation, not every rule, VPN or destination family.
+
+A short helper-owned connection to the default TLS endpoint is expected during
+SafeStart: that native socket deliberately traverses TUN, then the forwarder
+uses an interface-bound outbound socket. It is separate from App-owned Network
+page probes; see [the startup behavior](ARCHITECTURE.md#lifecycle-and-recovery).
+
+Changing a port's exit while a test stream is open remains unverified; see the
 [local proxy plan](NEXT-ACCEPTANCE.md#local-socks5-acceptance).
 
 ## Recorded helper identity result

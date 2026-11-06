@@ -71,9 +71,16 @@ restored cellular forwarding automatically, including normal public-address
 drift, without disturbing the wired proxy. See the
 [recorded result](ROOT-TEST.md#recorded-local-socks5-result).
 
-Concurrent TUN capture and remapping a port while a test stream is open were
-not exercised. This pass does not establish the other lifecycle or IPv6 checks
-below; retain the following procedure for the remaining checks and regressions.
+A later pre-release check at `2f9d14b` passed both proxies with a normal user
+scene running: exits stayed correct, the engine log contained no App-owned
+connections or observed proxy forwarding loop, and Stop restored the default
+route and utun count. A helper-owned SafeStart TLS connection is expected and
+does not imply that the App proxy path was captured. This result covers that
+scene, not every rule or VPN configuration.
+
+Remapping a port while a test stream is open was not exercised. These passes
+do not establish the other lifecycle or IPv6 checks below; retain the following
+procedure for the remaining checks and regressions.
 
 The unprivileged App listener needs no helper installation or administrator
 approval. Before a run, choose two supported physical interfaces, two unused
@@ -105,8 +112,8 @@ one listener and quitting the App. The App must leave no listeners or forwarding
 streams; KeepRouting is a TUN preference and cannot keep proxies alive. Where
 the selected adapters support it, separately exercise a literal IPv6 CONNECT.
 
-Concurrent TUN capture is a separate approved phase, using its existing bounded
-scope and cleanup procedure. Repeat the same proxy controls while capture runs,
+Further concurrent TUN coverage is a separate approved phase, using its existing
+bounded scope and cleanup procedure. Repeat the same proxy controls while capture runs,
 including domain resolution, and verify no self-capture loop or exit fallback.
 This document does not authorize that phase, broaden its routes or certify it
 from unit tests. Retain private before/after evidence and stop at the first
