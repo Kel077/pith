@@ -123,7 +123,9 @@ be edited or committed.
 
 `.github/workflows/ci.yml` runs on GitHub's standard `macos-15` ARM64 runner.
 It reads the Go version from `go.mod`, runs vet and tests, builds and verifies
-the ad hoc signed app, then stores its ZIP for seven days. Actions are pinned
+the ad hoc signed app, and stores its ZIP for seven days on manual runs only.
+Pushes/PRs that change only Markdown, `docs/`, `LICENSE` or issue templates skip
+CI; a mixed change still runs. Actions are pinned
 to full commit IDs. The job has read-only repository permissions, performs no
 root tests, and does not mount a DMG or publish a release.
 
@@ -132,11 +134,62 @@ before `setup-go`; the `runner` context is not available in job-level `env`.
 After editing the workflow, validate its expressions and structure locally:
 
 ```sh
-GOCACHE="${TMPDIR%/}/pith-go-build" GOMODCACHE="${TMPDIR%/}/pith-go-mod" GOPATH="${TMPDIR%/}/pith-go-path" GOENV=off go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -shellcheck= -pyflakes= .github/workflows/ci.yml
+GOCACHE="${TMPDIR%/}/pith-go-build" GOMODCACHE="${TMPDIR%/}/pith-go-mod" GOPATH="${TMPDIR%/}/pith-go-path" GOENV=off go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -shellcheck= -pyflakes= .github/workflows/ci.yml .github/workflows/release.yml
 ```
 
 This pinned MIT-licensed validation tool is not part of the app's dependencies.
 Passing local validation does not replace a successful GitHub Actions run.
+
+## Draft releases
+
+`.github/workflows/release.yml` runs on a pushed `v*` tag, or manually **on that
+existing tag**. For example, after the maintainer has created the release tag:
+
+```sh
+gh workflow run release.yml --ref v0.1.0
+```
+
+The tag must be a full semantic version prefixed by `v`, match `mygo.json`, and
+have exactly one nonempty `CHANGELOG.md` section headed
+`## [<version>] - YYYY-MM-DD`. Set a valid release date before tagging. A manual
+run on `main` is rejected so provenance identifies the same source ref/commit
+that was built. No workflow creates or moves tags.
+
+The ARM64 build job runs `make check`, `make archive`, then attempts `make dmg`.
+Successful assets have fixed names, `pith-<version>-arm64.zip` and
+`pith-<version>-arm64.dmg`. If the runner's DMG packaging fails or times out, a
+visible warning identifies a ZIP-only draft; no stale or partial DMG is attached.
+The maintainer must review that packaging failure before publishing.
+
+`SHA256SUMS` lists exactly the attached ZIP and, when successful, DMG, with
+relative filenames. `actions/attest`, pinned to a full commit SHA like every
+action, records SLSA build provenance for those archive digests using GitHub's
+short-lived OIDC identity. It needs no signing secret or Developer ID, and does
+not notarize the app. The build job has repository read, attestation write and
+OIDC permissions, but no repository write permission.
+
+A separate bounded job verifies that the remote tag has not moved, downloads
+only this build's immutable artifact, checks the exact file set and hashes, and
+compares the notes with the tagged changelog again. Its only repository permission
+is `contents: write`; the generated job token is supplied only to
+`gh release create --draft --verify-tag --notes-file ...`. It attaches the ZIP,
+optional DMG and `SHA256SUMS`, marks prerelease versions appropriately, and leaves
+publication to the maintainer. It never overwrites an existing release. If draft
+creation/upload is interrupted, review the partial draft before deleting it and
+rerunning; no automatic cleanup can remove a published release.
+
+For downloaded artifacts, from the directory containing the release files:
+
+```sh
+shasum -a 256 --check SHA256SUMS
+gh attestation verify pith-0.1.0-arm64.zip --repo Kel077/pith
+```
+
+Download every archive listed in `SHA256SUMS` to check the complete file. The
+checksum detects changed download bytes; GitHub's provenance separately binds
+the archive to the workflow/source. Neither replaces macOS code-signing trust.
+The pure-Go `scripts/release` tests use temporary fixtures only; validating this
+workflow locally does not run DMG mounts, GitHub release writes or root tests.
 
 See [MyGo's distribution guide](https://github.com/egoist/mygo/blob/v0.7.4/docs/distribution.md)
 for bundle resources, signing and disk images, and

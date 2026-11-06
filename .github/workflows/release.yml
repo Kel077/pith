@@ -1,0 +1,174 @@
+name: Draft release
+
+on:
+  push:
+    tags: ['v*']
+  # Select the existing release tag as the ref, not main. This keeps the
+  # attestation's source commit/ref identical to the source being built.
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    outputs:
+      tag: ${{ steps.ref.outputs.tag }}
+      commit: ${{ steps.source.outputs.commit }}
+      artifact: ${{ steps.upload.outputs.artifact-id }}
+    env:
+      CGO_ENABLED: '0'
+      GOENV: 'off'
+    steps:
+      - name: Require an existing version tag
+        id: ref
+        env:
+          PITH_REF_TYPE: ${{ github.ref_type }}
+          PITH_TAG: ${{ github.ref_name }}
+        run: |
+          if [[ "$PITH_REF_TYPE" != tag || ${#PITH_TAG} -gt 128 || ! "$PITH_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.+-]+)?$ ]]; then
+            echo 'Run this workflow on an existing v<version> tag, not a branch.' >&2
+            exit 1
+          fi
+          printf 'tag=%s\n' "$PITH_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the triggering commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Record source and configure temporary Go caches
+        id: source
+        run: |
+          test "$(uname -m)" = arm64
+          printf 'commit=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          printf '%s\n' \
+            "GOCACHE=$RUNNER_TEMP/pith-go-build" \
+            "GOMODCACHE=$RUNNER_TEMP/pith-go-mod" \
+            "GOPATH=$RUNNER_TEMP/pith-go-path" >> "$GITHUB_ENV"
+          mkdir "$RUNNER_TEMP/pith-release"
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          architecture: arm64
+          cache-dependency-path: go.sum
+
+      - name: Validate version and extract dated release notes
+        env:
+          PITH_TAG: ${{ steps.ref.outputs.tag }}
+        run: go run ./scripts/release metadata -tag "$PITH_TAG" -out "$RUNNER_TEMP/pith-release/release-notes.md"
+
+      - name: Vet and test
+        run: make check
+
+      - name: Build and verify ZIP
+        run: make archive
+
+      - name: Build and verify DMG
+        id: dmg
+        timeout-minutes: 10
+        continue-on-error: true
+        run: make dmg
+
+      - name: Stage archives and generate SHA256SUMS
+        env:
+          PITH_TAG: ${{ steps.ref.outputs.tag }}
+          PITH_DMG_RESULT: ${{ steps.dmg.outcome }}
+        run: |
+          args=(stage -tag "$PITH_TAG" -out "$RUNNER_TEMP/pith-release/assets")
+          if [[ "$PITH_DMG_RESULT" == success ]]; then
+            args+=(-dmg)
+          else
+            echo '::warning::DMG packaging failed; this draft will contain the verified ZIP only.'
+            echo 'DMG packaging failed. Review the packaging log before publishing the ZIP-only draft.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          go run ./scripts/release "${args[@]}"
+
+      - name: Attest archive build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: ${{ runner.temp }}/pith-release/assets/SHA256SUMS
+          create-storage-record: false
+
+      - name: Transfer release files to the draft job
+        id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/pith-release/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  draft:
+    needs: build
+    runs-on: macos-15
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      CGO_ENABLED: '0'
+      GOENV: 'off'
+      PITH_TAG: ${{ needs.build.outputs.tag }}
+    steps:
+      - name: Check out the release tag again
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ needs.build.outputs.tag }}
+          persist-credentials: false
+
+      - name: Reject a moved tag and configure temporary Go caches
+        env:
+          PITH_BUILT_COMMIT: ${{ needs.build.outputs.commit }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$PITH_BUILT_COMMIT"
+          printf '%s\n' \
+            "GOCACHE=$RUNNER_TEMP/pith-go-build" \
+            "GOMODCACHE=$RUNNER_TEMP/pith-go-mod" \
+            "GOPATH=$RUNNER_TEMP/pith-go-path" >> "$GITHUB_ENV"
+
+      - name: Set up Go for release validation
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          architecture: arm64
+          cache: false
+
+      - name: Download this build's immutable artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact }}
+          path: ${{ runner.temp }}/pith-release
+          digest-mismatch: error
+
+      - name: Verify exact asset set, checksums and release notes
+        run: go run ./scripts/release verify -tag "$PITH_TAG" -dir "$RUNNER_TEMP/pith-release"
+
+      - name: Create a draft for maintainer review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          version=${PITH_TAG#v}
+          assets="$RUNNER_TEMP/pith-release/assets"
+          files=("$assets/pith-$version-arm64.zip" "$assets/SHA256SUMS")
+          if [[ -f "$assets/pith-$version-arm64.dmg" ]]; then
+            files+=("$assets/pith-$version-arm64.dmg")
+          fi
+          flags=(--draft --verify-tag --title "Pith $version" --notes-file "$RUNNER_TEMP/pith-release/release-notes.md")
+          if [[ "${version%%+*}" == *-* ]]; then
+            flags+=(--prerelease)
+          fi
+          gh release create "$PITH_TAG" "${files[@]}" "${flags[@]}"
