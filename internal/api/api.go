@@ -311,9 +311,11 @@ type CaptureIdentity struct {
 // HelperStatus reports the privileged helper.
 type HelperStatus struct {
 	Installed bool   `json:"installed"`
-	Running   bool   `json:"running"` // it answers on its socket
-	Version   string `json:"version,omitempty"`
-	Outdated  bool   `json:"outdated"` // older than the app: InstallHelper updates it
+	Running   bool   `json:"running"`           // it answers on its socket
+	Version   string `json:"version,omitempty"` // informational helper version, never an authorization check
+	// Outdated means the installed helper must be replaced to match this app's
+	// expected artifact or protocol. It includes incompatible newer helpers.
+	Outdated bool `json:"outdated"`
 }
 
 // Warning is something the user should know while routing works.
