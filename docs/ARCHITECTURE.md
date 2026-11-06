@@ -287,8 +287,25 @@ VPN can supply a different route layout.
 ### Rebuilding a VPN while capture is running
 
 The runtime separates capture ownership from replaceable egress observations.
-Its implementation is covered by synthetic drivers and transition tests;
-full-capture VPN reconstruction on hardware remains outstanding:
+Synthetic drivers and transition tests cover the guarantees below. The coordinator
+also verified the bounded full IPv4 Tailscale disconnect/reconnect stage on
+`fbb5234`, without an exit node: local MagicDNS and physical/system public controls
+passed through reconstruction, followed by clean Stop with `endedAt`, post-Stop
+DNS, reviewed external-change rebaseline and uninstall. The rebuilt tunnel reused
+its name with a new index, unchanged addresses and the same 13 routes. Independent
+inspection found no capture residue; the final run recorded zero unreachable
+connections. See the [hardware record](ROOT-TEST.md#manual-vpn-reconstruction-during-full-ipv4-capture).
+This does not verify remote peers, daemon self-update/restart or long-lived
+connection continuity.
+
+The preceding attempts led to these bounded fixes:
+
+* `348214c`: distinguish DNS-owned deadline closure from unrelated cancellation.
+* `64d1214`: let MagicDNS settle within the existing rebuild deadline.
+* `7b04e33`: preserve immediate system egress when scoped VPN defaults change.
+* `fbb5234`: tolerate transient closure observations while still requiring proven cleanup.
+
+Runtime guarantees:
 
 * Observe configured routes before capture starts, after activation, on kernel
   notifications, and every second. Verify the exact owned utun and capture routes

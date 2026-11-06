@@ -342,17 +342,18 @@ developer. The coordinator reviews each completed implementation before use.
 | QUIC | One permitted HTTP/3 endpoint; one request per case, with a real HTTP/3 response as application evidence. | Implemented: freeze endpoint/certificate and request/packet budgets in `quic-plan.json`, run `--quic` before `--quic-batch`. The third batch request is an explicit fragmented-Initial negative SNI control with a positive IP-route response. |
 | App bundles and delegation | A temporary pure-Go `.app` with main executable, nested helper, and an outside-bundle control; one Safari request to the frozen URL. Background URLSession is explicitly skipped this round. | Bundle portion implemented: `prepare --app-bundle` freezes checksums/metadata and request limits; `--app-bundle` gates `--app-bundle-batch`. Children exit and fixtures are removed. WebKit requires a separate observation; bundle containment does not establish delegation. |
 | Throughput | A permitted upload/download service, direct baseline before Pith, separate wired and cellular total byte budgets. | Implemented: freeze endpoint/protocol and private caps in `throughput-plan.json`; exclusive attempts reserve baseline, warmup and captured phases before transfer. Bound TLS bytes and request time independently, preserve overhead headroom, and never retry or replace an endpoint automatically. |
-| Full capture with Tailscale | The user enables the VPN and manually disconnects/reconnects at the agreed checkpoint. MagicDNS checks use only this machine's name; no peer scan. | Implemented, hardware pending: freeze own-name/Quad100 evidence with `--vpn-own-name` / `--vpn-dns-target`, then `check --vpn-restart` after smoke. READY / RECONNECT / RESTORED prompts allow relayed human action. Local DNS/route continuity does not prove remote tailnet reachability or a daemon self-update. |
+| Full capture with Tailscale | The user enables the VPN and manually disconnects/reconnects at the agreed checkpoint. MagicDNS checks use only this machine's name; no peer scan. | Hardware-verified on `fbb5234`, including clean Stop, post-Stop DNS, reviewed external-change rebaseline and uninstall. Freeze own-name/Quad100 evidence with `--vpn-own-name` / `--vpn-dns-target`, then `check --vpn-restart` after smoke. No remote peer, daemon self-update or long-lived connection continuity claim. |
 
 ## Required full-capture VPN restart acceptance
 
 The live-egress implementation in [architecture](ARCHITECTURE.md) has
 synthetic coverage for withdrawal, name/index reuse, replacement/shadowing of
 capture routes, observer failure, pending and established sockets, and VPN
-packets arriving before notifications. This is not hardware acceptance.
+packets arriving before notifications. Hardware coverage is the narrower stage
+recorded below, not every synthetic fault or continuity scenario.
 
-**The next round includes a user-controlled Tailscale disconnect/reconnect during
-full IPv4 capture, without an exit node.** The bounded harness is implemented;
+**Hardware-verified on `fbb5234`: user-controlled Tailscale disconnect/reconnect
+during full IPv4 capture, without an exit node, including clean Stop.**
 see the [exact procedure](ROOT-TEST.md#manual-vpn-reconstruction-during-full-ipv4-capture).
 Freeze this Mac's own MagicDNS name, the device-local Quad100 resolver and the
 public control endpoint. The A answer must match the VPN interface's own address.
@@ -368,7 +369,32 @@ The fix recognizes only that operation's own deadline, retains the raw socket
 error, and has real loopback UDP coverage for both read-timeout and close races.
 Parent cancellation or an unrelated close cannot satisfy the negative control.
 Capture stopped promptly; independent checks found no owned routes or tunnel.
-The complete disconnect/reconnect stage still needs a successful repeat.
+The successful repeat is recorded below; earlier failures remain distinct results.
+
+In that final run, withdrawal was observed 3.3 seconds after READY, with an
+unanswered two-second own-name query and no matching forwarded tuple. The system
+public control passed immediately through wired Ethernet. RECONNECT was printed
+at 13.4 seconds; routes returned at 18.2 seconds and MagicDNS answered on the first
+attempt 0.02 seconds later. Both physical-rule and system public controls passed
+after rebuild. Stop returned Stopped with `endedAt` set and no route diagnostics;
+the post-Stop own-name query passed, both control flags were true, and the whole
+run had zero unreachable connections.
+
+The VPN reused its tunnel name with a new index, unchanged addresses and the same
+13 routes. After independent review, external-change rebaseline and uninstall
+both passed. Independent checks found no helper, split prefixes or Pith tunnel,
+and verified normal wired default routing, public HTTPS and local MagicDNS.
+Two delegated authorizations were used in the successful run; eight covered all
+four runs of this stage. No private names, addresses or interface identifiers are
+part of this record.
+
+* `348214c`: fix the harness's DNS deadline/close classification.
+* `64d1214`: bound MagicDNS readiness retries inside the rebuild window.
+* `7b04e33`: prevent scoped default withdrawal from settling system egress.
+* `fbb5234`: recover transient Stop verification reads and retain lifecycle evidence.
+
+Remote peers, daemon self-update/restart and long-lived connection continuity
+remain unverified; the successful local/public controls do not establish them.
 
 READY allows up to 45 seconds for observed withdrawal. The user keeps the VPN off
 about 15 seconds before reconnecting; require at least ten observed seconds for

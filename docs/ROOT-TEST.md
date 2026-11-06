@@ -42,8 +42,10 @@ queries using it are not observed. Domain rules then need another observed name
 such as TLS SNI, HTTP Host or QUIC SNI. This behavior allowed full capture to
 start without replacing the gateway route; it does not prove DNS interception.
 
-Still pending: full capture while Tailscale is connected (including restart),
-full IPv6, general UDP/QUIC, background delegation and sustained throughput.
+That first run did not cover connected VPN operation. The later bounded
+[Tailscale reconstruction stage](#manual-vpn-reconstruction-during-full-ipv4-capture)
+has now passed on hardware. Full IPv6, broader UDP/QUIC coverage, background
+delegation and sustained throughput remain separate acceptance items.
 The later scoped IPv6, UDP/QUIC, bundle, Safari and short throughput results are
 recorded separately here and in [the acceptance plan](NEXT-ACCEPTANCE.md).
 Raw reports were reviewed privately and deleted; only this sanitized outcome is
@@ -830,8 +832,9 @@ steady transfer cost. See the [comparison and limitations](NEXT-ACCEPTANCE.md#re
 
 ## Manual VPN reconstruction during full IPv4 capture
 
-This harness is implemented with fake snapshots/services and cancellation tests;
-hardware acceptance is pending. It requires the separate `full-ipv4` profile
+The coordinator verified this stage on hardware with `fbb5234`: full IPv4 capture
+stayed running through a user-controlled Tailscale disconnect/reconnect without
+an exit node, and final Stop and cleanup passed. It requires the separate `full-ipv4` profile
 with exactly a 120-second helper lease. The user alone operates the VPN menu.
 Neither prepare nor check runs a VPN CLI, starts, stops, updates or reconfigures
 the VPN, changes an exit node, queries peers, or connects to a DNS answer address.
@@ -846,6 +849,34 @@ cancellation and unrelated closes are not. Real unanswered loopback UDP tests
 cover both deadline/close orders, preserving the raw error in the report.
 Stop was immediate and independent inspection found no owned capture residue;
 post-uninstall comparison remained incomplete because the VPN was still off.
+
+The final successful run observed withdrawal 3.3 seconds after READY. The own-name
+DNS datagram received no reply and timed out after 2.00 seconds, without entering
+a Pith forwarding session; the system public control immediately used wired
+Ethernet. RECONNECT appeared at 13.4 seconds, routes returned at 18.2 seconds, and
+the first rebuilt MagicDNS query succeeded 0.02 seconds later. Both the explicit
+physical rule and the system public control passed after reconstruction.
+RESTORED was followed by clean Stop: state Stopped, `endedAt` set, no route
+diagnostics, a successful post-Stop own-name query, and both `controlsPassed` and
+`postStopPassed` true. There were zero unreachable connections in the final run.
+
+The only external change was the VPN retaining its tunnel name and addresses
+with a new interface index and the same 13 routes. The coordinator reviewed that
+difference, explicitly accepted `rebaseline vpn-rebuilt`, then uninstalled.
+Independent inspection confirmed no helper, split capture routes or Pith tunnel,
+ordinary wired default routing, working public HTTPS and local MagicDNS. The
+successful run used two delegated authorizations; all four stage runs used eight.
+
+Changes leading to the verified result:
+
+* `348214c`: classify a socket close at the DNS query's own deadline as timeout.
+* `64d1214`: allow bounded MagicDNS settling inside the original rebuild window.
+* `7b04e33`: exclude scoped VPN defaults from system-egress settling.
+* `fbb5234`: retry bounded closure verification instead of permanently retaining one transient snapshot error.
+
+This result covers only the local own-name/Quad100 and public controls. It does
+not establish remote peer reachability, daemon self-update/restart, or continuity
+of long-lived connections across reconstruction. No peer scan or VPN CLI was used.
 
 Before the session, the user enables Tailscale **without an exit node** and keeps
 it connected through prepare, install and ordinary TCP smoke. The coordinator
