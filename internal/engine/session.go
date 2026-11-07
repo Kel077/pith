@@ -308,12 +308,13 @@ func warnings(s *session) []api.Warning {
 
 func (e *Engine) flush(force bool) error {
 	rows, err := e.store.Flush(force)
+	events := make([]api.Event, len(rows))
+	for i := range rows {
+		events[i] = api.Event{Connection: &rows[i]}
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	for _, row := range rows {
-		copy := row
-		e.publishLocked(api.Event{Connection: &copy})
-	}
+	e.publishLocked(events...)
 	return err
 }
 

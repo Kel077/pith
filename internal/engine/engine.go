@@ -49,7 +49,7 @@ type Engine struct {
 	mu            sync.Mutex
 	status        api.Status
 	run           *session
-	subs          map[chan api.Event]struct{}
+	subs          map[chan []api.Event]struct{} // each subscriber's undelivered batches
 	done          chan struct{}
 	closed        bool
 	scopedLease   time.Duration
@@ -92,7 +92,7 @@ func New(opts Options) (*Engine, error) {
 	if err := capture.Recover(filepath.Join(opts.DataDir, "capture.json"), opts.Driver); err != nil {
 		return nil, err
 	}
-	e := &Engine{opts: opts, store: store, status: api.Status{State: api.Stopped}, subs: make(map[chan api.Event]struct{}), done: make(chan struct{})}
+	e := &Engine{opts: opts, store: store, status: api.Status{State: api.Stopped}, subs: make(map[chan []api.Event]struct{}), done: make(chan struct{})}
 	e.loadLifecycle()
 	if len(opts.Scopes) > 0 {
 		// A development controller can disappear without sending Stop. Never
@@ -254,9 +254,9 @@ func (e *Engine) Close() error {
 	err := e.stopLocked(nil)
 	e.mu.Lock()
 	close(e.done)
-	for ch := range e.subs {
-		close(ch)
-		delete(e.subs, ch)
+	for batches := range e.subs {
+		close(batches)
+		delete(e.subs, batches)
 	}
 	e.mu.Unlock()
 	return err
@@ -281,6 +281,8 @@ func (e *Engine) Traffic(ctx context.Context, q api.TrafficQuery) (api.Traffic, 
 	return e.store.Traffic(q), nil
 }
 
+// Subscribe sends the current status, then every published event in order,
+// until ctx ends or the engine closes.
 func (e *Engine) Subscribe(ctx context.Context) (<-chan api.Event, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -292,31 +294,56 @@ func (e *Engine) Subscribe(ctx context.Context) (<-chan api.Event, error) {
 		return nil, errors.New("engine is closed")
 	default:
 	}
-	ch := make(chan api.Event, 128)
-	e.subs[ch] = struct{}{}
-	ch <- api.Event{Status: statusPointer(e.status)}
+	batches := make(chan []api.Event, 128)
+	e.subs[batches] = struct{}{}
+	batches <- []api.Event{{Status: statusPointer(e.status)}}
+	events := make(chan api.Event)
 	go func() {
-		select {
-		case <-ctx.Done():
-		case <-e.done:
-		}
-		e.mu.Lock()
-		defer e.mu.Unlock()
-		if _, ok := e.subs[ch]; ok {
-			delete(e.subs, ch)
-			close(ch)
+		defer close(events)
+		defer e.unsubscribe(batches)
+		for {
+			select {
+			case batch, ok := <-batches:
+				if !ok {
+					return
+				}
+				for _, event := range batch {
+					select {
+					case events <- event:
+					case <-ctx.Done():
+						return
+					}
+				}
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
-	return ch, nil
+	return events, nil
 }
 
-func (e *Engine) publishLocked(event api.Event) {
-	for ch := range e.subs {
+func (e *Engine) unsubscribe(batches chan []api.Event) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if _, ok := e.subs[batches]; ok {
+		delete(e.subs, batches)
+		close(batches)
+	}
+}
+
+// publishLocked hands every subscriber the events as one batch, so a second's
+// connection updates take one slot of its buffer however many connections
+// changed. A subscriber that leaves 128 batches unread is dropped.
+func (e *Engine) publishLocked(events ...api.Event) {
+	if len(events) == 0 {
+		return
+	}
+	for batches := range e.subs {
 		select {
-		case ch <- event:
+		case batches <- events:
 		default:
-			close(ch)
-			delete(e.subs, ch)
+			close(batches)
+			delete(e.subs, batches)
 		}
 	}
 }

@@ -344,6 +344,39 @@ func TestTickPublishesTrafficAndStopsItsWatcher(t *testing.T) {
 	}
 }
 
+func TestBurstOfConnectionUpdatesKeepsSubscriber(t *testing.T) {
+	e, _ := newTestEngine(t, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	events, err := e.Subscribe(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-events
+	// A browser's speed test changes about a thousand connections a second.
+	const burst = 1000
+	for range burst {
+		e.store.Add(api.Connection{App: api.AppRef{Path: "/usr/bin/example"}, Protocol: api.TCP, Remote: "192.0.2.10:443", Outcome: api.System, Interface: "en0"})
+	}
+	if err := e.flush(false); err != nil {
+		t.Fatal(err)
+	}
+	e.state(api.Status{State: api.Stopped})
+	for seen := 0; seen <= burst; seen++ {
+		select {
+		case event, ok := <-events:
+			if !ok {
+				t.Fatalf("subscriber dropped after %d of %d events", seen, burst+1)
+			}
+			if (event.Connection != nil) != (seen < burst) {
+				t.Fatal("events out of order", seen, event)
+			}
+		case <-ctx.Done():
+			t.Fatal("missing events after", seen)
+		}
+	}
+}
+
 func TestProbeScopeSelectionNeedsNoNetwork(t *testing.T) {
 	p, err := prepareProbe(context.Background(), Options{Scopes: []netip.Prefix{netip.MustParsePrefix("192.0.2.10/32")}, ProbeAddress: "192.0.2.10:443", ProbeServerName: "example.com"}, false)
 	if err != nil || p.address.String() != "192.0.2.10:443" || p.server != "example.com" {
