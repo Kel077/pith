@@ -76,8 +76,26 @@ func (e *fakeEngine) Subscribe(ctx context.Context) (<-chan api.Event, error) {
 	e.subs[ch] = true
 	initial := e.status
 	ch <- api.Event{Status: &initial}
-	go func() { <-ctx.Done(); e.mu.Lock(); defer e.mu.Unlock(); delete(e.subs, ch); close(ch) }()
+	go func() {
+		<-ctx.Done()
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		if e.subs[ch] {
+			delete(e.subs, ch)
+			close(ch)
+		}
+	}()
 	return ch, nil
+}
+
+// drop ends every subscription, as the engine does with a reader that fell behind.
+func (e *fakeEngine) drop() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for ch := range e.subs {
+		delete(e.subs, ch)
+		close(ch)
+	}
 }
 
 func startLocalHelper(t *testing.T, version string, backend helper.Backend) (*Client, context.CancelFunc, <-chan error) {
@@ -225,6 +243,43 @@ func TestIPCSubscriptionOrderAndCancellation(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("subscription did not close")
+	}
+}
+
+func TestDroppedHelperStreamReopensWithoutReportingFailure(t *testing.T) {
+	engine := newFakeEngine()
+	c, _, _ := startLocalHelper(t, "test", engine)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := c.SaveConfig(ctx, api.DefaultConfig()); err != nil {
+		t.Fatal(err)
+	}
+	events, err := c.Subscribe(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-events
+	<-events
+	if err := c.Start(ctx, "default"); err != nil {
+		t.Fatal(err)
+	}
+	if event := <-events; event.Status == nil || event.Status.State != api.Running {
+		t.Fatal(event)
+	}
+	engine.drop()
+	select {
+	case event := <-events:
+		if event.Status == nil || event.Status.State != api.Running || event.Status.Error != nil {
+			t.Fatal("a dropped stream was reported before reopening it", event.Status)
+		}
+	case <-ctx.Done():
+		t.Fatal("the dropped stream was not reopened")
+	}
+	engine.mu.Lock()
+	reopened := len(engine.subs) == 1
+	engine.mu.Unlock()
+	if !reopened {
+		t.Fatal("no new helper subscription")
 	}
 }
 

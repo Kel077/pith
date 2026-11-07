@@ -135,6 +135,7 @@ func (c *Client) events(ctx context.Context, output chan<- api.Event, stream hel
 	results := make(chan helperEvents, 1)
 	var attempting bool
 	lastAttempt := time.Now()
+	var lastLoss time.Time
 	links := stream.links
 	ticks := 0
 	proxies := latest.Proxies
@@ -154,6 +155,19 @@ func (c *Client) events(ctx context.Context, output chan<- api.Event, stream hel
 		latest = status
 		return send(api.Event{Status: &status})
 	}
+	reconnect := func(now time.Time) {
+		attempting, lastAttempt = true, now
+		c.subscriptions.Add(1) // the parent subscription still holds its reference
+		go func() {
+			defer c.subscriptions.Done()
+			result := c.openHelperEvents(ctx)
+			select {
+			case results <- result:
+			case <-ctx.Done():
+				result.cancel()
+			}
+		}()
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -162,7 +176,16 @@ func (c *Client) events(ctx context.Context, output chan<- api.Event, stream hel
 			if !ok {
 				stream.cancel()
 				connected = nil
-				lastAttempt = time.Time{}
+				// A helper that still answers can end a stream, as when it drops a
+				// reader that fell behind. Reopen it at once and report the helper
+				// only if that fails, or if streams keep ending.
+				now := time.Now()
+				quiet := now.Sub(lastLoss) >= 3*time.Second
+				lastLoss = now
+				if quiet {
+					reconnect(now)
+					continue
+				}
 				if !publish(api.Status{State: api.Failed, Helper: api.HelperStatus{Installed: latest.Helper.Installed}, Error: &api.Error{Code: api.ErrHelperNotResponding, Detail: "helper event stream closed; routing state is unknown"}}) {
 					return
 				}
@@ -208,17 +231,7 @@ func (c *Client) events(ctx context.Context, output chan<- api.Event, stream hel
 				}
 			}
 			if connected == nil && !attempting && now.Sub(lastAttempt) >= 3*time.Second {
-				attempting, lastAttempt = true, now
-				c.subscriptions.Add(1) // the parent subscription still holds its reference
-				go func() {
-					defer c.subscriptions.Done()
-					result := c.openHelperEvents(ctx)
-					select {
-					case results <- result:
-					case <-ctx.Done():
-						result.cancel()
-					}
-				}()
+				reconnect(now)
 			}
 			if connected == nil && len(proxies) > 0 && ticks%5 == 0 {
 				linksCtx, cancel := context.WithTimeout(ctx, time.Second)
