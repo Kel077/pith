@@ -20,7 +20,7 @@ import (
 )
 
 // version is the app's version, set by the build.
-var version = "0.1.0"
+var version = "0.1.1"
 
 func main() {
 	useMock := flag.Bool("mock", false, "use an in-memory backend that simulates routing")

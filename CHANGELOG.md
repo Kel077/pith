@@ -2,6 +2,15 @@
 
 All notable changes to Pith are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-11-07
+
+A bug fix. It updates the helper, so macOS asks for your password once.
+
+### Fixed
+
+- During a speed test, or whenever many connections open and close at once, the routing switch no longer turns itself off and on with **Helper not answering**. The helper used to drop Pith's live updates when more than 128 piled up in a second; a second's updates now arrive together, however many connections changed.
+- When the live updates stop but the helper still answers, Pith reconnects at once instead of reporting the helper.
+
 ## [0.1.0] - 2026-11-06
 
 The first release, for Macs with Apple silicon.
@@ -27,4 +36,5 @@ The first release, for Macs with Apple silicon.
 - With iCloud Private Relay on, domain and IP rules don't see where Safari goes.
 - Local proxies carry TCP only: no UDP, and no VPN interface as their exit.
 
+[0.1.1]: https://github.com/Kel077/pith/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Kel077/pith/releases/tag/v0.1.0
