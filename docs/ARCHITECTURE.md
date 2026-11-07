@@ -633,9 +633,13 @@ failed status with `helper_untrusted`, no claimed version/scene, and no normal I
 The helper's display version is informational. Ad-hoc identity pins the bundled
 artifact; it is not a publisher certificate or protection against compromised root.
 HTTP/JSON requests are versioned and
-bounded, with NDJSON events. A slow event subscriber is closed and can reconnect.
-Status/rates and connection updates are coalesced on a one-second tick only while
-running. See [helper protocol](../internal/helper/README.md).
+bounded, with NDJSON events. Status/rates and connection updates are coalesced on
+a one-second tick only while running. Each publication reaches an event subscriber
+as one batch, so a tick's connection updates take one of its 128 slots however
+many connections changed; a subscriber that leaves 128 batches unread is closed.
+The client reopens a closed stream at once, and reports the helper as not
+responding only if that fails or another stream closed in the previous three
+seconds. See [helper protocol](../internal/helper/README.md).
 
 For approved development tests the root helper accepts repeated `--capture CIDR`
 flags, `--safe-target IP:443`, `--safe-server-name example.com`, `--data-dir` and
