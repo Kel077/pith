@@ -48,7 +48,7 @@ func TestRenewRestoresDataAfterCancellationOrLostDisableReply(t *testing.T) {
 				}
 				return res, err
 			})
-			if err := d.Renew(ctx); err == nil {
+			if err := d.Renew(ctx, nil); err == nil {
 				t.Fatal("failed operation counted as success")
 			}
 			f.Do(func(f *hotspottest.MiFi) {
@@ -135,8 +135,14 @@ func TestSessionThatEndsLogsInAgain(t *testing.T) {
 func TestRenew(t *testing.T) {
 	f := hotspottest.New()
 	d := device(t, f, hotspottest.Password)
-	if err := d.Renew(context.Background()); err != nil {
-		t.Fatal(err)
+	calls := -1
+	err := d.Renew(context.Background(), func(context.Context) error {
+		time.Sleep(50 * time.Millisecond) // long after the network settings are read
+		f.Do(func(f *hotspottest.MiFi) { calls = len(f.Calls) })
+		return nil
+	})
+	if err != nil || calls != 0 {
+		t.Fatalf("%v, %d calls before before returned", err, calls)
 	}
 	if strings.Join(f.Calls, ",") != "off,on" || !f.DataOn {
 		t.Fatalf("calls %v, data on %v", f.Calls, f.DataOn)
@@ -146,9 +152,22 @@ func TestRenew(t *testing.T) {
 	}
 }
 
+func TestRenewStopsWhenBeforeFails(t *testing.T) {
+	f := hotspottest.New()
+	failed := errors.New("example failure")
+	err := device(t, f, hotspottest.Password).Renew(context.Background(), func(context.Context) error { return failed })
+	f.Do(func(f *hotspottest.MiFi) {
+		if !errors.Is(err, failed) || len(f.Calls) != 0 {
+			t.Fatalf("%v, calls %v", err, f.Calls)
+		}
+	})
+}
+
 func TestRenewNeedsThePassword(t *testing.T) {
 	f := hotspottest.New()
-	if err := device(t, f, "").Renew(context.Background()); api.Code(err) != api.ErrWrongPassword {
+	// Without a session, it doesn't wait for before, which it cancels.
+	before := func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
+	if err := device(t, f, "").Renew(context.Background(), before); api.Code(err) != api.ErrWrongPassword {
 		t.Fatalf("err = %v", err)
 	}
 	if len(f.Calls) != 0 {
@@ -163,7 +182,7 @@ func TestRenewGivesUp(t *testing.T) {
 	defer cancel()
 	f.Do(func(f *hotspottest.MiFi) { f.Stuck = true })
 	d.Poll = 5 * time.Millisecond
-	if err := d.Renew(ctx); err == nil {
+	if err := d.Renew(ctx, nil); err == nil {
 		t.Fatal("renewed a hotspot that never connected again")
 	}
 }

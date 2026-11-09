@@ -56,11 +56,13 @@ func (c *Client) RenewHotspot(ctx context.Context, iface string) (api.HotspotRen
 	if err != nil {
 		return r, err
 	}
-	if r.Before, err = c.Probe(ctx, iface, ""); err != nil {
-		return r, err
-	}
 	started := time.Now()
-	if err := s.device.Renew(ctx); err != nil {
+	// Its public IP before, tested while the hotspot gets ready.
+	err = s.device.Renew(ctx, func(ctx context.Context) (err error) {
+		r.Before, err = c.Probe(ctx, iface, "")
+		return err
+	})
+	if err != nil {
 		return r, err
 	}
 	r.Took = time.Since(started)

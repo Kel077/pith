@@ -85,11 +85,28 @@ func (d *Inseego) TryPassword(ctx context.Context, password string) error {
 }
 
 // Renew has the hotspot reconnect to its carrier: it turns its cellular
-// data off and on, and waits until it is connected again.
-func (d *Inseego) Renew(ctx context.Context) (resultErr error) {
+// data off and on, and waits until it is connected again. before, if not
+// nil, runs while Renew reads the hotspot's network settings, which takes
+// it a second or so: Renew turns data off once before has returned, and
+// not at all if it failed.
+func (d *Inseego) Renew(ctx context.Context, before func(context.Context) error) (resultErr error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	beforeCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	ready := make(chan error, 1)
+	if before == nil {
+		ready <- nil
+	} else {
+		go func() { ready <- before(beforeCtx) }()
+	}
 	page, err := d.adminPage(ctx, "/networks/", func(p string) bool { return strings.Contains(p, "/wwan/enablecellulardata/") })
+	if err != nil {
+		stop()
+	}
+	if beforeErr := <-ready; err == nil {
+		err = beforeErr
+	}
 	if err != nil {
 		return err
 	}
