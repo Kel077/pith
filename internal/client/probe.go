@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Kel077/pith/internal/api"
+	proxyegress "github.com/Kel077/pith/internal/proxy/egress"
 )
 
 const probeTimeout = 8 * time.Second
@@ -40,7 +41,7 @@ func (c *Client) Probe(ctx context.Context, iface, target string) (api.Probe, er
 		result.Problem = err.Error()
 		return result, nil
 	}
-	dialer.Resolver = probeResolver(dialer, iface, dns)
+	names := newProbeDNS(dialer, iface, dns, proxyegress.FallbackDNS(interfaces, proxyegress.SystemDNS()))
 	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	started := time.Now()
@@ -49,7 +50,7 @@ func (c *Client) Probe(ctx context.Context, iface, target string) (api.Probe, er
 		if err != nil || host == "" || port == "" {
 			return result, fmt.Errorf("probe target must be host:port")
 		}
-		conn, err := dialer.DialContext(probeCtx, "tcp", target)
+		conn, err := names.dial(probeCtx, dialer, "tcp", target)
 		result.Latency = time.Since(started)
 		if ctx.Err() != nil {
 			if conn != nil {
@@ -81,7 +82,7 @@ func (c *Client) Probe(ctx context.Context, iface, target string) (api.Probe, er
 			var remote string
 			transport := &http.Transport{Proxy: nil, DisableKeepAlives: true, TLSHandshakeTimeout: probeTimeout, ResponseHeaderTimeout: probeTimeout,
 				DialContext: func(ctx context.Context, _ string, address string) (net.Conn, error) {
-					conn, err := dialer.DialContext(ctx, network, address)
+					conn, err := names.dial(ctx, dialer, network, address)
 					if err == nil {
 						remote = conn.RemoteAddr().String()
 					}

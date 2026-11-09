@@ -14,17 +14,68 @@ import (
 // then after twice as long, and so on, and tries the next server after
 // dnsTry. Go's resolver alone waits 5 seconds for each answer, while some
 // hotspots, the M2000 among them, drop the first query after a while without
-// any and answer the next one at once.
+// any and answer the next one at once. After dnsOwnTime without an answer
+// from the interface's own servers, it asks the Mac's.
 const (
-	dnsResend = 400 * time.Millisecond
-	dnsTry    = 2 * time.Second
+	dnsResend  = 400 * time.Millisecond
+	dnsTry     = time.Second
+	dnsOwnTime = 2 * time.Second
 )
 
-// probeResolver resolves names through an interface's own DNS servers, on
-// sockets dialer binds to the interface. With none, it asks the system's,
-// through the interface.
-func probeResolver(dialer *net.Dialer, iface string, servers []string) *net.Resolver {
-	return resolverFor(dialer, dnsAddresses(iface, servers))
+// probeDNS resolves a probe's names through the interface's DNS servers,
+// then through the Mac's (egress.FallbackDNS) when those don't answer: a
+// hotspot that has just reconnected may be restarting its DNS, as the M2000
+// does for some ten seconds. Both are asked through the interface.
+type probeDNS struct {
+	own, fallback *net.Resolver // fallback nil when there is none
+}
+
+// newProbeDNS asks servers on sockets dialer binds to the interface. With no
+// servers of its own, the interface is asked the system's.
+func newProbeDNS(dialer *net.Dialer, iface string, own []string, fallback []netip.Addr) probeDNS {
+	p := probeDNS{own: resolverFor(dialer, dnsAddresses(iface, own))}
+	if len(fallback) > 0 {
+		var servers []string
+		for _, addr := range fallback {
+			servers = append(servers, addr.String())
+		}
+		p.fallback = resolverFor(dialer, dnsAddresses(iface, servers))
+	}
+	return p
+}
+
+// dial connects to address through dialer, as net.Dialer does, with its
+// host found by the resolver it takes.
+func (p probeDNS) dial(ctx context.Context, dialer *net.Dialer, network, address string) (net.Conn, error) {
+	d := *dialer
+	d.Resolver = p.own
+	if host, _, err := net.SplitHostPort(address); err == nil {
+		if _, err := netip.ParseAddr(host); err != nil {
+			d.Resolver = p.resolver(ctx, network, host)
+		}
+	}
+	return d.DialContext(ctx, network, address)
+}
+
+// resolver is the one to find host with: the interface's own servers if they
+// answer within dnsOwnTime, if only to say there is no such name; else the
+// Mac's.
+func (p probeDNS) resolver(ctx context.Context, network, host string) *net.Resolver {
+	if p.fallback == nil {
+		return p.own
+	}
+	family := map[string]string{"tcp4": "ip4", "tcp6": "ip6"}[network]
+	if family == "" {
+		family = "ip"
+	}
+	own, cancel := context.WithTimeout(ctx, dnsOwnTime)
+	defer cancel()
+	_, err := p.own.LookupNetIP(own, family, host)
+	var dnsErr *net.DNSError
+	if err == nil || ctx.Err() != nil || errors.As(err, &dnsErr) && dnsErr.IsNotFound {
+		return p.own
+	}
+	return p.fallback
 }
 
 // dnsAddresses are the addresses of an interface's DNS servers. Link-local
