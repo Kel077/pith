@@ -35,13 +35,15 @@ func (a *App) networkView(c *ui.Context) {
 	a.watchHotspots()
 	pageHeader(c, locales.Network(), "", func() {
 		all := glassCapsuleButton(c, "test-all", icRefresh, locales.TestAll()).Focusable().Shrink(0).
-			Tooltip(locales.TestsConnectThroughOneInterfaceAt()).Disabled(len(a.probing) > 0)
-		if all.Clicked() {
+			Tooltip(locales.TestsEachInterfaceInTurn()).Disabled(len(a.speeding) > 0)
+		if all.Clicked() && len(a.speeding) == 0 {
+			var names []string
 			for _, i := range a.ifaces {
 				if i.Up {
-					a.probe(i.Name)
+					names = append(names, i.Name)
 				}
 			}
+			a.testSpeeds(names)
 		}
 	})
 	ui.Scroll(c).Grow(1).Padding(0, 32, 28).Gap(24).Children(func() {
@@ -165,51 +167,53 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 				kv(c, locales.Hardware(), i.HardwareAddr)
 			}
 		})
-		// The test, at the foot of the pane however tall its row makes it;
-		// over it, what changing a hotspot's IP did, on a line of its own
-		// that both addresses fit, wrapping rather than cutting them.
-		r := a.hotspot.renewals[i.Name]
-		renewal := renewalText(r) // "" for none
+		// The speed test, at the foot of the pane however tall its row makes
+		// it; over it, the public IP it found and where, or what changing a
+		// hotspot's IP did, on a line of its own that both addresses fit,
+		// wrapping rather than cutting them.
+		renewal := renewalText(a.hotspot.renewals[i.Name]) // "" for none
+		s, tested := a.speeds[i.Name]
+		busy := a.hotspot.renewing[i.Name] || a.speeding[i.Name]
 		ui.Column(c).Gap(8).Margin(ui.Auto, 0, 0, 0).Children(func() {
-			if renewal != "" {
+			switch {
+			case renewal != "":
 				renewalLine(c, renewal)
+			case tested && s.OK:
+				ui.Row(c).Gap(4).Children(func() {
+					where := millis(s.Latency)
+					if s.Server != "" {
+						where = "Cloudflare " + s.Server + " · " + where
+					}
+					if s.PublicIP != "" {
+						muted(c, locales.PublicIp(s.PublicIP)).FontSize(12).FontFeatures("tnum").SingleLine().Shrink(1).Selectable()
+						where = "· " + where
+					}
+					muted(c, where).FontSize(12).FontFeatures("tnum").SingleLine().Shrink(0).Tooltip(locales.TheDataCenterThatAnsweredAndThe())
+				})
 			}
 			ui.Row(c).Gap(10).Children(func() {
-				p, tested := a.probes[i.Name]
 				switch {
 				case a.hotspot.renewing[i.Name]:
 					ui.Spinner(c)
 					muted(c, locales.ChangingHotspotIp())
-				case renewal != "":
-					// The line above says the addresses: here, how fast the
-					// new one answers.
-					if r.After.OK {
-						ui.Text(c, millis(r.After.Latency)).FontSize(15).FontWeight(600).FontFeatures("tnum").SingleLine().Shrink(0)
-					}
-				case a.probing[i.Name]:
+				case a.speeding[i.Name]:
 					ui.Spinner(c)
 					muted(c, locales.Testing())
-				case tested && p.OK:
-					ui.Text(c, millis(p.Latency)).FontSize(15).FontWeight(600).FontFeatures("tnum").SingleLine().Shrink(0)
-					ip := p.PublicIPv4
-					if ip == "" {
-						ip = p.PublicIPv6
-					}
-					if ip != "" {
-						muted(c, locales.PublicIp(ip)).FontSize(12).SingleLine().Shrink(1)
-					}
+				case renewal != "":
+					// The line above says the addresses.
+				case tested && s.OK:
+					speedFigures(c, s)
 				case tested:
 					ui.Icon(c, icAlert).FontSize(14).TextColor(t.Danger).Shrink(0)
 					ui.Text(c, locales.NoInternet()).TextColor(t.Danger).SingleLine().Shrink(0)
-					if p.Problem != "" {
-						ui.Text(c, p.Problem).FontSize(12).TextColor(t.TextMuted).SingleLine().Shrink(1)
+					if s.Problem != "" {
+						ui.Text(c, s.Problem).FontSize(12).TextColor(t.TextMuted).SingleLine().Shrink(1)
 					}
 				default:
-					muted(c, locales.TestToSeeItsPublicIp()).SingleLine().Shrink(1)
+					muted(c, locales.TestToSeeItsSpeedAndPublicIp()).SingleLine().Shrink(1)
 				}
 				ui.Spacer(c)
 				if isHotspot {
-					busy := a.hotspot.renewing[i.Name] || a.probing[i.Name]
 					renew := glassCapsuleButton(c, "renew", icSwap, locales.ChangeHotspotIp()).Shrink(0).Disabled(busy || h.Locked || !h.Connected)
 					if h.Locked {
 						renew.Opacity(0.5).Tooltip(locales.HotspotPassword())
@@ -218,8 +222,9 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 						a.renewHotspot(i.Name)
 					}
 				}
-				if glassCapsuleButton(c, "test", nil, locales.Test()).Focusable().Shrink(0).Disabled(a.probing[i.Name] || a.hotspot.renewing[i.Name]).Clicked() {
-					a.probe(i.Name)
+				test := glassCapsuleButton(c, "test", nil, locales.TestSpeed()).Focusable().Shrink(0).Tooltip(locales.Downloads25MbAndUploads8Mb()).Disabled(busy)
+				if test.Clicked() && !busy {
+					a.testSpeeds([]string{i.Name})
 				}
 			})
 		})
@@ -290,21 +295,56 @@ func (a *App) setAlias(key, alias string) {
 	}, func() { a.setIfaces(ifs) }, nil)
 }
 
-// probe tests the internet through an interface.
-func (a *App) probe(name string) {
-	if a.probing[name] {
+// speedFigures tells a speed test's download and upload, large; a part
+// that failed is a dash, and says why on hover. The line above tells its
+// latency, beside where it was.
+func speedFigures(c *ui.Context, s api.SpeedTest) {
+	tip := locales.DownloadAndUploadSpeed()
+	if s.Problem != "" {
+		tip += "\n" + s.Problem
+	}
+	ui.Row(c).Gap(8).AlignItems(ui.Baseline).Shrink(1).MinWidth(0).Tooltip(tip).Children(func() {
+		figure := func(s string) {
+			ui.Text(c, s).FontSize(15).FontWeight(600).FontFeatures("tnum").SingleLine().Shrink(0)
+		}
+		figure("↓ " + mbps(s.Download))
+		figure("↑ " + mbps(s.Upload))
+		muted(c, "Mbps").FontSize(12).SingleLine().Shrink(0)
+	})
+}
+
+// testSpeeds tests the speed through interfaces one after another, as two
+// that share a line would share it if tested together.
+func (a *App) testSpeeds(names []string) {
+	var queue []string
+	for _, name := range names {
+		if a.speeding[name] || a.hotspot.renewing[name] {
+			continue
+		}
+		a.speeding[name] = true
+		delete(a.hotspot.renewals, name)
+		queue = append(queue, name)
+	}
+	a.nextSpeedTest(queue)
+}
+
+func (a *App) nextSpeedTest(queue []string) {
+	if len(queue) == 0 {
 		return
 	}
-	delete(a.hotspot.renewals, name)
-	a.probing[name] = true
-	var p api.Probe
+	name := queue[0]
+	var s api.SpeedTest
 	a.async(func(ctx context.Context) (err error) {
-		p, err = a.Service.Probe(ctx, name, "")
+		s, err = a.Service.SpeedTest(ctx, name)
 		return err
 	}, func() {
-		delete(a.probing, name)
-		a.probes[name] = p
-	}, func(error) { delete(a.probing, name) })
+		delete(a.speeding, name)
+		a.speeds[name] = s
+		a.nextSpeedTest(queue[1:])
+	}, func(error) {
+		delete(a.speeding, name)
+		a.nextSpeedTest(queue[1:])
+	})
 }
 
 // reachability tests a host and port through every connected interface: a

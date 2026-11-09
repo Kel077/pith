@@ -1350,20 +1350,20 @@ func (msgs Messages) NotRouting() string {
 	return Catalog.Format(msgs.locale, "notRouting", nil)
 }
 
-// TestToSeeItsPublicIp says "Test to see its public IP"
+// TestToSeeItsSpeedAndPublicIp says "Test to see its speed and public IP"
 // in the language the app shows.
 //
-// On an interface's card before it has been tested, beside the Test button,
-// which measures its latency and finds its public IP.
-func TestToSeeItsPublicIp() string { return In(i18n.Locale()).TestToSeeItsPublicIp() }
+// On an interface's card before its speed has been tested, beside the Test
+// speed button, which also finds its public IP.
+func TestToSeeItsSpeedAndPublicIp() string { return In(i18n.Locale()).TestToSeeItsSpeedAndPublicIp() }
 
-// TestToSeeItsPublicIp says "Test to see its public IP"
+// TestToSeeItsSpeedAndPublicIp says "Test to see its speed and public IP"
 // in the language of msgs.
 //
-// On an interface's card before it has been tested, beside the Test button,
-// which measures its latency and finds its public IP.
-func (msgs Messages) TestToSeeItsPublicIp() string {
-	return Catalog.Format(msgs.locale, "testToSeeItsPublicIp", nil)
+// On an interface's card before its speed has been tested, beside the Test
+// speed button, which also finds its public IP.
+func (msgs Messages) TestToSeeItsSpeedAndPublicIp() string {
+	return Catalog.Format(msgs.locale, "testToSeeItsSpeedAndPublicIp", nil)
 }
 
 // Note says "Note"
@@ -2174,12 +2174,86 @@ func (msgs Messages) Test() string {
 	return Catalog.Format(msgs.locale, "test", nil)
 }
 
+// TestSpeed says "Test speed"
+// in the language the app shows.
+//
+// Button on an interface's card: tests its latency, and how fast it
+// downloads and uploads.
+func TestSpeed() string { return In(i18n.Locale()).TestSpeed() }
+
+// TestSpeed says "Test speed"
+// in the language of msgs.
+//
+// Button on an interface's card: tests its latency, and how fast it
+// downloads and uploads.
+func (msgs Messages) TestSpeed() string {
+	return Catalog.Format(msgs.locale, "testSpeed", nil)
+}
+
+// Downloads25MbAndUploads8Mb says "Downloads 25 MB and uploads 8 MB through it, from Cloudflare's nearest data center."
+// in the language the app shows.
+//
+// Tooltip of an interface's Test speed button: what the test does, and the
+// data it uses.
+func Downloads25MbAndUploads8Mb() string { return In(i18n.Locale()).Downloads25MbAndUploads8Mb() }
+
+// Downloads25MbAndUploads8Mb says "Downloads 25 MB and uploads 8 MB through it, from Cloudflare's nearest data center."
+// in the language of msgs.
+//
+// Tooltip of an interface's Test speed button: what the test does, and the
+// data it uses.
+func (msgs Messages) Downloads25MbAndUploads8Mb() string {
+	return Catalog.Format(msgs.locale, "downloads25MbAndUploads8Mb", nil)
+}
+
+// DownloadAndUploadSpeed says "Download and upload speed"
+// in the language the app shows.
+//
+// Tooltip of a speed test's result on an interface's card: ↓ the download
+// speed, ↑ the upload speed, in megabits a second.
+func DownloadAndUploadSpeed() string { return In(i18n.Locale()).DownloadAndUploadSpeed() }
+
+// DownloadAndUploadSpeed says "Download and upload speed"
+// in the language of msgs.
+//
+// Tooltip of a speed test's result on an interface's card: ↓ the download
+// speed, ↑ the upload speed, in megabits a second.
+func (msgs Messages) DownloadAndUploadSpeed() string {
+	return Catalog.Format(msgs.locale, "downloadAndUploadSpeed", nil)
+}
+
+// TheDataCenterThatAnsweredAndThe says "The data center that answered, and the time a round trip to it takes"
+// in the language the app shows.
+//
+// Tooltip of “· Cloudflare BOS · 19 ms” beside the public IP a speed
+// test found: the place of Cloudflare's server that answered, by the code
+// of its nearest airport, and the latency.
+func TheDataCenterThatAnsweredAndThe() string {
+	return In(i18n.Locale()).TheDataCenterThatAnsweredAndThe()
+}
+
+// TheDataCenterThatAnsweredAndThe says "The data center that answered, and the time a round trip to it takes"
+// in the language of msgs.
+//
+// Tooltip of “· Cloudflare BOS · 19 ms” beside the public IP a speed
+// test found: the place of Cloudflare's server that answered, by the code
+// of its nearest airport, and the latency.
+func (msgs Messages) TheDataCenterThatAnsweredAndThe() string {
+	return Catalog.Format(msgs.locale, "theDataCenterThatAnsweredAndThe", nil)
+}
+
 // TestAll says "Test All"
 // in the language the app shows.
+//
+// Page action on Network: tests the speed of each connected interface, one
+// after another.
 func TestAll() string { return In(i18n.Locale()).TestAll() }
 
 // TestAll says "Test All"
 // in the language of msgs.
+//
+// Page action on Network: tests the speed of each connected interface, one
+// after another.
 func (msgs Messages) TestAll() string {
 	return Catalog.Format(msgs.locale, "testAll", nil)
 }
@@ -2194,16 +2268,14 @@ func (msgs Messages) Testing() string {
 	return Catalog.Format(msgs.locale, "testing", nil)
 }
 
-// TestsConnectThroughOneInterfaceAt says "Tests connect through one interface at a time, whatever the rules say."
+// TestsEachInterfaceInTurn says "Tests each interface in turn, straight through it, whatever the rules say."
 // in the language the app shows.
-func TestsConnectThroughOneInterfaceAt() string {
-	return In(i18n.Locale()).TestsConnectThroughOneInterfaceAt()
-}
+func TestsEachInterfaceInTurn() string { return In(i18n.Locale()).TestsEachInterfaceInTurn() }
 
-// TestsConnectThroughOneInterfaceAt says "Tests connect through one interface at a time, whatever the rules say."
+// TestsEachInterfaceInTurn says "Tests each interface in turn, straight through it, whatever the rules say."
 // in the language of msgs.
-func (msgs Messages) TestsConnectThroughOneInterfaceAt() string {
-	return Catalog.Format(msgs.locale, "testsConnectThroughOneInterfaceAt", nil)
+func (msgs Messages) TestsEachInterfaceInTurn() string {
+	return Catalog.Format(msgs.locale, "testsEachInterfaceInTurn", nil)
 }
 
 // ThatSceneNoLongerExists says "That scene no longer exists."

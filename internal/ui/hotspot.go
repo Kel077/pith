@@ -126,6 +126,7 @@ func (a *App) renewHotspot(name string) {
 	}
 	a.hotspot.renewing[name] = true
 	delete(a.hotspot.renewals, name)
+	delete(a.speeds, name) // of its old connection
 	var r api.HotspotRenewal
 	a.async(func(ctx context.Context) (err error) {
 		ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
@@ -135,7 +136,6 @@ func (a *App) renewHotspot(name string) {
 	}, func() {
 		delete(a.hotspot.renewing, name)
 		a.hotspot.renewals[name] = r
-		a.probes[name] = r.After
 		select { // read its new state
 		case a.hotspot.kick <- struct{}{}:
 		default:

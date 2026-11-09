@@ -128,7 +128,8 @@ func TestSnapshots(t *testing.T) {
 				a.page, a.activity.view, a.activity.span = "activity", 2, 1
 			}
 			if page == "network" {
-				a.probes["en0"] = api.Probe{Interface: "en0", OK: true, Latency: 21 * time.Millisecond, PublicIPv4: "203.0.113.24"}
+				a.speeds["en0"] = api.SpeedTest{Interface: "en0", OK: true, Server: "SJC", Latency: 6 * time.Millisecond,
+					Download: 712_400_000, Upload: 148_100_000, PublicIP: "203.0.113.24"}
 			}
 			tt := ui.NewTester(a.WindowView, 1040, 680)
 			tt.SetDark(dark)

@@ -258,9 +258,9 @@
   "notInstalledRoutingNeedsItMacos": "Not installed. Routing needs it; macOS asks for your password once.",
   "notNow": "Not Now",
   "notRouting": "Not routing",
-  "testToSeeItsPublicIp": "Test to see its public IP",
-  "@testToSeeItsPublicIp": {
-    "description": "On an interface's card before it has been tested, beside the Test button, which measures its latency and finds its public IP."
+  "testToSeeItsSpeedAndPublicIp": "Test to see its speed and public IP",
+  "@testToSeeItsSpeedAndPublicIp": {
+    "description": "On an interface's card before its speed has been tested, beside the Test speed button, which also finds its public IP."
   },
   "note": "Note",
   "offQuittingPithStopsRouting": "Off: quitting Pith stops routing.",
@@ -404,9 +404,28 @@
   "tcpAndUdp": "TCP and UDP",
   "tcpOnly": "TCP only",
   "test": "Test",
+  "testSpeed": "Test speed",
+  "@testSpeed": {
+    "description": "Button on an interface's card: tests its latency, and how fast it downloads and uploads."
+  },
+  "downloads25MbAndUploads8Mb": "Downloads 25 MB and uploads 8 MB through it, from Cloudflare's nearest data center.",
+  "@downloads25MbAndUploads8Mb": {
+    "description": "Tooltip of an interface's Test speed button: what the test does, and the data it uses."
+  },
+  "downloadAndUploadSpeed": "Download and upload speed",
+  "@downloadAndUploadSpeed": {
+    "description": "Tooltip of a speed test's result on an interface's card: ↓ the download speed, ↑ the upload speed, in megabits a second."
+  },
+  "theDataCenterThatAnsweredAndThe": "The data center that answered, and the time a round trip to it takes",
+  "@theDataCenterThatAnsweredAndThe": {
+    "description": "Tooltip of “· Cloudflare BOS · 19 ms” beside the public IP a speed test found: the place of Cloudflare's server that answered, by the code of its nearest airport, and the latency."
+  },
   "testAll": "Test All",
+  "@testAll": {
+    "description": "Page action on Network: tests the speed of each connected interface, one after another."
+  },
   "testing": "Testing…",
-  "testsConnectThroughOneInterfaceAt": "Tests connect through one interface at a time, whatever the rules say.",
+  "testsEachInterfaceInTurn": "Tests each interface in turn, straight through it, whatever the rules say.",
   "thatSceneNoLongerExists": "That scene no longer exists.",
   "replaceBackupBody": "{count, plural, one {The backup has # scene.} other {The backup has # scenes.}}",
   "@replaceBackupBody": {

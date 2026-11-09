@@ -84,9 +84,9 @@ type App struct {
 	conns     []*api.Connection // newest first
 	byID      map[uint64]*api.Connection
 	traffic   api.Traffic
-	trafficAt time.Time // when traffic was read
-	probes    map[string]api.Probe
-	probing   map[string]bool
+	trafficAt time.Time                // when traffic was read
+	speeds    map[string]api.SpeedTest // by interface
+	speeding  map[string]bool
 	hotspot   hotspots
 	apps      []api.AppRef
 	appsAsk   bool
@@ -142,16 +142,16 @@ func New(o Options) *App {
 		o.Now = time.Now
 	}
 	return &App{
-		Options: o,
-		ctx:     context.Background(),
-		cfg:     api.DefaultConfig(),
-		status:  api.Status{State: api.Stopped},
-		byID:    map[uint64]*api.Connection{},
-		probes:  map[string]api.Probe{},
-		probing: map[string]bool{},
-		hotspot: newHotspots(),
-		icons:   map[string]*appIcon{},
-		page:    cmp.Or(o.Page, "rules"),
+		Options:  o,
+		ctx:      context.Background(),
+		cfg:      api.DefaultConfig(),
+		status:   api.Status{State: api.Stopped},
+		byID:     map[uint64]*api.Connection{},
+		speeds:   map[string]api.SpeedTest{},
+		speeding: map[string]bool{},
+		hotspot:  newHotspots(),
+		icons:    map[string]*appIcon{},
+		page:     cmp.Or(o.Page, "rules"),
 	}
 }
 

@@ -93,3 +93,16 @@ func duration(d time.Duration) string {
 
 // millis writes a latency: 23 ms.
 func millis(d time.Duration) string { return fmt.Sprintf("%d ms", d.Milliseconds()) }
+
+// mbps writes a speed in megabits a second, without its unit: 172, or 4.6
+// under 10; "–" for none.
+func mbps(bits int64) string {
+	switch m := float64(bits) / 1e6; {
+	case bits <= 0:
+		return "–"
+	case m < 10:
+		return strconv.FormatFloat(m, 'f', 1, 64)
+	default:
+		return strconv.FormatFloat(m, 'f', 0, 64)
+	}
+}
