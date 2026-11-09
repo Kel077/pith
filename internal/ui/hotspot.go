@@ -226,11 +226,13 @@ func hotspotScreen(c *ui.Context, h api.Hotspot, col ui.Color) {
 	}
 }
 
-// renewalText tells what changing a hotspot's IP did: its public IP before
-// and after.
+// renewalText tells what changing a hotspot's IP did: its public IPv4 before
+// and after, or its IPv6 when it has no IPv4 after.
 func renewalText(r api.HotspotRenewal) string {
-	ip := func(p api.Probe) string { return cmpOr(p.PublicIPv4, p.PublicIPv6) }
-	before, after := ip(r.Before), ip(r.After)
+	before, after := r.Before.PublicIPv4, r.After.PublicIPv4
+	if after == "" {
+		before, after = r.Before.PublicIPv6, r.After.PublicIPv6
+	}
 	switch {
 	case after == "":
 		return ""
