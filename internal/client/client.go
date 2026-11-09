@@ -64,7 +64,8 @@ type Client struct {
 	artifactOpen   func(string, bool) (*os.File, artifactStamp, error)
 	checkFile      func(string, bool) error
 	hotspots       map[string]*hotspotSession
-	hotspotPort    string // of the hotspots' web admin: 80 when empty
+	hotspotPort    string        // of the hotspots' web admin: 80 when empty
+	hotspotPace    time.Duration // between tests after a renewal: a second when zero
 	hotspotIndex   func(string) (int, error)
 	secretGet      func(ctx context.Context, service, account string) (string, error)
 	secretSet      func(ctx context.Context, service, account, secret string) error

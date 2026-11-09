@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -163,5 +164,96 @@ func TestHotspotRedirectStaysOnOriginalOrigin(t *testing.T) {
 		if err := s.device.HTTP.CheckRedirect(&http.Request{URL: u}, []*http.Request{original}); err != http.ErrUseLastResponse {
 			t.Fatal("unsafe redirect accepted", destination)
 		}
+	}
+}
+
+// renewalClient is a client of an M2000 that keeps its password, whose
+// public IP tests answer after a renewal as v4 and v6 say: with the
+// address, or with nothing for an error.
+func renewalClient(t *testing.T, f *hotspottest.MiFi, v4, v6 func(after int) string) *Client {
+	t.Helper()
+	c := testClient(t)
+	c.hotspotIndex = func(string) (int, error) { return 9, nil }
+	c.hotspotPace = 20 * time.Millisecond
+	mifi := httptest.NewServer(f)
+	t.Cleanup(mifi.Close)
+	_, c.hotspotPort, _ = net.SplitHostPort(mifi.Listener.Addr().String())
+	c.dialer = func(string, time.Duration, []string) (*net.Dialer, error) {
+		return &net.Dialer{Timeout: time.Second}, nil
+	}
+	c.interfaces = func(context.Context) ([]api.Interface, error) {
+		return []api.Interface{{Name: "en9", Label: "M2000", Kind: api.KindCellular, HardwareAddr: "02:00:5e:10:00:09", Up: true, Router: "127.0.0.1"}}, nil
+	}
+	c.secretGet = func(context.Context, string, string) (string, error) { return hotspottest.Password, nil }
+	answer := func(ip func(int) string) http.HandlerFunc {
+		var mu sync.Mutex
+		after := 0
+		return func(w http.ResponseWriter, r *http.Request) {
+			renewed := false
+			f.Do(func(f *hotspottest.MiFi) { renewed = len(f.Calls) == 2 })
+			mu.Lock()
+			n := -1
+			if renewed {
+				n = after
+				after++
+			}
+			mu.Unlock()
+			if a := ip(n); a != "" {
+				fmt.Fprint(w, a)
+				return
+			}
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+		}
+	}
+	srv4 := httptest.NewServer(answer(v4))
+	t.Cleanup(srv4.Close)
+	listener6, err := net.Listen("tcp6", "[::1]:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv6 := httptest.NewUnstartedServer(answer(v6))
+	srv6.Listener.Close()
+	srv6.Listener = listener6
+	srv6.Start()
+	t.Cleanup(srv6.Close)
+	c.probeURLs = [2]string{srv4.URL, srv6.URL}
+	return c
+}
+
+func TestHotspotRenewalWaitsUntilTheHotspotWorksAgain(t *testing.T) {
+	// Connected again, it has no DNS for a moment, then IPv4 before IPv6.
+	f := hotspottest.New()
+	c := renewalClient(t, f,
+		func(after int) string { return map[bool]string{true: "192.0.2.9"}[after < 0 || after >= 3] },
+		func(after int) string { return map[bool]string{true: "2001:db8::9"}[after < 0 || after >= 4] })
+	r, err := c.RenewHotspot(context.Background(), "en9")
+	if err != nil || r.After.PublicIPv4 != "192.0.2.9" || r.After.PublicIPv6 != "2001:db8::9" || r.Before.PublicIPv6 == "" {
+		t.Fatalf("%+v %v", r, err)
+	}
+}
+
+func TestHotspotRenewalStopsWaitingForAFamilyThatDoesNotComeBack(t *testing.T) {
+	f := hotspottest.New()
+	c := renewalClient(t, f,
+		func(int) string { return "192.0.2.9" },
+		func(after int) string { return map[bool]string{true: "2001:db8::9"}[after < 0] })
+	start := time.Now()
+	r, err := c.RenewHotspot(context.Background(), "en9")
+	if err != nil || r.After.PublicIPv4 != "192.0.2.9" || r.After.PublicIPv6 != "" || !r.After.OK {
+		t.Fatalf("%+v %v", r, err)
+	}
+	// It waited 3 paces for IPv6, not 25.
+	if waited := time.Since(start) - r.Took; waited > 15*c.hotspotPace {
+		t.Fatalf("waited %v for IPv6", waited)
+	}
+}
+
+func TestHotspotRenewalGivesUpTesting(t *testing.T) {
+	f := hotspottest.New()
+	none := func(after int) string { return map[bool]string{true: "192.0.2.9"}[after < 0] }
+	c := renewalClient(t, f, none, func(int) string { return "" })
+	r, err := c.RenewHotspot(context.Background(), "en9")
+	if err != nil || !r.Before.OK || r.After.OK || r.After.Problem == "" {
+		t.Fatalf("%+v %v", r, err)
 	}
 }

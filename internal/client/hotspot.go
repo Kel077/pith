@@ -66,18 +66,52 @@ func (c *Client) RenewHotspot(ctx context.Context, iface string) (api.HotspotRen
 		return r, err
 	}
 	r.Took = time.Since(started)
-	// A hotspot connected again may still be setting up its addresses.
-	for range 3 {
-		if r.After, err = c.Probe(ctx, iface, ""); err == nil && r.After.OK {
-			break
+	// Connected again, a hotspot may still be setting up its addresses and
+	// its DNS: the M2000's refuses queries for some ten seconds more. Test it
+	// every pace until it works as before, for 25 paces at most, and 3 more
+	// once a family works: one that doesn't come back with the other may not
+	// come back at all.
+	pace := c.hotspotPace
+	if pace == 0 {
+		pace = time.Second
+	}
+	want := max(1, publicIPs(r.Before))
+	deadline := time.Now().Add(25 * pace)
+	for {
+		p, err := c.Probe(ctx, iface, "")
+		if err != nil {
+			return r, err
+		}
+		if publicIPs(p) >= publicIPs(r.After) {
+			r.After = p
+		}
+		if publicIPs(r.After) >= want {
+			return r, nil
+		}
+		if late := time.Now().Add(3 * pace); r.After.OK && late.Before(deadline) {
+			deadline = late
+		}
+		if time.Now().Add(pace).After(deadline) {
+			return r, nil
 		}
 		select {
 		case <-ctx.Done():
 			return r, ctx.Err()
-		case <-time.After(2 * time.Second):
+		case <-time.After(pace):
 		}
 	}
-	return r, err
+}
+
+// publicIPs counts the public addresses a probe found, one per family.
+func publicIPs(p api.Probe) int {
+	n := 0
+	if p.PublicIPv4 != "" {
+		n++
+	}
+	if p.PublicIPv6 != "" {
+		n++
+	}
+	return n
 }
 
 // hotspot finds the hotspot behind an interface, or ErrUnsupported.
