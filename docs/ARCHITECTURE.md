@@ -24,8 +24,9 @@ its public addresses, LAN addresses or DNS do not by themselves stop routing.
 The public-address test before a renewal runs while the device's network settings
 are read; data goes off only once both finish. Afterwards the client tests every
 second until the address families that answered before answer again, for 25
-seconds at most and 3 more for a family once the other works: a reconnected M2000
-refuses DNS queries for about ten seconds while its DNS server restarts.
+seconds at most and 3 more for a family once the other works. A reconnected M2000
+refuses DNS queries for about ten seconds while its DNS server restarts; the
+probes then ask the Mac's servers, so the test passes once its internet works.
 
 ## Local SOCKS5 listeners
 
@@ -56,13 +57,19 @@ DNS changes do not shut down unrelated listeners. Interface metadata is cached
 for at most one second, while kernel identity is checked directly. Canceling one
 metadata reader does not poison the cache for healthy callers.
 
-DNS uses explicit A/AAAA packets sent only to the selected interface's configured
-servers. There is no system resolver, hosts-file/search-list lookup, environment
-proxy or other-interface fallback. Truncated UDP answers retry TCP on the same
-server and binding. IDs, question, opcode and response code are checked; replies
-are limited to 16 KiB and 128 records, CNAME chains to eight steps and candidates
-to eight addresses. Resolution has a four-second bound, at most three servers
-and 750 ms per server attempt. DNS and target sockets use the same pinned binding.
+DNS uses explicit A/AAAA packets sent through the selected interface: to its
+configured servers, then, when none answers, to the Mac's own, from
+`/etc/resolv.conf`, but private, shared and link-local ones and public IPv6 ones
+in an interface's /64, which only their own network reaches. A reconnected
+hotspot may restart its DNS server: the M2000's refuses queries for about ten
+seconds. A name the interface's servers say doesn't exist isn't asked again.
+There is no system resolver, hosts-file/search-list lookup, environment proxy or
+other-interface fallback. Truncated UDP answers retry TCP on the same server and
+binding. IDs, question, opcode and response code are checked; replies are limited
+to 16 KiB and 128 records, CNAME chains to eight steps and candidates to eight
+addresses. Resolution has a four-second bound, at most three servers of each
+kind and 750 ms per server attempt, whose query goes once more after 400 ms. DNS
+and target sockets use the same pinned binding.
 
 Physical bound sockets use macOS's scoped routing and the full-capture split that
 preserves zero-address lookup, described below. Excluding tunnel interfaces also
@@ -553,9 +560,10 @@ requests for both address families. It does not invoke the helper. Distinguish
 the two paths by the process and startup timing rather than the endpoint alone.
 Its names resolve through the interface's DNS servers, link-local ones with the
 interface as their zone. A query goes again on the same socket after 0.4 seconds,
-then after twice as long, and to the next server after 2 seconds: Go's resolver
+then after twice as long, and to the next server after a second: Go's resolver
 alone waits 5 seconds for each answer, and the M2000 drops the first query after
-a quiet while.
+a quiet while. When the interface's servers haven't answered within 2 seconds,
+the probe asks the Mac's, chosen as for local proxies, through the interface.
 
 A SafeStart failure returns `ErrNetworkLost`, removes capture and closes every
 relay. Startup failure publishes completed connection records even before a
