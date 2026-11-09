@@ -1,5 +1,7 @@
 // Package egress opens strictly interface-bound sockets for local proxies.
-// It never uses system name resolution or another interface as fallback.
+// It never uses system name resolution or another interface as fallback:
+// when the interface's DNS servers don't answer, it asks the Mac's public
+// ones, through the same interface.
 package egress
 
 import (
@@ -146,6 +148,7 @@ type binding struct {
 	iface  api.Interface
 	index  int
 	mac    string
+	dns    []netip.Addr // to ask in turn: the interface's servers, then the Mac's
 }
 
 func (n *Native) bind(ctx context.Context, via api.InterfaceRef) (binding, error) {
@@ -174,7 +177,7 @@ func (n *Native) bind(ctx context.Context, via api.InterfaceRef) (binding, error
 		(iface.HardwareAddr != "" && iface.HardwareAddr != link.HardwareAddr.String()) {
 		return binding{}, unavailable("The selected interface identity changed")
 	}
-	b := binding{native: n, iface: *iface, index: link.Index, mac: link.HardwareAddr.String()}
+	b := binding{native: n, iface: *iface, index: link.Index, mac: link.HardwareAddr.String(), dns: resolvers(ifaces, *iface)}
 	if err := b.check(); err != nil {
 		return binding{}, err
 	}
@@ -198,7 +201,7 @@ func (n *Native) Health(ctx context.Context, via api.InterfaceRef) error {
 	if err != nil {
 		return err
 	}
-	if len(dnsServers(b.iface)) == 0 {
+	if len(b.dns) == 0 {
 		return &api.Error{Code: api.ErrDNSUnavailable, Detail: "The selected interface has no usable DNS servers"}
 	}
 	return nil

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -504,5 +505,86 @@ func TestDNSSendsAQueryAgainBeforeGivingUpOnItsServer(t *testing.T) {
 	}
 	if n := queries(); n != 3 {
 		t.Fatalf("%d queries, want 3: A, AAAA and one sent again", n)
+	}
+}
+
+// withPrimary adds the Mac's primary interface, whose DNS servers are the
+// Mac's own.
+func withPrimary(f *testNetwork, dns ...string) {
+	f.metadata = append(f.metadata, api.Interface{Name: "example1", Kind: api.KindEthernet, Up: true, Primary: true, DNS: dns})
+}
+
+func TestFallbackDNS(t *testing.T) {
+	f := newTestNetwork()
+	withPrimary(f, "10.0.0.53", "100.64.0.53", "fe80::53", "198.51.100.53", "::ffff:203.0.113.53", "198.51.100.53", "2001:db8::153", "192.0.2.99")
+	got := FallbackDNS(f.metadata, "example0")
+	want := []netip.Addr{netip.MustParseAddr("198.51.100.53"), netip.MustParseAddr("203.0.113.53"), netip.MustParseAddr("2001:db8::153")}
+	if !slices.Equal(got, want) {
+		t.Fatalf("%v, want %v", got, want)
+	}
+	if got := FallbackDNS(f.metadata, "example1"); got != nil {
+		t.Fatalf("the primary interface falls back on itself: %v", got)
+	}
+	if got := FallbackDNS(f.metadata[:1], "example0"); got != nil {
+		t.Fatalf("without a primary interface: %v", got)
+	}
+}
+
+func TestDNSFallsBackToTheMacsServersThroughTheInterface(t *testing.T) {
+	for _, mode := range []string{"refused", "unreachable", "answers", "no-such-name"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newTestNetwork()
+			f.metadata[0].DNS = []string{"192.0.2.53"}
+			withPrimary(f, "198.51.100.53")
+			useDNSResponder(f, func(_, address string, q dnsmessage.Message) (dnsmessage.Message, error) {
+				r := answerFor(q)
+				if address == "192.0.2.53:53" {
+					switch mode {
+					case "refused":
+						r.RCode = dnsmessage.RCodeRefused
+						return r, nil
+					case "unreachable":
+						return r, errors.New("connection refused")
+					case "no-such-name":
+						r.RCode = dnsmessage.RCodeNameError
+						return r, nil
+					}
+				}
+				r.Answers = []dnsmessage.Resource{addressRecord(q.Questions[0].Name.String(), q.Questions[0].Type)}
+				return r, nil
+			})
+			conn, err := New(f.options()).Dial(context.Background(), testRef(), proxy.Target{Host: "example.com", Port: 443, IsDomain: true})
+			var dnsErr *net.DNSError
+			if mode == "no-such-name" {
+				if conn != nil || !errors.As(err, &dnsErr) || !dnsErr.IsNotFound {
+					t.Fatalf("conn=%v err=%v", conn, err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			} else {
+				conn.Close()
+			}
+			// useDNSResponder refuses any interface but the selected one.
+			asked := false
+			for _, call := range f.dials {
+				asked = asked || call.address == "198.51.100.53:53"
+			}
+			if want := mode == "refused" || mode == "unreachable"; asked != want {
+				t.Fatalf("asked the Mac's server: %v, want %v: %v", asked, want, f.dials)
+			}
+		})
+	}
+}
+
+func TestHealthCountsTheMacsDNS(t *testing.T) {
+	f := newTestNetwork()
+	f.metadata[0].DNS = nil
+	withPrimary(f, "198.51.100.53")
+	if err := New(f.options()).Health(context.Background(), testRef()); err != nil {
+		t.Fatal(err)
+	}
+	f.metadata[1].DNS = []string{"10.0.0.53"}
+	if err := New(f.options()).Health(context.Background(), testRef()); api.Code(err) != api.ErrDNSUnavailable {
+		t.Fatalf("a private server of another network counted: %v", err)
 	}
 }

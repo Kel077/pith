@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"slices"
 	"strings"
 	"time"
 
@@ -30,6 +31,57 @@ const (
 )
 
 var errTruncated = errors.New("DNS response requires TCP")
+
+// FallbackDNS lists the DNS servers to ask through an interface when its own
+// don't answer, as a hotspot restarting its DNS doesn't: the Mac's, those of
+// its primary interface, if public, as only those answer through another
+// network. Queries to them still go through the interface. There are none
+// for the primary interface itself.
+func FallbackDNS(ifaces []api.Interface, name string) []netip.Addr {
+	for _, primary := range ifaces {
+		if !primary.Primary {
+			continue
+		}
+		if primary.Name == name {
+			return nil
+		}
+		var result []netip.Addr
+		for _, raw := range primary.DNS {
+			addr, err := netip.ParseAddr(raw)
+			if err != nil || !public(addr.Unmap()) || slices.Contains(result, addr.Unmap()) {
+				continue
+			}
+			result = append(result, addr.Unmap())
+			if len(result) == maxDNSServers {
+				break
+			}
+		}
+		return result
+	}
+	return nil
+}
+
+// public tells an address any network reaches: not private, shared,
+// link-local, loopback, multicast or unspecified.
+func public(addr netip.Addr) bool {
+	return addr.Zone() == "" && addr.IsGlobalUnicast() && !addr.IsPrivate() && !sharedAddresses.Contains(addr)
+}
+
+// sharedAddresses are carriers' NATs' and VPNs' (RFC 6598), Tailscale's DNS
+// among them.
+var sharedAddresses = netip.MustParsePrefix("100.64.0.0/10")
+
+// resolvers are the DNS servers to ask through an interface, in turn: its
+// own, then the Mac's (FallbackDNS).
+func resolvers(ifaces []api.Interface, iface api.Interface) []netip.Addr {
+	servers := dnsServers(iface)
+	for _, addr := range FallbackDNS(ifaces, iface.Name) {
+		if !slices.Contains(servers, addr) {
+			servers = append(servers, addr)
+		}
+	}
+	return servers
+}
 
 func dnsServers(iface api.Interface) []netip.Addr {
 	var result []netip.Addr
@@ -78,7 +130,7 @@ func (n *Native) resolve(ctx context.Context, b binding, raw string) ([]netip.Ad
 	if err != nil {
 		return nil, err
 	}
-	servers := dnsServers(b.iface)
+	servers := b.dns
 	if len(servers) == 0 {
 		return nil, &api.Error{Code: api.ErrDNSUnavailable, Detail: "The selected interface has no usable DNS servers"}
 	}
