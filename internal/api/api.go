@@ -56,6 +56,10 @@ type Service interface {
 	// "host:port" opened over TCP, or, when target is empty, Pith's HTTPS
 	// test that also finds the interface's public addresses.
 	Probe(ctx context.Context, iface, target string) (Probe, error)
+	// SpeedTest tests the internet through one interface, by its Name,
+	// against a speed test server near its network: a round trip, then a
+	// download and an upload of some megabytes.
+	SpeedTest(ctx context.Context, iface string) (SpeedTest, error)
 
 	// Hotspot reads the mobile hotspot behind an interface, by its Name:
 	// ErrUnsupported when Pith can't talk to it.
@@ -400,6 +404,19 @@ type Probe struct {
 	PublicIPv4 string        `json:"publicIPv4,omitempty"`
 	PublicIPv6 string        `json:"publicIPv6,omitempty"`
 	Problem    string        `json:"problem,omitempty"` // technical, when !OK
+}
+
+// SpeedTest is the result of a speed test through one interface.
+type SpeedTest struct {
+	Interface string        `json:"interface"`
+	At        time.Time     `json:"at"`
+	OK        bool          `json:"ok"`                 // the server answered
+	Server    string        `json:"server,omitempty"`   // where it is, as it says: "BOS"
+	Latency   time.Duration `json:"latency"`            // a round trip, the shortest of a few
+	Download  int64         `json:"download"`           // bits per second; 0 when it failed
+	Upload    int64         `json:"upload"`             // bits per second; 0 when it failed
+	PublicIP  string        `json:"publicIP,omitempty"` // as the server saw it
+	Problem   string        `json:"problem,omitempty"`  // technical, when a part failed
 }
 
 // Hotspot is a mobile hotspot behind one of the interfaces, as it reports
