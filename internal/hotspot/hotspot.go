@@ -39,8 +39,8 @@ type Inseego struct {
 	HTTP  *http.Client // through the hotspot's interface, keeping cookies
 	// Password returns the admin password Pith keeps, or "" when it has none.
 	Password func() (string, error)
-	// Poll is how long to wait between readings while renewing: a second
-	// when zero.
+	// Poll is how long to wait between readings while renewing: half a
+	// second when zero.
 	Poll time.Duration
 
 	mu       sync.Mutex
@@ -145,7 +145,7 @@ func (d *Inseego) Renew(ctx context.Context) (resultErr error) {
 func (d *Inseego) await(ctx context.Context, limit time.Duration, ok func(api.Hotspot) bool) bool {
 	poll := d.Poll
 	if poll == 0 {
-		poll = time.Second
+		poll = 500 * time.Millisecond
 	}
 	deadline := time.Now().Add(limit)
 	for {
