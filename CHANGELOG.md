@@ -6,6 +6,7 @@ All notable changes to Pith are listed here. The format follows [Keep a Changelo
 
 ### Changed
 
+- **Test** on an interface's card is now **Test speed**: through that interface, Cloudflare's nearest data center measures the latency, a download of 25 MB and an upload of 8 MB, and tells the public IP it saw. The old test showed how long two HTTPS requests took, IPv4 to a nearby server and IPv6 to one in Utah, DNS lookups and TLS handshakes included: several times the real latency. **Test All** tests the interfaces one after another. A test uses about 33 MB, which counts on a metered hotspot.
 - When an interface's DNS servers don't answer, its tests and local proxies ask the Mac's own, the ones in its network settings that any network reaches, still through that interface. A hotspot that has just reconnected may be restarting its DNS: the M2000 refuses queries for some ten seconds, during which **Change hotspot IP** used to wait and local proxies couldn't reach any name.
 
 ### Fixed

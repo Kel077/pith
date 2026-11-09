@@ -554,16 +554,31 @@ single captured probe is expected, not evidence of a forwarding loop; binding or
 exempting its native leg would defeat the end-to-end capture check. SafeStart
 performs TLS verification, not an HTTP public-address query or a periodic probe.
 
-The Network page's `Service.Probe` runs in the unprivileged App process, binds
-the requested interface and, for an empty target, sends HTTPS public-address
-requests for both address families. It does not invoke the helper. Distinguish
-the two paths by the process and startup timing rather than the endpoint alone.
+`Service.Probe`, which the Network page's reachability test and hotspot renewals
+use, runs in the unprivileged App process, binds the requested interface and,
+for an empty target, sends HTTPS public-address requests for both address
+families. It does not invoke the helper. Distinguish the two paths by the
+process and startup timing rather than the endpoint alone.
 Its names resolve through the interface's DNS servers, link-local ones with the
 interface as their zone. A query goes again on the same socket after 0.4 seconds,
 then after twice as long, and to the next server after a second: Go's resolver
 alone waits 5 seconds for each answer, and the M2000 drops the first query after
 a quiet while. When the interface's servers haven't answered within 2 seconds,
 the probe asks the Mac's, chosen as for local proxies, through the interface.
+
+The Network page's `Service.SpeedTest` runs in the App process as well, with the
+same binding and DNS, over IPv4 when the interface has an address of it. It asks
+Cloudflare's speed test, `speed.cloudflare.com`, which answers from the data
+center nearest to the interface's network. Five `GET /__down?bytes=0` on one
+connection give the latency: the shortest time from a request to its answer,
+less the durations of the answer's `Server-Timing`, each bounded to 2 seconds.
+The first answer's `colo` header, or the end of its `CF-RAY`, names the data
+center, and `cf-meta-ip` the public address. `GET /__down?bytes=25000000` is
+timed from the answer to its last byte, and `POST /__up` of 8 MB of zeros from
+the first byte sent until the answer, less a round trip. Each has 8 seconds; one
+cut short counts once it moved 1 MiB. The service refuses downloads of 100 MB and
+leaves uploads of 10 MB unanswered. A part that fails is zero, named in
+`Problem`.
 
 A SafeStart failure returns `ErrNetworkLost`, removes capture and closes every
 relay. Startup failure publishes completed connection records even before a

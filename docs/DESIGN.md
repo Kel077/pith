@@ -68,7 +68,9 @@ page has a large title and its actions on the right.
 - **Activity.** Connections (live, newest first), Apps, and Traffic (bars
   per interface over an hour, a day or a week), each as one pane.
 - **Network.** A pane per connected interface, a compact group for the
-  others, and a reachability test. A hotspot Pith can talk to shows as
+  others, and a reachability test. A pane's foot tells its speed test: the
+  download and upload large, and over them the public IP, the server and
+  the latency. A hotspot Pith can talk to shows as
   itself on its pane, drawn without its maker's marks, and its screen
   says what it reports, as the device's own screen would: the bars in the
   interface's color and 5G or LTE, the carrier, the band large with its

@@ -109,7 +109,7 @@ One set of rules for home, another for the office. Switch between them from the 
 
 ### Network
 
-Every interface with its addresses, router and DNS; a test of its latency and public address; and one server reached through each interface, to compare them. Interfaces can be renamed.
+Every interface with its addresses, router and DNS; a speed test of its latency, download and upload, which also finds its public address; and one server reached through each interface, to compare them. Interfaces can be renamed.
 
 Some hotspots also show their signal and can change their public IP. Only these, each tested on the device itself:
 
@@ -178,7 +178,7 @@ If it reports an error, or you're still offline once the helper is removed, stop
 
 Pith reads where connections go: addresses, ports, and host names from TLS SNI, the HTTP Host or DNS. It never reads what they carry, decrypts nothing and installs no certificate. Rules, the connection log and traffic totals stay on your Mac, and the log keeps as many days as Settings says.
 
-Pith connects to the internet on its own in one case: with Safe start on, each time routing starts, the helper opens one TLS connection to api.ipify.org to check the Mac is still online, and sends no request over it. Everything else is something you start: a test on the Network page asks [ipify](https://www.ipify.org) for an interface's public address, and reaching a server connects to the one you enter. With a hotspot's admin password, Pith reads the hotspot's own admin page, on your local network, while the Network page is open.
+Pith connects to the internet on its own in one case: with Safe start on, each time routing starts, the helper opens one TLS connection to api.ipify.org to check the Mac is still online, and sends no request over it. Everything else is something you start: a speed test on the Network page downloads 25 MB from and uploads 8 MB to [Cloudflare's speed test](https://speed.cloudflare.com), which also tells the public address it saw; changing a hotspot's IP asks [ipify](https://www.ipify.org) for its public addresses before and after; and reaching a server connects to the one you enter. With a hotspot's admin password, Pith reads the hotspot's own admin page, on your local network, while the Network page is open.
 
 ## Documentation
 
