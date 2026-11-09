@@ -40,6 +40,7 @@ func (c *Client) Probe(ctx context.Context, iface, target string) (api.Probe, er
 		result.Problem = err.Error()
 		return result, nil
 	}
+	dialer.Resolver = probeResolver(dialer, iface, dns)
 	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	started := time.Now()
