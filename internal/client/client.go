@@ -55,6 +55,7 @@ type Client struct {
 	lookup         func(context.Context, string, string) ([]netip.Addr, error)
 	dialer         func(string, time.Duration, []string) (*net.Dialer, error)
 	probeURLs      [2]string
+	speedURL       string // of the speed test server
 	http           *http.Client
 	peerUID        uint32
 	expectedHelper identity.Identity
@@ -95,7 +96,7 @@ func New(opts Options) (*Client, error) {
 		opts.Version = "dev"
 	}
 	c := &Client{opts: opts, configPath: filepath.Join(opts.ConfigDir, "config.json"), interfaces: netif.List, lookup: net.DefaultResolver.LookupNetIP, dialer: netif.Dialer,
-		probeURLs: [2]string{"https://api.ipify.org", "https://api6.ipify.org"}, secretGet: keychain.Get, secretSet: keychain.Set,
+		probeURLs: [2]string{"https://api.ipify.org", "https://api6.ipify.org"}, speedURL: speedServer, secretGet: keychain.Get, secretSet: keychain.Set,
 		hotspotIndex: func(name string) (int, error) {
 			link, err := net.InterfaceByName(name)
 			if err != nil {
