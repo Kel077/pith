@@ -31,6 +31,7 @@ func testRef() api.InterfaceRef {
 type testNetwork struct {
 	mu       sync.Mutex
 	metadata []api.Interface
+	system   []netip.Addr // the Mac's DNS servers
 	links    map[int]net.Interface
 	dials    []dialCall
 	lists    int
@@ -72,6 +73,11 @@ func (f *testNetwork) options() Options {
 				return &copy, nil
 			}
 			return nil, errors.New("missing interface")
+		},
+		SystemDNS: func() []netip.Addr {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			return f.system
 		},
 		DialContext: func(ctx context.Context, name, network, address string) (net.Conn, error) {
 			f.mu.Lock()

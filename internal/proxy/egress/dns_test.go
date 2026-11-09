@@ -508,25 +508,31 @@ func TestDNSSendsAQueryAgainBeforeGivingUpOnItsServer(t *testing.T) {
 	}
 }
 
-// withPrimary adds the Mac's primary interface, whose DNS servers are the
-// Mac's own.
-func withPrimary(f *testNetwork, dns ...string) {
-	f.metadata = append(f.metadata, api.Interface{Name: "example1", Kind: api.KindEthernet, Up: true, Primary: true, DNS: dns})
+func addrs(raw ...string) []netip.Addr {
+	var result []netip.Addr
+	for _, r := range raw {
+		result = append(result, netip.MustParseAddr(r))
+	}
+	return result
+}
+
+func TestSystemDNSReadsTheResolverConfiguration(t *testing.T) {
+	got := parseResolvConf([]byte("# Example\nsearch example.com\nnameserver 198.51.100.53\nnameserver  2001:db8::53 \n;nameserver 203.0.113.9\nnameserver resolver.example.com\n"))
+	if want := addrs("198.51.100.53", "2001:db8::53"); !slices.Equal(got, want) {
+		t.Fatalf("%v, want %v", got, want)
+	}
 }
 
 func TestFallbackDNS(t *testing.T) {
-	f := newTestNetwork()
-	withPrimary(f, "10.0.0.53", "100.64.0.53", "fe80::53", "198.51.100.53", "::ffff:203.0.113.53", "198.51.100.53", "2001:db8::153", "192.0.2.99")
-	got := FallbackDNS(f.metadata, "example0")
-	want := []netip.Addr{netip.MustParseAddr("198.51.100.53"), netip.MustParseAddr("203.0.113.53"), netip.MustParseAddr("2001:db8::153")}
-	if !slices.Equal(got, want) {
+	ifaces := []api.Interface{testInterface(), {Name: "example1", Up: true, IPv6: []string{"2001:db8:1::2"}}}
+	// Private, shared, link-local, a router's public address on example1's
+	// network, then public ones.
+	system := addrs("10.0.0.53", "100.64.0.53", "fe80::53", "2001:db8:1::1", "198.51.100.53", "::ffff:203.0.113.53", "198.51.100.53", "2001:db8:2::53", "192.0.2.99")
+	if got, want := FallbackDNS(ifaces, system), addrs("198.51.100.53", "203.0.113.53", "2001:db8:2::53"); !slices.Equal(got, want) {
 		t.Fatalf("%v, want %v", got, want)
 	}
-	if got := FallbackDNS(f.metadata, "example1"); got != nil {
-		t.Fatalf("the primary interface falls back on itself: %v", got)
-	}
-	if got := FallbackDNS(f.metadata[:1], "example0"); got != nil {
-		t.Fatalf("without a primary interface: %v", got)
+	if got := FallbackDNS(ifaces, nil); got != nil {
+		t.Fatalf("without servers: %v", got)
 	}
 }
 
@@ -535,7 +541,7 @@ func TestDNSFallsBackToTheMacsServersThroughTheInterface(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			f := newTestNetwork()
 			f.metadata[0].DNS = []string{"192.0.2.53"}
-			withPrimary(f, "198.51.100.53")
+			f.system = addrs("198.51.100.53")
 			useDNSResponder(f, func(_, address string, q dnsmessage.Message) (dnsmessage.Message, error) {
 				r := answerFor(q)
 				if address == "192.0.2.53:53" {
@@ -579,11 +585,11 @@ func TestDNSFallsBackToTheMacsServersThroughTheInterface(t *testing.T) {
 func TestHealthCountsTheMacsDNS(t *testing.T) {
 	f := newTestNetwork()
 	f.metadata[0].DNS = nil
-	withPrimary(f, "198.51.100.53")
+	f.system = addrs("198.51.100.53")
 	if err := New(f.options()).Health(context.Background(), testRef()); err != nil {
 		t.Fatal(err)
 	}
-	f.metadata[1].DNS = []string{"10.0.0.53"}
+	f.system = addrs("10.0.0.53")
 	if err := New(f.options()).Health(context.Background(), testRef()); api.Code(err) != api.ErrDNSUnavailable {
 		t.Fatalf("a private server of another network counted: %v", err)
 	}

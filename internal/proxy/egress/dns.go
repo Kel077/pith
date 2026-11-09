@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -32,33 +33,48 @@ const (
 
 var errTruncated = errors.New("DNS response requires TCP")
 
-// FallbackDNS lists the DNS servers to ask through an interface when its own
-// don't answer, as a hotspot restarting its DNS doesn't: the Mac's, those of
-// its primary interface, if public, as only those answer through another
-// network. Queries to them still go through the interface. There are none
-// for the primary interface itself.
-func FallbackDNS(ifaces []api.Interface, name string) []netip.Addr {
-	for _, primary := range ifaces {
-		if !primary.Primary {
+// SystemDNS lists the Mac's DNS servers, as its resolver configuration does:
+// those the user set, or else the primary interface's.
+func SystemDNS() []netip.Addr {
+	data, err := os.ReadFile("/etc/resolv.conf")
+	if err != nil {
+		return nil
+	}
+	return parseResolvConf(data)
+}
+
+func parseResolvConf(data []byte) []netip.Addr {
+	var servers []netip.Addr
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "nameserver" {
 			continue
 		}
-		if primary.Name == name {
-			return nil
+		if addr, err := netip.ParseAddr(fields[1]); err == nil {
+			servers = append(servers, addr)
 		}
-		var result []netip.Addr
-		for _, raw := range primary.DNS {
-			addr, err := netip.ParseAddr(raw)
-			if err != nil || !public(addr.Unmap()) || slices.Contains(result, addr.Unmap()) {
-				continue
-			}
-			result = append(result, addr.Unmap())
-			if len(result) == maxDNSServers {
-				break
-			}
-		}
-		return result
 	}
-	return nil
+	return servers
+}
+
+// FallbackDNS lists the DNS servers to ask through an interface when its own
+// don't answer, as a hotspot restarting its DNS doesn't: the Mac's (system),
+// leaving out those only their own network reaches: private, shared and
+// link-local ones, and public IPv6 ones in an interface's /64, as a router's
+// own address is. Queries to them still go through the interface.
+func FallbackDNS(ifaces []api.Interface, system []netip.Addr) []netip.Addr {
+	var result []netip.Addr
+	for _, addr := range system {
+		addr = addr.Unmap()
+		if !public(addr) || onLink(ifaces, addr) || slices.Contains(result, addr) {
+			continue
+		}
+		result = append(result, addr)
+		if len(result) == maxDNSServers {
+			break
+		}
+	}
+	return result
 }
 
 // public tells an address any network reaches: not private, shared,
@@ -71,11 +87,30 @@ func public(addr netip.Addr) bool {
 // among them.
 var sharedAddresses = netip.MustParsePrefix("100.64.0.0/10")
 
+// onLink tells an IPv6 address in the /64 of one of the interfaces' own.
+func onLink(ifaces []api.Interface, addr netip.Addr) bool {
+	if !addr.Is6() {
+		return false
+	}
+	for _, iface := range ifaces {
+		for _, raw := range iface.IPv6 {
+			own, err := netip.ParseAddr(raw)
+			if err != nil {
+				continue
+			}
+			if prefix, err := own.Prefix(64); err == nil && prefix.Contains(addr) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // resolvers are the DNS servers to ask through an interface, in turn: its
 // own, then the Mac's (FallbackDNS).
-func resolvers(ifaces []api.Interface, iface api.Interface) []netip.Addr {
+func resolvers(ifaces []api.Interface, iface api.Interface, system []netip.Addr) []netip.Addr {
 	servers := dnsServers(iface)
-	for _, addr := range FallbackDNS(ifaces, iface.Name) {
+	for _, addr := range FallbackDNS(ifaces, system) {
 		if !slices.Contains(servers, addr) {
 			servers = append(servers, addr)
 		}

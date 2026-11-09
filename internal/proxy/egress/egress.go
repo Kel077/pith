@@ -34,6 +34,9 @@ type Options struct {
 	InterfaceByName  func(string) (*net.Interface, error)
 	InterfaceByIndex func(int) (*net.Interface, error)
 	DialContext      func(context.Context, string, string, string) (net.Conn, error)
+	// SystemDNS lists the Mac's DNS servers, to fall back on (FallbackDNS).
+	// Nil reads them from its resolver configuration.
+	SystemDNS func() []netip.Addr
 	// MetadataTTL is capped at one second. Zero uses that maximum; a negative
 	// value disables caching. Native interface identity is never cached.
 	MetadataTTL time.Duration
@@ -71,6 +74,9 @@ func New(opts Options) *Native {
 			}
 			return d.DialContext(ctx, network, address)
 		}
+	}
+	if opts.SystemDNS == nil {
+		opts.SystemDNS = SystemDNS
 	}
 	if opts.MetadataTTL == 0 || opts.MetadataTTL > metadataTime {
 		opts.MetadataTTL = metadataTime
@@ -177,7 +183,7 @@ func (n *Native) bind(ctx context.Context, via api.InterfaceRef) (binding, error
 		(iface.HardwareAddr != "" && iface.HardwareAddr != link.HardwareAddr.String()) {
 		return binding{}, unavailable("The selected interface identity changed")
 	}
-	b := binding{native: n, iface: *iface, index: link.Index, mac: link.HardwareAddr.String(), dns: resolvers(ifaces, *iface)}
+	b := binding{native: n, iface: *iface, index: link.Index, mac: link.HardwareAddr.String(), dns: resolvers(ifaces, *iface, n.opts.SystemDNS())}
 	if err := b.check(); err != nil {
 		return binding{}, err
 	}
