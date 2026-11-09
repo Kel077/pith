@@ -23,6 +23,10 @@ const (
 	maxCNAMEHops   = 8
 	dnsTime        = 4 * time.Second
 	dnsAttemptTime = 750 * time.Millisecond
+	// An attempt sends its query once more after dnsResendTime: a hotspot
+	// can drop the first query after a quiet while and answer the next at
+	// once, as the M2000 does.
+	dnsResendTime = 400 * time.Millisecond
 )
 
 var errTruncated = errors.New("DNS response requires TCP")
@@ -279,20 +283,47 @@ func (n *Native) exchange(ctx context.Context, b binding, server netip.Addr, pro
 		}
 		return response, nil
 	}
-	if count, err := conn.Write(request); err != nil {
-		return nil, normalizeDeadline(ctx, err)
-	} else if count != len(request) {
-		return nil, io.ErrShortWrite
+	send := func() error {
+		if count, err := conn.Write(request); err != nil {
+			return normalizeDeadline(ctx, err)
+		} else if count != len(request) {
+			return io.ErrShortWrite
+		}
+		return nil
+	}
+	if err := send(); err != nil {
+		return nil, err
 	}
 	response := make([]byte, maxDNSBytes+1)
-	size, err := conn.Read(response)
-	if err != nil {
-		return nil, normalizeDeadline(ctx, err)
+	// Listen until the query goes again, then until the deadline: a late
+	// answer to the first copy still counts.
+	resend := time.Now().Add(dnsResendTime)
+	for {
+		again := resend.Before(deadline)
+		until := deadline
+		if again {
+			until = resend
+		}
+		if err := conn.SetReadDeadline(until); err != nil {
+			return nil, err
+		}
+		size, err := conn.Read(response)
+		var timeout net.Error
+		if again && errors.As(err, &timeout) && timeout.Timeout() && ctx.Err() == nil {
+			if err := send(); err != nil {
+				return nil, err
+			}
+			resend = deadline
+			continue
+		}
+		if err != nil {
+			return nil, normalizeDeadline(ctx, err)
+		}
+		if size > maxDNSBytes {
+			return nil, errors.New("DNS response exceeds the size limit")
+		}
+		return response[:size], nil
 	}
-	if size > maxDNSBytes {
-		return nil, errors.New("DNS response exceeds the size limit")
-	}
-	return response[:size], nil
 }
 
 func normalizeDeadline(ctx context.Context, err error) error {

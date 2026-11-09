@@ -436,3 +436,73 @@ func TestDNSNoAddressFromAuthorityOrAdditional(t *testing.T) {
 		t.Fatal("non-answer address was accepted")
 	}
 }
+
+// dropFirstServer answers DNS on loopback, but the first query, which it
+// leaves unanswered as some hotspots do after a quiet while.
+func dropFirstServer(t *testing.T) (*net.UDPConn, func() int) {
+	t.Helper()
+	server, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { server.Close() })
+	var mu sync.Mutex
+	queries := 0
+	go func() {
+		buf := make([]byte, 1500)
+		for {
+			n, from, err := server.ReadFromUDP(buf)
+			if err != nil {
+				return
+			}
+			var q dnsmessage.Message
+			if q.Unpack(buf[:n]) != nil || len(q.Questions) != 1 {
+				continue
+			}
+			mu.Lock()
+			queries++
+			first := queries == 1
+			mu.Unlock()
+			if first {
+				continue
+			}
+			r := answerFor(q)
+			r.Answers = []dnsmessage.Resource{addressRecord(q.Questions[0].Name.String(), q.Questions[0].Type)}
+			if b, err := r.Pack(); err == nil {
+				server.WriteToUDP(b, from)
+			}
+		}
+	}()
+	return server, func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return queries
+	}
+}
+
+func TestDNSSendsAQueryAgainBeforeGivingUpOnItsServer(t *testing.T) {
+	server, queries := dropFirstServer(t)
+	f := newTestNetwork()
+	f.metadata[0].DNS = []string{"192.0.2.53"}
+	f.dial = func(ctx context.Context, name, network, address string) (net.Conn, error) {
+		if address != "192.0.2.53:53" {
+			return newTestConn(nil), nil
+		}
+		var dialer net.Dialer
+		return dialer.DialContext(ctx, "udp4", server.LocalAddr().String())
+	}
+	started := time.Now()
+	conn, err := New(f.options()).Dial(context.Background(), testRef(), proxy.Target{Host: "example.com", Port: 443, IsDomain: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.Close()
+	// One server, so without the second copy the query left unanswered would
+	// have failed after dnsAttemptTime.
+	if took := time.Since(started); took >= dnsAttemptTime {
+		t.Fatalf("resolved after %v", took)
+	}
+	if n := queries(); n != 3 {
+		t.Fatalf("%d queries, want 3: A, AAAA and one sent again", n)
+	}
+}
