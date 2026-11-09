@@ -6,7 +6,7 @@ All notable changes to Pith are listed here. The format follows [Keep a Changelo
 
 ### Fixed
 
-- Testing an interface no longer waits 5 seconds when its DNS server leaves a query unanswered, as the M2000 does with the first one after a quiet while: Pith asks again after 0.4 seconds. A test through the M2000 took over 5 seconds; it now takes under one.
+- Testing an interface no longer waits 5 seconds when its DNS server leaves a query unanswered, as the M2000 does with the first one after a quiet while: Pith asks again after 0.4 seconds. A test through the M2000 took over 5 seconds; it now takes about one.
 - **Change hotspot IP** no longer ends with **No internet**, or with only an IPv6 address, while the hotspot is still restarting its DNS: Pith tests it every second until it answers as it did before, for up to 25 seconds. It also tests the old IP while it reads the hotspot's settings, rather than first.
 
 ## [0.1.1] - 2026-11-07
