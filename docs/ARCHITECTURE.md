@@ -21,6 +21,11 @@ cancellation or a lost response follows an attempted disable. At most two restor
 requests are made; failures remain errors and are not reported as successful
 renewals. This is a device operation, independent of helper capture: changes to
 its public addresses, LAN addresses or DNS do not by themselves stop routing.
+The public-address test before a renewal runs while the device's network settings
+are read; data goes off only once both finish. Afterwards the client tests every
+second until the address families that answered before answer again, for 25
+seconds at most and 3 more for a family once the other works: a reconnected M2000
+refuses DNS queries for about ten seconds while its DNS server restarts.
 
 ## Local SOCKS5 listeners
 
@@ -546,6 +551,11 @@ The Network page's `Service.Probe` runs in the unprivileged App process, binds
 the requested interface and, for an empty target, sends HTTPS public-address
 requests for both address families. It does not invoke the helper. Distinguish
 the two paths by the process and startup timing rather than the endpoint alone.
+Its names resolve through the interface's DNS servers, link-local ones with the
+interface as their zone. A query goes again on the same socket after 0.4 seconds,
+then after twice as long, and to the next server after 2 seconds: Go's resolver
+alone waits 5 seconds for each answer, and the M2000 drops the first query after
+a quiet while.
 
 A SafeStart failure returns `ErrNetworkLost`, removes capture and closes every
 relay. Startup failure publishes completed connection records even before a

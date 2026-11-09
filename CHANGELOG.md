@@ -2,6 +2,13 @@
 
 All notable changes to Pith are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Testing an interface no longer waits 5 seconds when its DNS server leaves a query unanswered, as the M2000 does with the first one after a quiet while: Pith asks again after 0.4 seconds. A test through the M2000 took over 5 seconds; it now takes under one.
+- **Change hotspot IP** no longer ends with **No internet**, or with only an IPv6 address, while the hotspot is still restarting its DNS: Pith tests it every second until it answers as it did before, for up to 25 seconds. It also tests the old IP while it reads the hotspot's settings, rather than first.
+
 ## [0.1.1] - 2026-11-07
 
 A bug fix. It updates the helper, so macOS asks for your password once.
@@ -36,5 +43,6 @@ The first release, for Macs with Apple silicon.
 - With iCloud Private Relay on, domain and IP rules don't see where Safari goes.
 - Local proxies carry TCP only: no UDP, and no VPN interface as their exit.
 
+[Unreleased]: https://github.com/Kel077/pith/compare/v0.1.1...HEAD
 [0.1.1]: https://github.com/Kel077/pith/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Kel077/pith/releases/tag/v0.1.0
