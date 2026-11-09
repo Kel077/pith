@@ -123,3 +123,21 @@ func TestProxies(t *testing.T) {
 		t.Errorf("a VPN as a proxy's exit: %v", err)
 	}
 }
+
+// A speed test gives a connected interface speeds of its kind, and says
+// why one that isn't connected or doesn't exist has none.
+func TestSpeedTest(t *testing.T) {
+	s := New(Options{Sample: true, Seed: 1})
+	ctx := context.Background()
+	eth, err := s.SpeedTest(ctx, "en0")
+	phone, _ := s.SpeedTest(ctx, "en7")
+	if err != nil || !eth.OK || eth.Server == "" || eth.PublicIP == "" || eth.Download <= phone.Download || phone.Latency <= eth.Latency || phone.Upload <= 0 {
+		t.Fatalf("Ethernet %+v, iPhone %+v, %v", eth, phone, err)
+	}
+	if wifi, err := s.SpeedTest(ctx, "en1"); err != nil || wifi.OK || wifi.Problem == "" {
+		t.Fatalf("Wi-Fi, not connected: %+v %v", wifi, err)
+	}
+	if _, err := s.SpeedTest(ctx, "en99"); err == nil {
+		t.Fatal("tested an interface that doesn't exist")
+	}
+}
