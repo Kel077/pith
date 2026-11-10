@@ -42,11 +42,14 @@ type Options struct {
 	MaxTotal         int
 }
 
+// A browser opens a stream for every host a page loads from and keeps idle
+// ones for reuse: a Chromium-based browser held about 120 through one port for
+// a single news page. Each stream holds two sockets.
 const (
 	defaultHandshakeTimeout = 5 * time.Second
 	defaultConnectTimeout   = 10 * time.Second
-	defaultMaxPerPort       = 128
-	defaultMaxTotal         = 512
+	defaultMaxPerPort       = 1024
+	defaultMaxTotal         = 2048
 )
 
 // Manager owns all listeners and workers for one App client. Apply and Close
