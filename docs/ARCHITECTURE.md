@@ -79,14 +79,20 @@ TUN scene rules, connection history and traffic totals do not include this
 independent forwarding path. A client that resolves names itself or bypasses its
 proxy is outside the service's DNS/routing guarantee.
 
-The initial handshake has five seconds; CONNECT setup has ten seconds total
-from accept. There are at most 128 sessions per port and 512 overall, including
-handshakes. Relay preserves TCP half-close and records only successfully written
-stream bytes, excluding SOCKS negotiation and DNS. `Status.Proxies` includes
-disabled entries in configuration order; its `Since` and counters belong to one
-listener instance and reset on replacement. Listening means the local bind
-succeeded, not that the internet is reachable. Target-specific errors do not
-become listener errors.
+The initial handshake has five seconds; CONNECT setup has ten seconds total from
+accept. There are at most 1024 sessions per port and 2048 overall, including
+handshakes: a browser opens a stream for every host a page loads from and keeps
+idle ones for reuse, and a Chromium-based browser held about 120 through one
+port for a single news page. When a port, or all ports together, are full, the
+established stream that has moved no data the longest closes gracefully and the
+new connection takes its slot. Streams in their handshake or with a write in
+progress stay open; when no other stream is left, the new connection is refused.
+Relay preserves TCP half-close and records only successfully written stream
+bytes, excluding SOCKS negotiation and DNS. `Status.Proxies` includes disabled
+entries in configuration order; its `Since` and counters belong to one listener
+instance and reset on replacement. Listening means the local bind succeeded, not
+that the internet is reachable. Target-specific errors do not become listener
+errors.
 
 `client.New` is idle. The first successful `LoadConfig` activates enabled local
 listeners; a canceled first activation retracts partial listeners. Valid saved
