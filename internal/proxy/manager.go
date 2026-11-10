@@ -89,7 +89,16 @@ type session struct {
 	out    net.Conn
 	closed bool
 	active bool // protected by Manager.mu
+	// last is when the stream last moved data, on clock. writing counts its
+	// writes in progress: a client that stops reading stalls one for long.
+	last    atomic.Int64
+	writing atomic.Int32
 }
+
+// epoch starts the monotonic clock that tells which stream is quietest.
+var epoch = time.Now()
+
+func clock() int64 { return int64(time.Since(epoch)) }
 
 // New creates an idle manager. It does not bind a port or start a worker.
 func New(opts Options) (*Manager, error) {
@@ -257,10 +266,21 @@ func (m *Manager) accept(e *listener, ln net.Listener) {
 		}
 		backoff = 0
 		m.mu.Lock()
-		if m.closed || e.retired || m.byPort[e.cfg.Port] != e || m.total >= m.opts.MaxTotal || len(e.conns) >= m.opts.MaxPerPort {
+		if m.closed || e.retired || m.byPort[e.cfg.Port] != e {
 			m.mu.Unlock()
 			_ = conn.Close()
 			continue
+		}
+		// A browser keeps idle streams for reuse and opens one again when it
+		// finds it closed, while a refused connection fails its request. So a
+		// full port, or a full manager, closes its quietest stream for this one.
+		var quietest *session
+		if full := len(e.conns) >= m.opts.MaxPerPort; full || m.total >= m.opts.MaxTotal {
+			if quietest = m.quietestLocked(e, full); quietest == nil {
+				m.mu.Unlock()
+				_ = conn.Close()
+				continue
+			}
 		}
 		life, cancel := context.WithCancel(e.ctx)
 		s := &session{ctx: life, cancel: cancel, in: conn, start: time.Now()}
@@ -268,6 +288,9 @@ func (m *Manager) accept(e *listener, ln net.Listener) {
 		m.total++
 		m.wg.Add(1)
 		m.mu.Unlock()
+		if quietest != nil {
+			quietest.close(false)
+		}
 		go m.serve(e, s)
 	}
 }
@@ -383,13 +406,53 @@ func closeConn(conn net.Conn, reset bool) {
 func (m *Manager) finish(e *listener, s *session) {
 	s.close(false)
 	m.mu.Lock()
+	m.releaseLocked(e, s)
+	m.mu.Unlock()
+	m.wg.Done()
+}
+
+// releaseLocked frees the slot of s once: a stream that made room for a new
+// one gave its slot up before its worker finishes.
+func (m *Manager) releaseLocked(e *listener, s *session) {
+	if _, ok := e.conns[s]; !ok {
+		return
+	}
 	delete(e.conns, s)
 	m.total--
 	if s.active {
 		e.open--
 	}
-	m.mu.Unlock()
-	m.wg.Done()
+}
+
+// quietestLocked releases and returns the established stream that has moved
+// no data the longest, of e alone when e is full, else of every port. Streams
+// still being set up and streams writing are left alone; nil means none is
+// left. The caller closes the stream once Manager.mu is released.
+func (m *Manager) quietestLocked(e *listener, full bool) *session {
+	var owner *listener
+	var quietest *session
+	var since int64
+	consider := func(l *listener) {
+		for s := range l.conns {
+			if !s.active || s.writing.Load() != 0 {
+				continue
+			}
+			if last := s.last.Load(); quietest == nil || last < since {
+				owner, quietest, since = l, s, last
+			}
+		}
+	}
+	if full {
+		consider(e)
+	} else {
+		for _, l := range m.entries {
+			consider(l)
+		}
+	}
+	if quietest != nil {
+		m.releaseLocked(owner, quietest)
+	}
+	return quietest
 }
 
 func (m *Manager) activate(e *listener, s *session) bool {
@@ -399,6 +462,7 @@ func (m *Manager) activate(e *listener, s *session) bool {
 		return false
 	}
 	s.active = true
+	s.last.Store(clock())
 	e.open++
 	return true
 }

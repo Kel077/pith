@@ -389,6 +389,96 @@ func TestConnectionLimitsIncludePendingHandshakes(t *testing.T) {
 	roundTrip(t, c, "capacity returned")
 }
 
+func readClosed(t *testing.T, c net.Conn) {
+	t.Helper()
+	var b [1]byte
+	if _, err := c.Read(b[:]); !errors.Is(err, io.EOF) && !errors.Is(err, syscall.ECONNRESET) {
+		t.Fatalf("read = %v, want the stream closed", err)
+	}
+}
+
+func TestFullPortClosesItsQuietestStream(t *testing.T) {
+	peer := echoPeer(t)
+	m, f := newTestManager(t, Options{Dial: peer.dial, MaxPerPort: 2})
+	applyTest(t, m, testProxy(1080))
+	busy := connectTest(t, f, 1080)
+	roundTrip(t, busy, "first")
+	quiet := connectTest(t, f, 1080)
+	roundTrip(t, quiet, "second")
+	roundTrip(t, busy, "third")
+	newcomer := connectTest(t, f, 1080)
+	roundTrip(t, newcomer, "fourth")
+	readClosed(t, quiet)
+	roundTrip(t, busy, "fifth")
+	if st := m.Status(context.Background()); st[0].Open != 2 {
+		t.Fatalf("open streams = %d", st[0].Open)
+	}
+	_ = busy.Close()
+	_ = newcomer.Close()
+	waitFor(t, func() bool { m.mu.Lock(); defer m.mu.Unlock(); return m.total == 0 })
+}
+
+func TestFullManagerClosesTheQuietestStreamOfAnyPort(t *testing.T) {
+	peer := echoPeer(t)
+	m, f := newTestManager(t, Options{Dial: peer.dial, MaxPerPort: 2, MaxTotal: 2})
+	applyTest(t, m, testProxy(1080), testProxy(1081))
+	quiet := connectTest(t, f, 1080)
+	roundTrip(t, quiet, "first")
+	busy := connectTest(t, f, 1081)
+	roundTrip(t, busy, "second")
+	newcomer := connectTest(t, f, 1081)
+	roundTrip(t, newcomer, "third")
+	readClosed(t, quiet)
+	roundTrip(t, busy, "fourth")
+	if st := m.Status(context.Background()); st[0].Open != 0 || st[1].Open != 2 {
+		t.Fatalf("open streams = %d and %d", st[0].Open, st[1].Open)
+	}
+}
+
+func TestQuietestStreamIsEstablishedAndNotWriting(t *testing.T) {
+	m := &Manager{}
+	full := &listener{conns: make(map[*session]struct{})}
+	other := &listener{conns: make(map[*session]struct{})}
+	m.entries = []*listener{full, other}
+	add := func(l *listener, active bool, last int64, writing int32) *session {
+		s := &session{active: active}
+		s.last.Store(last)
+		s.writing.Store(writing)
+		l.conns[s] = struct{}{}
+		m.total++
+		if active {
+			l.open++
+		}
+		return s
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	add(full, false, 0, 0) // still in its handshake
+	add(full, true, 1, 1)  // writing to a client that stopped reading
+	quiet := add(full, true, 2, 0)
+	later := add(full, true, 3, 0)
+	elsewhere := add(other, true, 0, 0)
+	if got := m.quietestLocked(full, true); got != quiet {
+		t.Fatal("a full port did not close its quietest established stream")
+	}
+	if _, ok := full.conns[quiet]; ok || m.total != 4 || full.open != 2 {
+		t.Fatalf("slot after closing: conns %d, total %d, open %d", len(full.conns), m.total, full.open)
+	}
+	if got := m.quietestLocked(full, false); got != elsewhere {
+		t.Fatal("a full manager did not close the quietest stream of any port")
+	}
+	m.releaseLocked(other, elsewhere) // as its worker finishes
+	if m.total != 3 || other.open != 0 {
+		t.Fatalf("a closed stream's slot was freed twice: total %d, open %d", m.total, other.open)
+	}
+	if got := m.quietestLocked(full, true); got != later {
+		t.Fatal("the remaining idle stream did not make room")
+	}
+	if got := m.quietestLocked(full, true); got != nil {
+		t.Fatal("a stream in its handshake or writing made room")
+	}
+}
+
 func TestHalfCloseAndApplicationByteCounters(t *testing.T) {
 	peer := newPeer(t, func(c *net.TCPConn) {
 		b, err := io.ReadAll(c)

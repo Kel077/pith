@@ -251,22 +251,28 @@ func dialReply(err error) byte {
 	return replyGeneral
 }
 
+// countedWriter counts the bytes written and tells the session when it last
+// moved data and whether a write is still in progress.
 type countedWriter struct {
-	conn  net.Conn
-	count *atomic.Uint64
+	conn    net.Conn
+	count   *atomic.Uint64
+	session *session
 }
 
 func (w countedWriter) Write(p []byte) (int, error) {
+	w.session.writing.Add(1)
 	n, err := w.conn.Write(p)
 	if n > 0 {
 		w.count.Add(uint64(n))
+		w.session.last.Store(clock())
 	}
+	w.session.writing.Add(-1)
 	return n, err
 }
 
 func relay(s *session, out net.Conn, sent, received *atomic.Uint64) {
 	copyTo := func(dst, src net.Conn, count *atomic.Uint64) {
-		_, err := io.Copy(countedWriter{conn: dst, count: count}, src)
+		_, err := io.Copy(countedWriter{conn: dst, count: count, session: s}, src)
 		if err != nil {
 			s.close(false)
 			return
