@@ -687,6 +687,30 @@
   "roaming": "Roaming",
   "pithCanTControlThisDevice": "Pith can’t control this device.",
   "theHotspotRefusedItsPassword": "The hotspot refused its admin password.",
+  "changeIp": "Change IP",
+  "@changeIp": {
+    "description": "Button on an Ethernet or Wi-Fi interface's card when Pith can talk to its router: the router gives its public IPv4 address up and asks its provider for another. Locked, it asks for the router's admin password first."
+  },
+  "getsTheRouterANewPublicIpv4": "Gets the router a new public IPv4. Everything on its network is offline for a minute or two; this Mac goes through another network meanwhile.",
+  "@getsTheRouterANewPublicIpv4": {
+    "description": "Tooltip of the Change IP button of an interface whose router Pith can talk to. The router's whole home or office network loses the internet while it has no address."
+  },
+  "changingIp": "Changing…",
+  "@changingIp": {
+    "description": "Beside a spinner on an interface's card while its router changes its public IP, which takes a minute or two."
+  },
+  "anotherNetworkCarriesThisMacMeanwhile": "Another network carries this Mac meanwhile. This interface's local proxies refuse connections until it's back.",
+  "@anotherNetworkCarriesThisMacMeanwhile": {
+    "description": "Tooltip of the spinner while a router changes its public IP: macOS goes through another connected interface, and the local proxies through this one fail rather than use another."
+  },
+  "routerPassword": "Router admin password",
+  "@routerPassword": {
+    "description": "Title of the sheet that asks for a router's admin password, and tooltip of Change IP while Pith has none."
+  },
+  "noOtherNetworkCanCarryThisMac": "No other network has internet to carry this Mac meanwhile.",
+  "@noOtherNetworkCanCarryThisMac": {
+    "description": "Error when changing a router's IP: no other connected interface works, so Pith doesn't take the router offline."
+  },
   "localProxies": "Local proxies",
   "@localProxies": {
     "description": "The title of the settings' group of local SOCKS5 proxies, each a port on this Mac going out through one interface."

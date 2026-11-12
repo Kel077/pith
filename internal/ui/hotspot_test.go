@@ -21,7 +21,7 @@ func TestRenewalText(t *testing.T) {
 		{both("198.51.100.1", ""), both("198.51.100.1", ""), locales.IpUnchanged("198.51.100.1")},
 		{both("198.51.100.1", ""), api.Probe{}, ""},
 	} {
-		if got := renewalText(api.HotspotRenewal{Before: tt.before, After: tt.after}); got != tt.want {
+		if got := renewalText(tt.before, tt.after); got != tt.want {
 			t.Errorf("%+v → %+v: %q, want %q", tt.before, tt.after, got, tt.want)
 		}
 	}

@@ -32,9 +32,11 @@ type hotspots struct {
 	kick  chan struct{}            // read them now
 }
 
+// unlockDialog asks for the admin password of a hotspot, or of a router.
 type unlockDialog struct {
 	open     bool
 	iface    string
+	router   bool
 	password string
 	wrong    bool
 	busy     bool
@@ -57,8 +59,8 @@ func (a *App) watchHotspots() {
 	}
 }
 
-// pollHotspots reads the hotspots every hotspotPoll while a view shows
-// them; never otherwise.
+// pollHotspots reads the hotspots, and the routers, every hotspotPoll while a
+// view shows them; never otherwise.
 func (a *App) pollHotspots(ctx context.Context) {
 	t := time.NewTicker(hotspotPoll)
 	defer t.Stop()
@@ -76,6 +78,12 @@ func (a *App) pollHotspots(ctx context.Context) {
 			for _, name := range *names {
 				h, err := a.Service.Hotspot(ctx, name)
 				a.Post(func() { a.setHotspot(name, h, err) })
+			}
+		}
+		if names := a.router.names.Load(); names != nil {
+			for _, name := range *names {
+				r, err := a.Service.Router(ctx, name)
+				a.Post(func() { a.setRouter(name, r, err) })
 			}
 		}
 	}
@@ -226,12 +234,13 @@ func hotspotScreen(c *ui.Context, h api.Hotspot, col ui.Color) {
 	}
 }
 
-// renewalText tells what changing a hotspot's IP did: its public IPv4 before
-// and after, or its IPv6 when it has no IPv4 after.
-func renewalText(r api.HotspotRenewal) string {
-	before, after := r.Before.PublicIPv4, r.After.PublicIPv4
+// renewalText tells what changing an IP did, from Pith's tests before and
+// after: the public IPv4 before and after, or the IPv6 when there is no IPv4
+// after.
+func renewalText(b, a api.Probe) string {
+	before, after := b.PublicIPv4, a.PublicIPv4
 	if after == "" {
-		before, after = r.Before.PublicIPv6, r.After.PublicIPv6
+		before, after = b.PublicIPv6, a.PublicIPv6
 	}
 	switch {
 	case after == "":
@@ -299,13 +308,17 @@ var bandsMHz = map[int]string{
 	46: "5 GHz", 48: "3.5 GHz", 66: "1700/2100 MHz", 70: "1700/2000 MHz", 71: "600 MHz",
 }
 
-// unlockView asks for a hotspot's admin password, and keeps it once the
-// hotspot takes it.
+// unlockView asks for a hotspot's or a router's admin password, and keeps it
+// once the device takes it.
 func (a *App) unlockView(c *ui.Context) {
 	d := &a.hotspot.unlock
 	t := c.Theme()
 	sheet(c, &d.open, 360, func() {
-		sheetTitle(c, locales.HotspotPassword())
+		title := locales.HotspotPassword()
+		if d.router {
+			title = locales.RouterPassword()
+		}
+		sheetTitle(c, title)
 		in := sheetInput(c, ui.TextInput(c.Key("hotspot-password"), &d.password)).Password().AutoFocus().Margin(14, 0, 0)
 		if in.Changed() {
 			d.wrong = false
@@ -322,11 +335,15 @@ func (a *App) unlockView(c *ui.Context) {
 			ok := sheetPrimary(c, "save", locales.Save(), d.password == "" || d.busy).Clicked()
 			if (ok || submit) && d.password != "" && !d.busy {
 				d.busy = true
-				name, password := d.iface, d.password
+				name, password, router := d.iface, d.password, d.router
 				wrong := false
 				a.async(func(ctx context.Context) error {
 					// A refused password is said in the sheet, not in a toast.
-					err := a.Service.SetHotspotPassword(ctx, name, password)
+					set := a.Service.SetHotspotPassword
+					if router {
+						set = a.Service.SetRouterPassword
+					}
+					err := set(ctx, name, password)
 					wrong = api.Code(err) == api.ErrWrongPassword
 					if wrong {
 						return nil

@@ -3144,6 +3144,110 @@ func (msgs Messages) TheHotspotRefusedItsPassword() string {
 	return Catalog.Format(msgs.locale, "theHotspotRefusedItsPassword", nil)
 }
 
+// ChangeIp says "Change IP"
+// in the language the app shows.
+//
+// Button on an Ethernet or Wi-Fi interface's card when Pith can talk to its
+// router: the router gives its public IPv4 address up and asks its provider
+// for another. Locked, it asks for the router's admin password first.
+func ChangeIp() string { return In(i18n.Locale()).ChangeIp() }
+
+// ChangeIp says "Change IP"
+// in the language of msgs.
+//
+// Button on an Ethernet or Wi-Fi interface's card when Pith can talk to its
+// router: the router gives its public IPv4 address up and asks its provider
+// for another. Locked, it asks for the router's admin password first.
+func (msgs Messages) ChangeIp() string {
+	return Catalog.Format(msgs.locale, "changeIp", nil)
+}
+
+// GetsTheRouterANewPublicIpv4 says "Gets the router a new public IPv4. Everything on its network is offline for a minute or two; this Mac goes through an…"
+// in the language the app shows.
+//
+// Tooltip of the Change IP button of an interface whose router Pith can
+// talk to. The router's whole home or office network loses the internet
+// while it has no address.
+func GetsTheRouterANewPublicIpv4() string { return In(i18n.Locale()).GetsTheRouterANewPublicIpv4() }
+
+// GetsTheRouterANewPublicIpv4 says "Gets the router a new public IPv4. Everything on its network is offline for a minute or two; this Mac goes through an…"
+// in the language of msgs.
+//
+// Tooltip of the Change IP button of an interface whose router Pith can
+// talk to. The router's whole home or office network loses the internet
+// while it has no address.
+func (msgs Messages) GetsTheRouterANewPublicIpv4() string {
+	return Catalog.Format(msgs.locale, "getsTheRouterANewPublicIpv4", nil)
+}
+
+// ChangingIp says "Changing…"
+// in the language the app shows.
+//
+// Beside a spinner on an interface's card while its router changes its
+// public IP, which takes a minute or two.
+func ChangingIp() string { return In(i18n.Locale()).ChangingIp() }
+
+// ChangingIp says "Changing…"
+// in the language of msgs.
+//
+// Beside a spinner on an interface's card while its router changes its
+// public IP, which takes a minute or two.
+func (msgs Messages) ChangingIp() string {
+	return Catalog.Format(msgs.locale, "changingIp", nil)
+}
+
+// AnotherNetworkCarriesThisMacMeanwhile says "Another network carries this Mac meanwhile. This interface's local proxies refuse connections until it's back."
+// in the language the app shows.
+//
+// Tooltip of the spinner while a router changes its public IP: macOS goes
+// through another connected interface, and the local proxies through this
+// one fail rather than use another.
+func AnotherNetworkCarriesThisMacMeanwhile() string {
+	return In(i18n.Locale()).AnotherNetworkCarriesThisMacMeanwhile()
+}
+
+// AnotherNetworkCarriesThisMacMeanwhile says "Another network carries this Mac meanwhile. This interface's local proxies refuse connections until it's back."
+// in the language of msgs.
+//
+// Tooltip of the spinner while a router changes its public IP: macOS goes
+// through another connected interface, and the local proxies through this
+// one fail rather than use another.
+func (msgs Messages) AnotherNetworkCarriesThisMacMeanwhile() string {
+	return Catalog.Format(msgs.locale, "anotherNetworkCarriesThisMacMeanwhile", nil)
+}
+
+// RouterPassword says "Router admin password"
+// in the language the app shows.
+//
+// Title of the sheet that asks for a router's admin password, and tooltip
+// of Change IP while Pith has none.
+func RouterPassword() string { return In(i18n.Locale()).RouterPassword() }
+
+// RouterPassword says "Router admin password"
+// in the language of msgs.
+//
+// Title of the sheet that asks for a router's admin password, and tooltip
+// of Change IP while Pith has none.
+func (msgs Messages) RouterPassword() string {
+	return Catalog.Format(msgs.locale, "routerPassword", nil)
+}
+
+// NoOtherNetworkCanCarryThisMac says "No other network has internet to carry this Mac meanwhile."
+// in the language the app shows.
+//
+// Error when changing a router's IP: no other connected interface works, so
+// Pith doesn't take the router offline.
+func NoOtherNetworkCanCarryThisMac() string { return In(i18n.Locale()).NoOtherNetworkCanCarryThisMac() }
+
+// NoOtherNetworkCanCarryThisMac says "No other network has internet to carry this Mac meanwhile."
+// in the language of msgs.
+//
+// Error when changing a router's IP: no other connected interface works, so
+// Pith doesn't take the router offline.
+func (msgs Messages) NoOtherNetworkCanCarryThisMac() string {
+	return Catalog.Format(msgs.locale, "noOtherNetworkCanCarryThisMac", nil)
+}
+
 // LocalProxies says "Local proxies"
 // in the language the app shows.
 //

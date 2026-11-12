@@ -155,13 +155,18 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 		if isHotspot {
 			a.hotspotDevice(c, h, col)
 		}
+		rt, isRouter := a.router.info[i.Name]
 		// The details, as rows of their own inside the pane.
 		ui.Column(c).Radius(12).Background(subtle(t, 0.03)).Dividers(1, hairline(t)).Children(func() {
 			kv(c, "IPv4", strings.Join(i.IPv4, ", "))
 			if len(i.IPv6) > 0 {
 				kv(c, "IPv6", i.IPv6[0])
 			}
-			kv(c, locales.Router(), i.Router)
+			if isRouter && i.Router != "" {
+				kv(c, locales.Router(), i.Router+" · "+rt.Model)
+			} else {
+				kv(c, locales.Router(), i.Router)
+			}
 			kv(c, "DNS", strings.Join(i.DNS, ", "))
 			if i.HardwareAddr != "" {
 				kv(c, locales.Hardware(), i.HardwareAddr)
@@ -171,9 +176,14 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 		// it; over it, the public IP it found and where, or what changing a
 		// hotspot's IP did, on a line of its own that both addresses fit,
 		// wrapping rather than cutting them.
-		renewal := renewalText(a.hotspot.renewals[i.Name]) // "" for none
+		hr, rr := a.hotspot.renewals[i.Name], a.router.renewals[i.Name]
+		renewal := renewalText(hr.Before, hr.After) // "" for none
+		if isRouter {
+			renewal = renewalText(rr.Before, rr.After)
+		}
 		s, tested := a.speeds[i.Name]
-		busy := a.hotspot.renewing[i.Name] || a.speeding[i.Name]
+		renewing := a.hotspot.renewing[i.Name] || a.router.renewing[i.Name]
+		busy := renewing || a.speeding[i.Name]
 		ui.Column(c).Gap(8).Margin(ui.Auto, 0, 0, 0).Children(func() {
 			switch {
 			case renewal != "":
@@ -196,6 +206,11 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 				case a.hotspot.renewing[i.Name]:
 					ui.Spinner(c)
 					muted(c, locales.ChangingHotspotIp())
+				case a.router.renewing[i.Name]:
+					ui.Row(c).Gap(10).Tooltip(locales.AnotherNetworkCarriesThisMacMeanwhile()).Children(func() {
+						ui.Spinner(c)
+						muted(c, locales.ChangingIp())
+					})
 				case a.speeding[i.Name]:
 					ui.Spinner(c)
 					muted(c, locales.Testing())
@@ -220,6 +235,22 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 					}
 					if renew.Clicked() && !busy && !h.Locked && h.Connected {
 						a.renewHotspot(i.Name)
+					}
+				}
+				if isRouter {
+					// Locked, it asks for the router's password.
+					icon, tip := icSwap, locales.GetsTheRouterANewPublicIpv4()
+					if rt.Locked {
+						icon, tip = icLock, locales.RouterPassword()
+					}
+					renew := glassCapsuleButton(c, "renew-router", icon, locales.ChangeIp()).Focusable().Shrink(0).Tooltip(tip).Disabled(busy || !rt.Locked && !rt.Connected)
+					if renew.Clicked() && !busy {
+						switch {
+						case rt.Locked:
+							a.hotspot.unlock = unlockDialog{open: true, iface: i.Name, router: true}
+						case rt.Connected:
+							a.renewRouter(i.Name)
+						}
 					}
 				}
 				test := glassCapsuleButton(c, "test", nil, locales.TestSpeed()).Focusable().Shrink(0).Tooltip(locales.Downloads25MbAndUploads8Mb()).Disabled(busy)
@@ -318,11 +349,12 @@ func speedFigures(c *ui.Context, s api.SpeedTest) {
 func (a *App) testSpeeds(names []string) {
 	var queue []string
 	for _, name := range names {
-		if a.speeding[name] || a.hotspot.renewing[name] {
+		if a.speeding[name] || a.hotspot.renewing[name] || a.router.renewing[name] {
 			continue
 		}
 		a.speeding[name] = true
 		delete(a.hotspot.renewals, name)
+		delete(a.router.renewals, name)
 		queue = append(queue, name)
 	}
 	a.nextSpeedTest(queue)

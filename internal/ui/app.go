@@ -88,6 +88,7 @@ type App struct {
 	speeds    map[string]api.SpeedTest // by interface
 	speeding  map[string]bool
 	hotspot   hotspots
+	router    routers
 	apps      []api.AppRef
 	appsAsk   bool
 	icons     map[string]*appIcon
@@ -150,6 +151,7 @@ func New(o Options) *App {
 		speeds:   map[string]api.SpeedTest{},
 		speeding: map[string]bool{},
 		hotspot:  newHotspots(),
+		router:   newRouters(),
 		icons:    map[string]*appIcon{},
 		page:     cmp.Or(o.Page, "rules"),
 	}
@@ -191,6 +193,7 @@ func (a *App) Sync(ctx context.Context) {
 	if ifs, err := a.Service.Interfaces(ctx); err == nil {
 		a.setIfaces(ifs)
 		a.readHotspots(ctx)
+		a.readRouters(ctx)
 	}
 	if conns, err := a.Service.Connections(ctx, api.ConnectionQuery{Limit: 500}); err == nil {
 		a.setConnections(conns)
@@ -329,7 +332,9 @@ func (a *App) setIfaces(ifs []api.Interface) {
 	a.ifaces = withoutOwnTunnel(ifs, a.status)
 	// Another device may sit behind an interface now: ask again.
 	clear(a.hotspot.none)
+	clear(a.router.none)
 	a.hotspotNames()
+	a.routerNames()
 }
 
 func (a *App) setConnections(conns []api.Connection) {
@@ -792,6 +797,8 @@ func errorText(err error) string {
 		msg = locales.PithCanTControlThisDevice()
 	case api.ErrWrongPassword:
 		msg = locales.TheHotspotRefusedItsPassword()
+	case api.ErrNoStandby:
+		msg = locales.NoOtherNetworkCanCarryThisMac()
 	default:
 		msg = locales.SomethingWentWrong()
 		if detail == "" {

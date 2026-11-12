@@ -210,6 +210,29 @@ func TestSnapshots(t *testing.T) {
 		tt.SetScale(2)
 		tt.Frame()
 		save(t, tt.Image(), "hotspot-locked-"+mode)
+
+		// Ethernet's router: its card while it changes its IP, after, and
+		// locked, with the sheet that asks for its admin password.
+		a, svc = testApp(t, mock.Options{Sample: true, HelperInstalled: true, Running: true})
+		a.page = "network"
+		for _, state := range []string{"renewing", "renewed", "locked"} {
+			switch state {
+			case "renewing":
+				a.router.renewing["en0"] = true
+			case "renewed":
+				delete(a.router.renewing, "en0")
+				a.router.renewals["en0"] = api.RouterRenewal{Before: api.Probe{PublicIPv4: "203.0.113.24"}, After: api.Probe{PublicIPv4: "203.0.113.25"}, Standby: "en9", Tries: 2}
+			case "locked":
+				svc.LockRouter()
+				a.Sync(context.Background())
+				a.hotspot.unlock = unlockDialog{open: true, iface: "en0", router: true}
+			}
+			tt = ui.NewTester(a.WindowView, 1040, 860)
+			tt.SetDark(dark)
+			tt.SetScale(2)
+			tt.Frame()
+			save(t, tt.Image(), "router-"+state+"-"+mode)
+		}
 	}
 	// Warnings: an interface of a rule is down, and a catch-all rule on
 	// top shadows the rules under it.
