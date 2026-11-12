@@ -73,6 +73,21 @@ type Service interface {
 	// connected again.
 	RenewHotspot(ctx context.Context, iface string) (HotspotRenewal, error)
 
+	// Router reads the router behind a wired interface, by its Name:
+	// ErrUnsupported when Pith can't talk to it.
+	Router(ctx context.Context, iface string) (Router, error)
+	// SetRouterPassword tries the admin password of the router behind an
+	// interface, ErrWrongPassword when it refuses it, and keeps it in the
+	// keychain.
+	SetRouterPassword(ctx context.Context, iface, password string) error
+	// RenewRouter has the router behind an interface give up its public IPv4
+	// address and ask its provider for one again, until it gets another or
+	// gives up, and returns once the internet works through it again. While it
+	// is offline the interface counts as down: another connected interface
+	// becomes macOS's primary, rules skip it, and local proxies through it
+	// refuse connections. The router's other devices are offline meanwhile.
+	RenewRouter(ctx context.Context, iface string) (RouterRenewal, error)
+
 	// Connections returns logged connections, newest first.
 	Connections(ctx context.Context, q ConnectionQuery) ([]Connection, error)
 	// ClearConnections empties the connection log.
@@ -449,6 +464,30 @@ type HotspotRenewal struct {
 	Before Probe         `json:"before"`
 	After  Probe         `json:"after"`
 	Took   time.Duration `json:"took"` // until the hotspot was connected again
+}
+
+// Router is the router behind a wired interface, as its admin reports its
+// connection to the internet.
+type Router struct {
+	Interface  string `json:"interface"`
+	Model      string `json:"model"`                // as it names itself: CHR30A-R
+	Connected  bool   `json:"connected"`            // to the internet
+	PublicIPv4 string `json:"publicIPv4,omitempty"` // its address on the internet
+	// Locked: Pith needs the router's admin password, SetRouterPassword, to
+	// read its connection and to renew its address.
+	Locked bool      `json:"locked,omitempty"`
+	At     time.Time `json:"at"`
+}
+
+// RouterRenewal tells what renewing a router's address changed: Pith's
+// HTTPS test through its interface before and after.
+type RouterRenewal struct {
+	Before Probe `json:"before"`
+	After  Probe `json:"after"`
+	// Standby is the interface that was macOS's primary meanwhile, by its Name.
+	Standby string        `json:"standby,omitempty"`
+	Tries   int           `json:"tries"` // times the router gave its address up
+	Took    time.Duration `json:"took"`  // until the internet worked through it again
 }
 
 // ---- Connections and traffic ------------------------------------------------
