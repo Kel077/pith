@@ -51,6 +51,20 @@ func (f *Router) Do(fn func(f *Router)) {
 	fn(f)
 }
 
+// Release gives the address up, as its page's Release button does.
+func (f *Router) Release() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.release()
+}
+
+func (f *Router) release() {
+	f.Calls = append(f.Calls, "release")
+	if f.Address.IsValid() {
+		f.last, f.Address = f.Address, netip.Addr{}
+	}
+}
+
 func (f *Router) session(r *http.Request) bool {
 	c, err := r.Cookie("session")
 	return err == nil && f.sessions[c.Value]
@@ -141,10 +155,7 @@ func (f *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		switch {
 		case in.Pairs["Device.DHCPv4.Client.[Alias == 'wan'].X_PRPL-COM_Release"] == 1:
-			f.Calls = append(f.Calls, "release")
-			if f.Address.IsValid() {
-				f.last, f.Address = f.Address, netip.Addr{}
-			}
+			f.release()
 		case in.Pairs["Device.DHCPv4.Client.[Alias == 'wan'].Renew"] == 1:
 			f.Calls = append(f.Calls, "renew")
 			f.waiting = f.Reconnect

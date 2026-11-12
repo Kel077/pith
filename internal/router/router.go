@@ -185,6 +185,27 @@ func (d *Verizon) Renew(ctx context.Context, pause time.Duration) (w WAN, result
 	return w, nil
 }
 
+// Restore asks a router that has no address for one again, as after a
+// renewal that was cut short, and waits until it is connected, 90 seconds at
+// most. A connected router is left alone.
+func (d *Verizon) Restore(ctx context.Context) (WAN, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if w, err := d.wan(ctx); err != nil || w.Connected {
+		return w, err
+	}
+	if err := d.set(ctx, renewParameter); err != nil {
+		return WAN{}, fmt.Errorf("router: ask for an address again: %w", err)
+	}
+	if w, ok := d.await(ctx, 90*time.Second, func(w WAN) bool { return w.Connected }); ok {
+		return w, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return WAN{}, err
+	}
+	return WAN{}, errors.New("router: not connected again after 90 s")
+}
+
 // Reconnected waits until the router is connected, for limit at most, and
 // returns its connection then; false when it isn't.
 func (d *Verizon) Reconnected(ctx context.Context, limit time.Duration) (WAN, bool) {

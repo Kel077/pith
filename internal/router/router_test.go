@@ -231,3 +231,26 @@ func TestClose(t *testing.T) {
 		}
 	})
 }
+
+func TestRestore(t *testing.T) {
+	f := routertest.New("203.0.113.10")
+	d := newRouter(t, f, routertest.Password)
+	if _, err := d.Restore(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	f.Do(func(f *routertest.Router) {
+		if len(f.Calls) != 0 {
+			t.Fatalf("a connected router was asked %v", f.Calls)
+		}
+	})
+	f.Release() // and nobody asked for an address again
+	w, err := d.Restore(context.Background())
+	if err != nil || !w.Connected {
+		t.Fatalf("Restore = %+v, %v", w, err)
+	}
+	f.Do(func(f *routertest.Router) {
+		if !slices.Equal(f.Calls, []string{"release", "renew"}) {
+			t.Fatalf("calls = %v", f.Calls)
+		}
+	})
+}
