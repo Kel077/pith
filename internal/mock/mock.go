@@ -51,8 +51,10 @@ type Service struct {
 	born   time.Time // when the mock started: traffic before it is made up
 	series []api.TrafficSample
 
-	hotspotLocked bool // Pith has no admin password for the hotspot
-	renewals      int  // how often the hotspot was renewed: its public addresses
+	hotspotLocked  bool // Pith has no admin password for the hotspot
+	renewals       int  // how often the hotspot was renewed: its public addresses
+	routerLocked   bool // Pith has no admin password for Ethernet's router
+	routerRenewals int  // how often the router was renewed: its public IPv4 address
 
 	proxies   map[int]*api.ProxyStatus // the counters of listening proxies, by port
 	portInUse int                      // Options.ProxyPortInUse
@@ -337,6 +339,8 @@ func (s *Service) Probe(ctx context.Context, iface, target string) (api.Probe, e
 				p.PublicIPv4, p.PublicIPv6 = fmt.Sprintf("198.51.100.%d", 80+s.renewals%100), fmt.Sprintf("2001:db8:%x::1", 0x90+s.renewals)
 			} else if i.Kind == api.KindCellular {
 				p.PublicIPv4, p.PublicIPv6 = "198.51.100.77", "2001:db8:77::1"
+			} else if i.Name == routerIface {
+				p.PublicIPv4, p.PublicIPv6 = s.ethernetIPv4Locked(), "2001:db8:24::1"
 			} else {
 				p.PublicIPv4, p.PublicIPv6 = "203.0.113.24", "2001:db8:24::1"
 			}

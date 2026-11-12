@@ -141,3 +141,31 @@ func TestSpeedTest(t *testing.T) {
 		t.Fatal("tested an interface that doesn't exist")
 	}
 }
+
+func TestRouter(t *testing.T) {
+	s := New(Options{Seed: 1})
+	ctx := context.Background()
+	if _, err := s.Router(ctx, hotspotIface); api.Code(err) != api.ErrUnsupported {
+		t.Fatalf("a hotspot's router: %v", err)
+	}
+	s.LockRouter()
+	if r, err := s.Router(ctx, routerIface); err != nil || !r.Locked || r.PublicIPv4 != "" {
+		t.Fatalf("locked: %+v %v", r, err)
+	}
+	if _, err := s.RenewRouter(ctx, routerIface); api.Code(err) != api.ErrWrongPassword {
+		t.Fatalf("renewed a locked router: %v", err)
+	}
+	if err := s.SetRouterPassword(ctx, routerIface, "wrong"); api.Code(err) != api.ErrWrongPassword {
+		t.Fatalf("a wrong password: %v", err)
+	}
+	if err := s.SetRouterPassword(ctx, routerIface, "example-password"); err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.RenewRouter(ctx, routerIface)
+	if err != nil || r.Before.PublicIPv4 == r.After.PublicIPv4 || r.After.PublicIPv4 == "" || r.Standby != hotspotIface {
+		t.Fatalf("renewal: %+v %v", r, err)
+	}
+	if got, _ := s.Router(ctx, routerIface); got.PublicIPv4 != r.After.PublicIPv4 {
+		t.Fatalf("the router says %s, the test %s", got.PublicIPv4, r.After.PublicIPv4)
+	}
+}
