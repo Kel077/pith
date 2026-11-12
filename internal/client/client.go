@@ -68,6 +68,12 @@ type Client struct {
 	hotspotPort    string        // of the hotspots' web admin: 80 when empty
 	hotspotPace    time.Duration // between tests after a renewal: a second when zero
 	hotspotIndex   func(string) (int, error)
+	routers        map[string]*routerSession
+	routerPort     string          // of the routers' web admin: 443 when empty
+	routerPauses   []time.Duration // a renewing router's pauses: routerPauses when nil
+	routerSettle   time.Duration   // for apps to move to another primary: two seconds when zero
+	renewing       sync.Mutex      // one router renews at a time
+	drained        *drainState     // guarded by mu; an interface that counts as down
 	secretGet      func(ctx context.Context, service, account string) (string, error)
 	secretSet      func(ctx context.Context, service, account, secret string) error
 	proxyMu        sync.Mutex

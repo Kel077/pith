@@ -20,6 +20,7 @@ func (c *Client) LoadConfig(ctx context.Context) (api.Config, error) {
 	if err != nil {
 		return cfg, err
 	}
+	c.recoverDrain(ctx, cfg)
 	return cfg, c.syncProxies(ctx, cfg.Proxies, true)
 }
 

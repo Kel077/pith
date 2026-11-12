@@ -24,6 +24,7 @@ type fakeEngine struct {
 	mu                     sync.Mutex
 	status                 api.Status
 	lastScene              api.Scene
+	scenes                 []api.Scene // started and reloaded, in turn
 	reloads, starts, stops int
 	subs                   map[chan api.Event]bool
 }
@@ -51,6 +52,7 @@ func (e *fakeEngine) Start(ctx context.Context, scene api.Scene, settings api.Se
 	e.starts++
 	e.status = api.Status{State: api.Running, SceneID: scene.ID}
 	e.lastScene = scene
+	e.scenes = append(e.scenes, scene)
 	e.publish()
 	return nil
 }
@@ -59,6 +61,7 @@ func (e *fakeEngine) Reload(ctx context.Context, scene api.Scene, settings api.S
 	defer e.mu.Unlock()
 	e.reloads++
 	e.lastScene = scene
+	e.scenes = append(e.scenes, scene)
 	return nil
 }
 func (e *fakeEngine) Stop(ctx context.Context) error {

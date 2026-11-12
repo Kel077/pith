@@ -185,6 +185,14 @@ func (d *Verizon) Renew(ctx context.Context, pause time.Duration) (w WAN, result
 	return w, nil
 }
 
+// Reconnected waits until the router is connected, for limit at most, and
+// returns its connection then; false when it isn't.
+func (d *Verizon) Reconnected(ctx context.Context, limit time.Duration) (WAN, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.await(ctx, limit, func(w WAN) bool { return w.Connected })
+}
+
 // Close ends Pith's session, so that it doesn't count against the sessions
 // the router allows.
 func (d *Verizon) Close(ctx context.Context) {

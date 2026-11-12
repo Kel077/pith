@@ -181,7 +181,7 @@ func (c *Client) Start(ctx context.Context, sceneID string) error {
 	if err := c.requireHelper(ctx); err != nil {
 		return err
 	}
-	return c.request(ctx, http.MethodPost, "/v1/start", helper.StartRequest{Scene: *scene, Settings: cfg.Settings}, nil)
+	return c.request(ctx, http.MethodPost, "/v1/start", helper.StartRequest{Scene: c.effectiveScene(*scene), Settings: cfg.Settings}, nil)
 }
 
 func (c *Client) Stop(ctx context.Context) error {
@@ -209,7 +209,7 @@ func (c *Client) applyConfig(ctx context.Context, cfg api.Config) error {
 	}
 	for _, scene := range cfg.Scenes {
 		if scene.ID == status.SceneID {
-			if err := c.request(ctx, http.MethodPost, "/v1/reload", helper.StartRequest{Scene: scene, Settings: cfg.Settings}, nil); err != nil {
+			if err := c.request(ctx, http.MethodPost, "/v1/reload", helper.StartRequest{Scene: c.effectiveScene(scene), Settings: cfg.Settings}, nil); err != nil {
 				return fmt.Errorf("configuration saved; hot reload failed: %w", err)
 			}
 			return nil
