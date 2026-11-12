@@ -25,6 +25,7 @@ const (
 	ErrPortInUse            ErrorCode = "port_in_use"           // another listener owns the requested local proxy port
 	ErrInterfaceUnavailable ErrorCode = "interface_unavailable" // the selected local proxy exit cannot be resolved or used
 	ErrDNSUnavailable       ErrorCode = "dns_unavailable"       // the selected local proxy exit has no usable DNS servers
+	ErrNoStandby            ErrorCode = "no_standby"            // no other connected interface has internet to carry the Mac while a router renews its address
 	ErrInternal             ErrorCode = "internal"
 )
 
