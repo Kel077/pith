@@ -98,7 +98,7 @@ func (e *fakeEngine) drop() {
 	}
 }
 
-func startLocalHelper(t *testing.T, version string, backend helper.Backend) (*Client, context.CancelFunc, <-chan error) {
+func startLocalHelper(t *testing.T, version string, backend helper.Backend, options ...func(*helper.ServerOptions)) (*Client, context.CancelFunc, <-chan error) {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "pith-ipc-")
 	if err != nil {
@@ -107,12 +107,16 @@ func startLocalHelper(t *testing.T, version string, backend helper.Backend) (*Cl
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	socket := filepath.Join(dir, "s")
 	ctx, cancel := context.WithCancel(context.Background())
-	server := helper.NewServer(helper.ServerOptions{SocketPath: socket, Version: version, OwnerUID: uint32(os.Getuid()), Backend: backend, WatchInterfaces: func(ctx context.Context) (<-chan []api.Interface, error) {
+	opts := helper.ServerOptions{SocketPath: socket, Version: version, OwnerUID: uint32(os.Getuid()), Backend: backend, WatchInterfaces: func(ctx context.Context) (<-chan []api.Interface, error) {
 		ch := make(chan []api.Interface, 1)
 		ch <- []api.Interface{{Name: "en0", Label: "Example", Up: true}}
 		go func() { <-ctx.Done(); close(ch) }()
 		return ch, nil
-	}})
+	}}
+	for _, option := range options {
+		option(&opts)
+	}
+	server := helper.NewServer(opts)
 	done := make(chan error, 1)
 	go func() { done <- server.Run(ctx) }()
 	t.Cleanup(func() {
@@ -341,5 +345,47 @@ func TestIPCRejectsBadRequestsAndIdleStart(t *testing.T) {
 	cancel()
 	if _, err := c.Status(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
+	}
+}
+
+// A yield lasts while the client keeps its request open, and ends at once
+// when the client releases it.
+func TestIPCYield(t *testing.T) {
+	yielded := make(chan string, 1)
+	restored := make(chan struct{})
+	fake := func(ctx context.Context, iface string, ready func(string)) error {
+		if iface == "en5" {
+			return errors.New("no other interface has a router to be primary")
+		}
+		yielded <- iface
+		ready("en9")
+		<-ctx.Done()
+		close(restored)
+		return nil
+	}
+	c, _, _ := startLocalHelper(t, "test", newFakeEngine(), func(o *helper.ServerOptions) { o.Yield = fake })
+	ctx := context.Background()
+	if _, _, _, err := c.yield(ctx, "en5"); err == nil || !strings.Contains(err.Error(), "no other interface") {
+		t.Fatalf("a refused yield: %v", err)
+	}
+	primary, ended, release, err := c.yield(ctx, "en0")
+	if err != nil || primary != "en9" || <-yielded != "en0" {
+		t.Fatalf("yield = %q, %v", primary, err)
+	}
+	select {
+	case <-ended:
+		t.Fatal("the yield ended by itself")
+	case <-restored:
+		t.Fatal("restored while the client holds the yield")
+	case <-time.After(300 * time.Millisecond):
+	}
+	if _, _, _, err := c.yield(ctx, "en0"); err == nil {
+		t.Fatal("two yields at once")
+	}
+	release()
+	select {
+	case <-restored:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the helper kept the yield after its client released it")
 	}
 }

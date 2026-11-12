@@ -4,6 +4,8 @@ package helper
 
 import (
 	"context"
+	"time"
+
 	"github.com/Kel077/pith/internal/api"
 )
 
@@ -31,6 +33,23 @@ type StartRequest struct {
 func (r StartRequest) Validate() error {
 	return (api.Config{Version: api.ConfigVersion, Scenes: []api.Scene{r.Scene}, Selected: r.Scene.ID, Settings: r.Settings}).Validate()
 }
+
+// YieldRequest asks the helper to keep an interface from being macOS's
+// primary while the request lasts, as while the router behind it renews its
+// address. The response streams one YieldEvent once another interface is
+// primary; the interface gets its rank back when the client closes the
+// response, or after MaxYield.
+type YieldRequest struct {
+	Interface string `json:"interface"`
+}
+
+// YieldEvent names the interface that is macOS's primary instead.
+type YieldEvent struct {
+	Primary string `json:"primary"`
+}
+
+// MaxYield bounds a yield whose client never ends it.
+const MaxYield = 10 * time.Minute
 
 // Backend is the helper's routing and data implementation. Engine lifecycle
 // calls must be serialized by the backend, including subscriber snapshots.

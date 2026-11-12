@@ -242,6 +242,52 @@ func (c *Client) Traffic(ctx context.Context, q api.TrafficQuery) (api.Traffic, 
 	return result, err
 }
 
+// yield has the helper keep iface from being macOS's primary until release is
+// called or ctx ends. It returns the interface that is primary instead, and a
+// channel closed when the yield ends, as when the helper ends it first.
+func (c *Client) yield(ctx context.Context, iface string) (primary string, ended <-chan struct{}, release func(), err error) {
+	if err := c.requireHelper(ctx); err != nil {
+		return "", nil, nil, err
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	res, err := c.open(ctx, http.MethodPost, "/v1/yield", helper.YieldRequest{Interface: iface})
+	if err != nil {
+		cancel()
+		return "", nil, nil, err
+	}
+	if res.StatusCode != http.StatusOK {
+		defer res.Body.Close()
+		cancel()
+		return "", nil, nil, responseError(res)
+	}
+	// The helper answers once macOS made another interface primary.
+	reader := bufio.NewReader(io.LimitReader(res.Body, 64<<10))
+	line, err := reader.ReadBytes('\n')
+	var event helper.YieldEvent
+	if err == nil {
+		err = json.Unmarshal(line, &event)
+	}
+	if err == nil && event.Primary == "" {
+		err = errors.New("helper named no primary interface")
+	}
+	if err != nil {
+		cancel()
+		res.Body.Close()
+		return "", nil, nil, fmt.Errorf("yield %s: %w", iface, err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = io.Copy(io.Discard, reader)
+	}()
+	release = func() {
+		cancel()
+		res.Body.Close()
+		<-done
+	}
+	return event.Primary, done, release, nil
+}
+
 func (c *Client) subscribeHelper(ctx context.Context) (<-chan api.Event, error) {
 	if err := c.requireHelper(ctx); err != nil {
 		return nil, err

@@ -10,11 +10,13 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/Kel077/pith/internal/api"
 	"github.com/Kel077/pith/internal/netif"
+	"github.com/Kel077/pith/internal/primary"
 )
 
 type ServerOptions struct {
@@ -24,9 +26,15 @@ type ServerOptions struct {
 	Backend    Backend
 	// WatchInterfaces may be injected for deterministic tests.
 	WatchInterfaces func(context.Context) (<-chan []api.Interface, error)
+	// Yield keeps an interface from being macOS's primary until ctx ends,
+	// calling ready once another is; injected by tests.
+	Yield func(ctx context.Context, iface string, ready func(primary string)) error
 }
 
-type Server struct{ opts ServerOptions }
+type Server struct {
+	opts     ServerOptions
+	yielding sync.Mutex // one interface yields at a time
+}
 
 func NewServer(opts ServerOptions) *Server {
 	if opts.SocketPath == "" {
@@ -40,6 +48,9 @@ func NewServer(opts ServerOptions) *Server {
 	}
 	if opts.WatchInterfaces == nil {
 		opts.WatchInterfaces = netif.Watch
+	}
+	if opts.Yield == nil {
+		opts.Yield = primary.Yield
 	}
 	return &Server{opts: opts}
 }
@@ -230,6 +241,7 @@ func (s *Server) handler() http.Handler {
 		reply(w, traffic)
 	})
 	mux.HandleFunc("GET /v1/events", s.events)
+	mux.HandleFunc("POST /v1/yield", s.yield)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		if r.URL.Path != "/v1/status" && r.Header.Get(ProtocolHeader) != strconv.Itoa(ProtocolVersion) {
@@ -329,6 +341,40 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+	}
+}
+
+// yield keeps an interface from being macOS's primary while the client keeps
+// the request open, and at most MaxYield.
+func (s *Server) yield(w http.ResponseWriter, r *http.Request) {
+	var in YieldRequest
+	if !decode(w, r, &in) {
+		return
+	}
+	if !s.yielding.TryLock() {
+		replyError(w, &api.Error{Code: api.ErrInternal, Detail: "another interface is yielding already"})
+		return
+	}
+	defer s.yielding.Unlock()
+	controller := http.NewResponseController(w)
+	// Once the body is read, the server reads on without a deadline: the
+	// request's context ends when the client closes the connection.
+	ctx, cancel := context.WithTimeout(r.Context(), MaxYield)
+	defer cancel()
+	started := false
+	err := s.opts.Yield(ctx, in.Interface, func(primary string) {
+		started = true
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_ = controller.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		_ = json.NewEncoder(w).Encode(YieldEvent{Primary: primary})
+		_ = controller.Flush()
+		_ = controller.SetWriteDeadline(time.Time{})
+	})
+	if !started {
+		if err == nil {
+			err = errors.New("the yield ended before another interface was primary")
+		}
+		replyError(w, err)
 	}
 }
 

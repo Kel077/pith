@@ -17,10 +17,20 @@ listener or trusted UID in JSON.
 
 Endpoints: `GET /v1/status`, `GET /v1/events` (NDJSON), and POST requests for
 `/v1/start`, `/v1/reload`, `/v1/stop`, `/v1/connections`,
-`/v1/connections/clear`, `/v1/traffic`. Requests are size limited and version
+`/v1/connections/clear`, `/v1/traffic` and `/v1/yield`. Requests are size limited and version
 checked. A subscription first emits Status and Interfaces; empty interface
 snapshots remain explicit JSON arrays. Cancellation, EOF and helper exit
 close streams. The process stops its backend and removes its socket on exit.
+
+`/v1/yield` keeps one interface from being macOS's primary while its router
+renews its address, for as long as the client keeps the request open and at
+most ten minutes. The helper adds a `PrimaryRank` of `Never` to the State:
+entity of the interface's network service, as a temporary key of a `scutil`
+session, and answers one NDJSON line naming the interface macOS made primary
+instead. configd removes the key when that session closes: when the client
+closes the request, and when the helper or `scutil` exits for any reason. It
+changes nothing when no other service has a router or the entity exists
+already, and one interface yields at a time.
 
 The installer changes only these managed paths and launchd service:
 
