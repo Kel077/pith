@@ -75,7 +75,10 @@ The router gives its address up, and is asked for one again after a pause of
 asked again at once, a provider may give the same address back. Once asked to
 give it up, the router is asked for an address again whatever happens, within
 an independent 20-second bound, and the client waits up to two more minutes
-for one that is slow to connect. Then it tests the interface until it works as
+for one that is slow to connect. Quitting Pith waits for that, 25 seconds at
+most. Should Pith end before it asks, a mark in the configuration folder has
+it ask the router when it starts again: the router stays without an address
+until it is asked, and so does everything behind it. Then it tests the interface until it works as
 it did before, resumes the proxies, gives the helper the saved scene and ends
 the yield. Connections through the old address end with it; apps that follow
 the network have moved to the new primary by then. Only the IPv4 lease is
