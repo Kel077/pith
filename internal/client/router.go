@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -207,6 +208,16 @@ func (c *Client) RenewRouter(ctx context.Context, iface string) (r api.RouterRen
 		return r, &api.Error{Code: api.ErrInternal, Detail: "another router is renewing its address"}
 	}
 	defer c.renewing.Unlock()
+	c.proxyMu.Lock()
+	closed := c.closed
+	if !closed {
+		c.renewals.Add(1)
+	}
+	c.proxyMu.Unlock()
+	if closed {
+		return r, errClientClosed
+	}
+	defer c.renewals.Done()
 	started := time.Now()
 	ifaces, err := c.interfaces(ctx)
 	if err != nil {
@@ -272,8 +283,11 @@ func (c *Client) RenewRouter(ctx context.Context, iface string) (r api.RouterRen
 		}
 	}
 	defer c.drain(ctx, link, standby)()
+	// Pith quitting ends the renewal too, once the router is asked for an
+	// address again.
 	renewCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	defer context.AfterFunc(c.lifetime, cancel)()
 	go func() {
 		select {
 		case <-ended:
@@ -295,6 +309,13 @@ func (c *Client) RenewRouter(ctx context.Context, iface string) (r api.RouterRen
 	if pauses == nil {
 		pauses = routerPauses
 	}
+	// Should Pith end before it asks for an address again, it does when it
+	// starts again.
+	mark := filepath.Join(c.opts.ConfigDir, routerMark)
+	if data, err := json.Marshal(releasedRouter{Interface: iface, HardwareAddr: link.HardwareAddr}); err == nil {
+		_ = os.MkdirAll(c.opts.ConfigDir, 0700)
+		_ = os.WriteFile(mark, data, 0600)
+	}
 	for _, pause := range pauses {
 		r.Tries++
 		var w router.WAN
@@ -308,6 +329,9 @@ func (c *Client) RenewRouter(ctx context.Context, iface string) (r api.RouterRen
 		if _, ok := s.device.Reconnected(renewCtx, 2*time.Minute); ok {
 			err = nil
 		}
+	}
+	if err == nil {
+		_ = os.Remove(mark)
 	}
 	if renewCtx.Err() != nil {
 		return r, errors.Join(err, c.renewalErr(ctx, ended))
@@ -339,6 +363,58 @@ func (c *Client) renewalErr(ctx context.Context, ended <-chan struct{}) error {
 // drainFile marks a drain in progress, so that a Pith that quit during one
 // gives the helper the saved rules back when it starts again.
 const drainFile = ".draining"
+
+// routerMark marks a router that may have given its address up without
+// being asked for one again: Pith asks it when it starts again.
+const routerMark = ".router-released"
+
+type releasedRouter struct {
+	Interface    string `json:"interface"`
+	HardwareAddr string `json:"hardwareAddr"`
+}
+
+// recoverRouter asks a router that a renewal cut short left without an
+// address for one again, off the caller's thread, once.
+func (c *Client) recoverRouter() {
+	c.recovery.Do(func() {
+		mark := filepath.Join(c.opts.ConfigDir, routerMark)
+		data, err := os.ReadFile(mark)
+		if err != nil {
+			return
+		}
+		var m releasedRouter
+		if json.Unmarshal(data, &m) != nil || m.Interface == "" {
+			_ = os.Remove(mark)
+			return
+		}
+		go func() {
+			ctx, cancel := context.WithTimeout(c.lifetime, 3*time.Minute)
+			defer cancel()
+			// The interface may still be coming up as Pith starts.
+			for range 12 {
+				if ifaces, err := c.interfaces(ctx); err == nil {
+					for _, i := range ifaces {
+						if i.Name == m.Interface && i.HardwareAddr != m.HardwareAddr {
+							_ = os.Remove(mark) // another adapter: not that router
+							return
+						}
+					}
+				}
+				if s, err := c.router(ctx, m.Interface); err == nil {
+					if _, err := s.device.Restore(ctx); err == nil {
+						_ = os.Remove(mark)
+					}
+					return
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(5 * time.Second):
+				}
+			}
+		}()
+	})
+}
 
 // drain has link count as down until the returned function is called: its
 // local proxies refuse connections and, while routing runs, rules skip it.

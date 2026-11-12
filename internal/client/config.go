@@ -21,6 +21,7 @@ func (c *Client) LoadConfig(ctx context.Context) (api.Config, error) {
 		return cfg, err
 	}
 	c.recoverDrain(ctx, cfg)
+	c.recoverRouter()
 	return cfg, c.syncProxies(ctx, cfg.Proxies, true)
 }
 

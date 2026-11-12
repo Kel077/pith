@@ -309,3 +309,91 @@ func TestWithoutInterface(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Quitting Pith while the router has no address asks it for one again first.
+func TestCloseAsksARenewingRouterForAnAddress(t *testing.T) {
+	f := routertest.New("203.0.113.10")
+	fake := func(ctx context.Context, iface string, ready func(string)) error {
+		ready("en9")
+		<-ctx.Done()
+		return nil
+	}
+	c, _, _ := startLocalHelper(t, "test", newFakeEngine(), func(o *helper.ServerOptions) { o.Yield = fake })
+	c, _ = routerClient(t, c, f)
+	if err := c.SetRouterPassword(context.Background(), "en0", routertest.Password); err != nil {
+		t.Fatal(err)
+	}
+	c.routerPauses = []time.Duration{time.Hour}
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.RenewRouter(context.Background(), "en0")
+		done <- err
+	}()
+	waitFor := func(what string, ok func() bool) {
+		t.Helper()
+		for deadline := time.Now().Add(5 * time.Second); !ok(); time.Sleep(5 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out waiting: %s", what)
+			}
+		}
+	}
+	calls := func() (calls []string) {
+		f.Do(func(f *routertest.Router) { calls = slices.Clone(f.Calls) })
+		return calls
+	}
+	waitFor("the release", func() bool { return len(calls()) == 1 })
+	if _, err := os.Stat(filepath.Join(c.opts.ConfigDir, routerMark)); err != nil {
+		t.Fatalf("no mark of the released router: %v", err)
+	}
+	start := time.Now()
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(calls(), []string{"release", "renew"}) || time.Since(start) > 10*time.Second {
+		t.Fatalf("closed after %v with calls %v", time.Since(start), calls())
+	}
+	if err := <-done; err == nil {
+		t.Fatal("a renewal cut short succeeded")
+	}
+}
+
+// A mark of a router a renewal left without an address has the next client
+// ask it for one again, and goes once it has one.
+func TestRouterLeftWithoutAnAddressIsRestored(t *testing.T) {
+	f := routertest.New("203.0.113.10")
+	c, _ := routerClient(t, testClient(t), f)
+	ctx := context.Background()
+	if err := c.SetRouterPassword(ctx, "en0", routertest.Password); err != nil {
+		t.Fatal(err)
+	}
+	c.mu.Lock()
+	for _, s := range c.routers {
+		s.device.Poll = time.Millisecond
+	}
+	c.mu.Unlock()
+	f.Release()
+	mark := filepath.Join(c.opts.ConfigDir, routerMark)
+	if err := os.MkdirAll(c.opts.ConfigDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mark, []byte(`{"interface":"en0","hardwareAddr":"`+testEth.HardwareAddr+`"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.LoadConfig(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		_, err := os.Stat(mark)
+		if os.IsNotExist(err) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the mark stayed")
+		}
+	}
+	f.Do(func(f *routertest.Router) {
+		if !slices.Equal(f.Calls, []string{"release", "renew"}) || !f.Address.IsValid() {
+			t.Fatalf("calls %v, address %v", f.Calls, f.Address)
+		}
+	})
+}
