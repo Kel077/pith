@@ -50,6 +50,10 @@ func (m *Manager) serve(e *listener, s *session) {
 	if err := s.in.SetDeadline(connectDeadline); err != nil {
 		return
 	}
+	if m.isSuspended(e.cfg.Via) {
+		_ = writeReply(s.in, dialReply(errSuspended), nil)
+		return
+	}
 	ctx, cancel := context.WithDeadline(s.ctx, connectDeadline)
 	defer cancel()
 	out, err := m.opts.Dial(ctx, e.cfg.Via, target)

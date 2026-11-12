@@ -841,3 +841,35 @@ func TestTruncatedAddressDoesNotReachDialer(t *testing.T) {
 		t.Fatal("truncated address reached the dialer")
 	}
 }
+
+// A suspended exit's listeners refuse connections as an unreachable network
+// and close their streams, while other listeners go on; Resume undoes it.
+func TestSuspendRefusesAnExitUntilResumed(t *testing.T) {
+	peer := echoPeer(t)
+	m, f := newTestManager(t, Options{Dial: peer.dial})
+	other := testProxy(1081)
+	other.Via = api.InterfaceRef{Name: "example1", HardwareAddr: "02:00:00:00:00:02"}
+	applyTest(t, m, testProxy(1080), other)
+	suspended, unaffected := connectTest(t, f, 1080), connectTest(t, f, 1081)
+	roundTrip(t, suspended, "before")
+	m.Suspend(func(via api.InterfaceRef) bool { return via.Name == testVia.Name })
+	readClosed(t, suspended)
+	roundTrip(t, unaffected, "still open")
+	refused := f.dial(t, 1080)
+	if _, err := refused.Write(append([]byte{5, 1, 0}, requestBytes(Target{Host: "192.0.2.9", Port: 443})...)); err != nil {
+		t.Fatal(err)
+	}
+	readMethod(t, refused, 0)
+	if code, _ := readReply(t, refused); code != replyNetwork {
+		t.Fatalf("CONNECT reply = %d, want network unreachable", code)
+	}
+	st := m.Status(context.Background())
+	if !st[0].Listening || api.Code(st[0].Error) != api.ErrInterfaceUnavailable || st[1].Error != nil {
+		t.Fatalf("status = %+v", st)
+	}
+	m.Resume()
+	roundTrip(t, connectTest(t, f, 1080), "after")
+	if st := m.Status(context.Background()); st[0].Error != nil {
+		t.Fatalf("status after Resume = %+v", st[0])
+	}
+}

@@ -64,6 +64,8 @@ type Manager struct {
 	byPort  map[int]*listener
 	total   int
 	wg      sync.WaitGroup
+	// suspended tells the exits whose listeners refuse connections for now.
+	suspended func(api.InterfaceRef) bool
 }
 
 type listener struct {
@@ -197,6 +199,43 @@ func (m *Manager) Apply(ctx context.Context, proxies []api.Proxy) error {
 	return nil
 }
 
+// errSuspended is why a suspended listener refuses a connection.
+var errSuspended = &api.Error{Code: api.ErrInterfaceUnavailable, Detail: "the interface is offline while its router renews its address"}
+
+// Suspend has the listeners whose exit match tells refuse connections, as
+// when their interface is down, and closes their streams, until Resume. Other
+// listeners go on; nothing is unbound.
+func (m *Manager) Suspend(match func(api.InterfaceRef) bool) {
+	m.mu.Lock()
+	m.suspended = match
+	var closing []*session
+	for _, e := range m.entries {
+		if e.cfg.Enabled && match(e.cfg.Via) {
+			for s := range e.conns {
+				closing = append(closing, s)
+			}
+		}
+	}
+	m.mu.Unlock()
+	for _, s := range closing {
+		s.close(true)
+	}
+}
+
+// Resume has the listeners Suspend stopped take connections again.
+func (m *Manager) Resume() {
+	m.mu.Lock()
+	m.suspended = nil
+	m.mu.Unlock()
+}
+
+// isSuspended tells whether connections through via are refused for now.
+func (m *Manager) isSuspended(via api.InterfaceRef) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.suspended != nil && m.suspended(via)
+}
+
 func sameProxy(a, b api.Proxy) bool {
 	return a.Port == b.Port && a.Enabled == b.Enabled && a.Via.Name == b.Via.Name && a.Via.HardwareAddr == b.Via.HardwareAddr
 }
@@ -308,6 +347,9 @@ func (m *Manager) Status(ctx context.Context) []api.ProxyStatus {
 			st.Open, st.Sent, st.Received = e.open, e.sent.Load(), e.received.Load()
 			if e.err != nil {
 				copy := *e.err
+				st.Error = &copy
+			} else if m.suspended != nil && m.suspended(e.cfg.Via) {
+				copy := *errSuspended
 				st.Error = &copy
 			}
 			refs[i] = e.cfg.Via
