@@ -119,6 +119,14 @@ Some hotspots also show their signal and can change their public IP. Only these,
 
 **Change hotspot IP** has the hotspot reconnect to its carrier, which usually gives it a new public IP. Pith keeps the admin password in your keychain. Any other hotspot, other Inseego models included, still works for routing as an ordinary interface, without these extras.
 
+A router can change its public IP too, when Pith has its admin password. Only this one, tested on the device itself:
+
+| Router | With its admin password |
+| :-- | :-- |
+| Verizon Router CHR30A-R (Fios) | Its model beside its address, and **Change IP** on the card of the Ethernet or Wi-Fi it serves |
+
+**Change IP** has the router give its public IPv4 address up and ask Verizon for another, waiting longer each time Verizon gives the same one back, three times at most; it took 34 seconds in a test. Meanwhile your Mac goes through another connected network, which macOS makes the default; rules skip the router's interface, and local proxies through that interface refuse connections rather than use another. Everything else on the router's network is offline for a few seconds each time, and connections through the old address end. The public IPv6 address doesn't change. Pith needs another network with internet to do it, and its helper, which makes that network the default meanwhile.
+
 ### Also
 
 - **Local proxies**: SOCKS5 ports on 127.0.0.1, TCP only, each going out through one interface. When that interface is down, connections through its port fail instead of using another. For apps and browsers that take a proxy, with routing on or off.
@@ -178,7 +186,7 @@ If it reports an error, or you're still offline once the helper is removed, stop
 
 Pith reads where connections go: addresses, ports, and host names from TLS SNI, the HTTP Host or DNS. It never reads what they carry, decrypts nothing and installs no certificate. Rules, the connection log and traffic totals stay on your Mac, and the log keeps as many days as Settings says.
 
-Pith connects to the internet on its own in one case: with Safe start on, each time routing starts, the helper opens one TLS connection to api.ipify.org to check the Mac is still online, and sends no request over it. Everything else is something you start: a speed test on the Network page downloads 25 MB from and uploads 8 MB to [Cloudflare's speed test](https://speed.cloudflare.com), which also tells the public address it saw; changing a hotspot's IP asks [ipify](https://www.ipify.org) for its public addresses before and after; and reaching a server connects to the one you enter. With a hotspot's admin password, Pith reads the hotspot's own admin page, on your local network, while the Network page is open.
+Pith connects to the internet on its own in one case: with Safe start on, each time routing starts, the helper opens one TLS connection to api.ipify.org to check the Mac is still online, and sends no request over it. Everything else is something you start: a speed test on the Network page downloads 25 MB from and uploads 8 MB to [Cloudflare's speed test](https://speed.cloudflare.com), which also tells the public address it saw; changing a hotspot's or a router's IP asks [ipify](https://www.ipify.org) for its public addresses before and after; and reaching a server connects to the one you enter. With a hotspot's or a router's admin password, Pith reads the device's own admin page, on your local network, while the Network page is open.
 
 ## Documentation
 

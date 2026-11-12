@@ -4,6 +4,10 @@ All notable changes to Pith are listed here. The format follows [Keep a Changelo
 
 ## [Unreleased]
 
+### Added
+
+- **Change IP** on the card of an Ethernet or Wi-Fi interface whose router is a Verizon Router CHR30A-R, with its admin password: the router gives its public IPv4 address up and asks Verizon for another, waiting longer each time Verizon gives the same one back, three times at most. Meanwhile another connected network carries the Mac as macOS's default, rules skip the interface, and local proxies through it refuse connections rather than use another network. Everything else on the router's network is offline for a few seconds each time. It updates the helper, which makes the other network the default meanwhile, so macOS asks for your password once.
+
 ### Changed
 
 - **Test** on an interface's card is now **Test speed**: through that interface, Cloudflare's nearest data center measures the latency, a download of 25 MB and an upload of 8 MB, and tells the public IP it saw. The old test showed how long two HTTPS requests took, IPv4 to a nearby server and IPv6 to one in Utah, DNS lookups and TLS handshakes included: several times the real latency. **Test All** tests the interfaces one after another. A test uses about 33 MB, which counts on a metered hotspot.

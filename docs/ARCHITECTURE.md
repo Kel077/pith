@@ -28,6 +28,66 @@ seconds at most and 3 more for a family once the other works. A reconnected M200
 refuses DNS queries for about ten seconds while its DNS server restarts; the
 probes then ask the Mac's servers, so the test passes once its internet works.
 
+## Renewing a router's address
+
+A router's admin also stays in the client, over the same interface-bound HTTP
+client as a hotspot's. The client identifies the router behind an Ethernet or
+Wi-Fi interface by the model its web admin names without a login; only
+Verizon's CHR30A-R is tested, and other models are left alone. Routers sign
+their web admin themselves, so there is no certificate to verify: the client
+pins the SHA-256 of the public key it first saw, and keeps the admin password
+under that key, as `sha256:` and its hex, in the keychain service
+`io.github.kel077.pith.router`. A device with another key at the router's
+address is locked, and never sent the password. Like the router's own page,
+the client logs in with HTTP Basic, then sends an XSRF token with every
+request. It reads the broadband connection from `/CRSP/getNetworkConnections`
+and sets the TR-181 parameters of the lease's Release and Renew buttons,
+`Device.DHCPv4.Client.[Alias == 'wan'].X_PRPL-COM_Release` and `.Renew`. A
+refused password is never sent again, and a router that refuses logins for a
+while gets none.
+
+`RenewRouter` first tests the interface's public addresses and every other
+connected interface's internet, and reads the router; it changes nothing unless
+the router is connected and another interface has internet. Then the helper's
+`/v1/yield` makes the interface ineligible to be macOS's primary, for as long
+as the client keeps that request open. configd's IPMonitor ranks each service
+by the `PrimaryRank` of its Setup: and State: entities (`get_rank_changes` in
+[ip_plugin.c](https://github.com/apple-oss-distributions/configd/blob/main/Plugins/IPMonitor/ip_plugin.c));
+the helper adds the State: entity with `Never` as a temporary key of a `scutil`
+session, and configd removes a session's temporary keys when it closes, as
+when its process exits ([_configclose.c](https://github.com/apple-oss-distributions/configd/blob/main/configd.tproj/_configclose.c)).
+So the rank comes back however the request, the helper or `scutil` ends, and
+nothing reaches the system's preferences. The interface keeps its addresses and
+scoped routes: the client still reaches the router through it, and sockets with
+its address stay on it. The yield changes nothing when no other service has a
+router or the entity exists already.
+
+Meanwhile the interface counts as down. Its local proxies answer every CONNECT
+that the network is unreachable and close their streams, rather than wait for
+timeouts or use another interface. A running scene is reloaded with the
+interface skipped: a rule tries its other interfaces, and one left with none
+falls back through the new primary when it may, and keeps the interface, which
+fails, when it may not. A mark in the configuration folder has a Pith that quit
+meanwhile give the helper the saved scene back when it starts again.
+
+The router gives its address up, and is asked for one again after a pause of
+5, 20, then 60 seconds, until the address differs or three tries are done:
+asked again at once, a provider may give the same address back. Once asked to
+give it up, the router is asked for an address again whatever happens, within
+an independent 20-second bound, and the client waits up to two more minutes
+for one that is slow to connect. Then it tests the interface until it works as
+it did before, resumes the proxies, gives the helper the saved scene and ends
+the yield. Connections through the old address end with it; apps that follow
+the network have moved to the new primary by then. Only the IPv4 lease is
+renewed: the router's delegated IPv6 prefix stays.
+
+On hardware at `f01f34a`, the yield made the M2000 primary 0.2 seconds after
+the request, and Ethernet primary again within 0.1 second of its end. The
+router reported its connection down about a second after Release, and up again
+about 1.5 seconds after Renew, so its network was offline for the pause and
+some 3 seconds more. After a 5-second pause it got the same address back,
+after a 20-second one another; the whole renewal took 34 seconds.
+
 ## Local SOCKS5 listeners
 
 `internal/proxy` runs inside the unprivileged App process. Each configured port
@@ -560,8 +620,8 @@ single captured probe is expected, not evidence of a forwarding loop; binding or
 exempting its native leg would defeat the end-to-end capture check. SafeStart
 performs TLS verification, not an HTTP public-address query or a periodic probe.
 
-`Service.Probe`, which the Network page's reachability test and hotspot renewals
-use, runs in the unprivileged App process, binds the requested interface and,
+`Service.Probe`, which the Network page's reachability test and hotspot and
+router renewals use, runs in the unprivileged App process, binds the requested interface and,
 for an empty target, sends HTTPS public-address requests for both address
 families. It does not invoke the helper. Distinguish the two paths by the
 process and startup timing rather than the endpoint alone.

@@ -77,7 +77,12 @@ page has a large title and its actions on the right.
   frequency, and the signal's strength and SNR. The screen stays white in
   the dark, as the device's does. Locked, it shows a lock that asks for
   the admin password. "Change hotspot IP" has the hotspot reconnect, and
-  then says the old and the new IP.
+  then says the old and the new IP. An Ethernet or Wi-Fi interface whose
+  router Pith can talk to names the router's model beside its address, and
+  has "Change IP" beside "Test speed": locked, it asks for the router's
+  admin password; then the card says it is changing, and the old and the
+  new IP. Meanwhile the "System default" chip moves to the network that
+  carries the Mac.
 - **Settings.** Groups of rows, as System Settings has them.
 
 ## The menu bar
