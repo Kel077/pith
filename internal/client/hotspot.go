@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"net/http/cookiejar"
 	"net/netip"
 	"strconv"
 	"time"
@@ -13,7 +12,6 @@ import (
 	"github.com/Kel077/pith/internal/api"
 	"github.com/Kel077/pith/internal/hotspot"
 	"github.com/Kel077/pith/internal/keychain"
-	"github.com/Kel077/pith/internal/netif"
 )
 
 // hotspotKeychain is the keychain service of the hotspots' admin passwords;
@@ -67,36 +65,43 @@ func (c *Client) RenewHotspot(ctx context.Context, iface string) (api.HotspotRen
 	}
 	r.Took = time.Since(started)
 	// Connected again, a hotspot may still be setting up its addresses and
-	// its DNS: the M2000's refuses queries for some ten seconds more. Test it
-	// every pace until it works as before, for 25 paces at most, and 3 more
-	// once a family works: one that doesn't come back with the other may not
-	// come back at all.
+	// its DNS: the M2000's refuses queries for some ten seconds more.
+	r.After, err = c.retest(ctx, iface, r.Before)
+	return r, err
+}
+
+// retest tests the internet through an interface that just got new public
+// addresses, every pace until it finds as many as before did, for 25 paces at
+// most, and 3 more once a family works: one that doesn't come back with the
+// other may not come back at all. It returns the test that found the most.
+func (c *Client) retest(ctx context.Context, iface string, before api.Probe) (api.Probe, error) {
 	pace := c.hotspotPace
 	if pace == 0 {
 		pace = time.Second
 	}
-	want := max(1, publicIPs(r.Before))
+	var after api.Probe
+	want := max(1, publicIPs(before))
 	deadline := time.Now().Add(25 * pace)
 	for {
 		p, err := c.Probe(ctx, iface, "")
 		if err != nil {
-			return r, err
+			return after, err
 		}
-		if publicIPs(p) >= publicIPs(r.After) {
-			r.After = p
+		if publicIPs(p) >= publicIPs(after) {
+			after = p
 		}
-		if publicIPs(r.After) >= want {
-			return r, nil
+		if publicIPs(after) >= want {
+			return after, nil
 		}
-		if late := time.Now().Add(3 * pace); r.After.OK && late.Before(deadline) {
+		if late := time.Now().Add(3 * pace); after.OK && late.Before(deadline) {
 			deadline = late
 		}
 		if time.Now().Add(pace).After(deadline) {
-			return r, nil
+			return after, nil
 		}
 		select {
 		case <-ctx.Done():
-			return r, ctx.Err()
+			return after, ctx.Err()
 		case <-time.After(pace):
 		}
 	}
@@ -145,66 +150,18 @@ func (c *Client) hotspot(ctx context.Context, name string) (*hotspotSession, err
 	if s := c.hotspots[key]; s != nil {
 		return s, nil
 	}
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		return nil, err
-	}
 	port := c.hotspotPort
 	if port == "" {
 		port = "80"
 	}
 	base := "http://" + net.JoinHostPort(router.String(), port)
 	account := link.HardwareAddr
-	checkIdentity := func(ctx context.Context) error {
-		current, err := c.interfaces(ctx)
-		if err != nil {
-			return err
-		}
-		found := (api.InterfaceRef{Name: name, HardwareAddr: account}).Resolve(current)
-		if found == nil || found.Name != name || !found.Up || found.Router != link.Router {
-			return errors.New("hotspot interface identity changed")
-		}
-		currentIndex, err := c.hotspotIndex(name)
-		if err != nil || currentIndex != index {
-			return errors.New("hotspot interface index changed")
-		}
-		return nil
+	client, transport, err := c.deviceClient(name, *link, index, nil)
+	if err != nil {
+		return nil, err
 	}
-	transport := &http.Transport{Proxy: nil, MaxIdleConns: 2, IdleConnTimeout: 30 * time.Second, DialContext: func(ctx context.Context, network, target string) (net.Conn, error) {
-		if err := checkIdentity(ctx); err != nil {
-			return nil, err
-		}
-		// Resolve the current kernel index for every new socket, even when the
-		// same adapter returns with its name, MAC and LAN router unchanged.
-		dialer, err := c.dialer(name, 5*time.Second, nil)
-		if err != nil {
-			return nil, err
-		}
-		boundCtx := netif.WithBinding(ctx, index, func() error { return checkIdentity(ctx) })
-		conn, err := dialer.DialContext(boundCtx, network, target)
-		if err != nil {
-			return nil, err
-		}
-		if err := checkIdentity(ctx); err != nil {
-			conn.Close()
-			return nil, err
-		}
-		return conn, nil
-	}}
 	s := &hotspotSession{key: key, account: account, transport: transport, device: &hotspot.Inseego{
-		Base: base, Model: model,
-		HTTP: &http.Client{
-			Jar: jar, Timeout: 10 * time.Second,
-			// Straight to the hotspot, through its interface: no proxy, and
-			// no redirect anywhere else.
-			Transport: hotspotTransport{transport: transport, check: checkIdentity},
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if req.URL.Host != via[0].URL.Host || req.URL.Scheme != via[0].URL.Scheme || req.URL.User != nil || len(via) > 3 {
-					return http.ErrUseLastResponse
-				}
-				return nil
-			},
-		},
+		Base: base, Model: model, HTTP: client,
 		Password: func() (string, error) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -226,17 +183,4 @@ func (c *Client) hotspot(ctx context.Context, name string) (*hotspotSession, err
 	}
 	c.hotspots[key] = s
 	return s, nil
-}
-
-type hotspotTransport struct {
-	transport *http.Transport
-	check     func(context.Context) error
-}
-
-func (t hotspotTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	// Also validate pooled connections before sending session cookies or forms.
-	if err := t.check(req.Context()); err != nil {
-		return nil, err
-	}
-	return t.transport.RoundTrip(req)
 }
