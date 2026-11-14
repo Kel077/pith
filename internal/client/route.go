@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -18,8 +19,9 @@ import (
 // rule the engine's three seconds, and a name's lookup for the rules that
 // name addresses two.
 const (
-	ruleAttempt = 3 * time.Second
-	ruleLookup  = 2 * time.Second
+	ruleAttempt   = 3 * time.Second
+	ruleLookup    = 2 * time.Second
+	ruleAddresses = 8 // of a name, at most
 )
 
 // sceneRules are the rules of a scene a local proxy goes out by.
@@ -72,6 +74,13 @@ func errBlocked(rule string) error {
 
 // routeByRules connects for the local proxies that go out by a scene's
 // rules, as api.Proxy.Scene tells, dialing through an interface with dial.
+//
+// A scene whose rules name domains alone sees the name a client asks for,
+// and what the connection goes out through resolves it. When a rule names
+// an address, a name is looked up once, as macOS does, the rules see the
+// name with each address, as the engine sees a connection an app makes, and
+// the connection goes to an address they were matched against: never to
+// one looked up again, which they haven't seen.
 func (c *Client) routeByRules(dial proxy.DialFunc) func(context.Context, string, proxy.Target) (net.Conn, error) {
 	return func(ctx context.Context, sceneID string, target proxy.Target) (net.Conn, error) {
 		var scene sceneRules
@@ -81,64 +90,108 @@ func (c *Client) routeByRules(dial proxy.DialFunc) func(context.Context, string,
 		if scene.set == nil {
 			return nil, &api.Error{Code: api.ErrNoScene, Detail: sceneID}
 		}
-		flow := rules.Flow{Protocol: api.TCP}
-		if target.IsDomain {
-			flow.Domain = target.Host
-		} else if addr, err := netip.ParseAddr(target.Host); err == nil {
-			flow.Address = addr.Unmap().WithZone("")
+		if !target.IsDomain {
+			addr, err := netip.ParseAddr(target.Host)
+			if err != nil {
+				return nil, errors.New("invalid proxy destination address")
+			}
+			return c.connectByRule(ctx, dial, scene.set.Match(rules.Flow{Protocol: api.TCP, Address: addr.Unmap().WithZone("")}), target)
 		}
-		d := scene.set.Match(flow)
-		if d.RuleID == "" && target.IsDomain && scene.addresses {
-			// No rule names it: a rule may name the address it has. The
-			// connection then goes to that very address.
-			lookup, cancel := context.WithTimeout(ctx, ruleLookup)
-			addrs, _ := c.lookup(lookup, "ip", target.Host)
-			cancel()
-			for _, addr := range addrs {
-				addr = addr.Unmap().WithZone("")
-				if byAddr := scene.set.Match(rules.Flow{Protocol: api.TCP, Domain: target.Host, Address: addr}); byAddr.RuleID != "" {
-					d, target = byAddr, proxy.Target{Host: addr.String(), Port: target.Port}
-					break
-				}
+		byName := scene.set.Match(rules.Flow{Protocol: api.TCP, Domain: target.Host})
+		if !scene.addresses || byName.Action == api.Block {
+			return c.connectByRule(ctx, dial, byName, target)
+		}
+		lookup, cancel := context.WithTimeout(ctx, ruleLookup)
+		addrs, err := c.lookup(lookup, "ip", target.Host)
+		cancel()
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if err != nil || len(addrs) == 0 {
+			// Without an address, the rules that name addresses can't be
+			// matched: the connection fails rather than go around them.
+			return nil, &net.DNSError{Err: "no address to match the rules against", Name: target.Host, IsNotFound: true}
+		}
+		// The addresses a rule sends somewhere come first, then those no
+		// rule names; a blocked one is never tried.
+		type candidate struct {
+			target   proxy.Target
+			decision rules.Decision
+		}
+		var ruled, unruled []candidate
+		blockedBy := ""
+		for _, addr := range addrs[:min(len(addrs), ruleAddresses)] {
+			addr = addr.Unmap().WithZone("")
+			d := scene.set.Match(rules.Flow{Protocol: api.TCP, Domain: target.Host, Address: addr})
+			to := candidate{proxy.Target{Host: addr.String(), Port: target.Port}, d}
+			switch {
+			case d.Action == api.Block:
+				blockedBy = d.RuleID
+			case d.RuleID != "":
+				ruled = append(ruled, to)
+			default:
+				unruled = append(unruled, to)
 			}
 		}
-		if d.Action == api.Block {
-			return nil, errBlocked(d.RuleID)
-		}
-		if d.RuleID != "" {
-			var last error = &api.Error{Code: api.ErrInterfaceUnavailable, Detail: "the rule has no interface"}
-			for _, via := range d.Via {
-				if c.proxySuspended(via) {
-					last = &api.Error{Code: api.ErrInterfaceUnavailable, Detail: "the interface is offline while its router renews its address"}
-					continue
-				}
-				attempt, cancel := context.WithTimeout(ctx, ruleAttempt)
-				conn, err := dial(attempt, via, target)
-				cancel()
-				if err == nil && conn != nil {
-					return conn, nil
-				}
-				if conn != nil {
-					_ = conn.Close()
-				}
-				if ctx.Err() != nil {
-					return nil, ctx.Err()
-				}
-				if err != nil {
-					last = err
-				}
+		var last error
+		for _, to := range append(ruled, unruled...) {
+			conn, err := c.connectByRule(ctx, dial, to.decision, to.target)
+			if err == nil {
+				return conn, nil
 			}
-			if !d.Fallback {
-				return nil, last
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
 			}
+			last = err
 		}
-		// Where macOS sends it: its routes, and its resolver for a name.
-		system := c.systemDial
-		if system == nil {
-			system = systemDialer.DialContext
+		if last == nil {
+			return nil, errBlocked(blockedBy)
 		}
-		return system(ctx, "tcp", net.JoinHostPort(target.Host, strconv.Itoa(int(target.Port))))
+		return nil, last
 	}
+}
+
+// connectByRule connects to target as the decision of a scene's rules
+// tells: not at all for a block rule; through a route rule's interfaces in
+// order, then where macOS sends it if the rule falls back; where macOS
+// sends it when no rule decided.
+func (c *Client) connectByRule(ctx context.Context, dial proxy.DialFunc, d rules.Decision, target proxy.Target) (net.Conn, error) {
+	if d.Action == api.Block {
+		return nil, errBlocked(d.RuleID)
+	}
+	if d.RuleID != "" {
+		var last error = &api.Error{Code: api.ErrInterfaceUnavailable, Detail: "the rule has no interface"}
+		for _, via := range d.Via {
+			if c.proxySuspended(via) {
+				last = &api.Error{Code: api.ErrInterfaceUnavailable, Detail: "the interface is offline while its router renews its address"}
+				continue
+			}
+			attempt, cancel := context.WithTimeout(ctx, ruleAttempt)
+			conn, err := dial(attempt, via, target)
+			cancel()
+			if err == nil && conn != nil {
+				return conn, nil
+			}
+			if conn != nil {
+				_ = conn.Close()
+			}
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			if err != nil {
+				last = err
+			}
+		}
+		if !d.Fallback {
+			return nil, last
+		}
+	}
+	// Where macOS sends it: its routes, and its resolver for a name.
+	system := c.systemDial
+	if system == nil {
+		system = systemDialer.DialContext
+	}
+	return system(ctx, "tcp", net.JoinHostPort(target.Host, strconv.Itoa(int(target.Port))))
 }
 
 // systemDialer connects where macOS sends a connection, but never to this

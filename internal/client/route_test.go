@@ -17,16 +17,16 @@ import (
 	"github.com/Kel077/pith/internal/proxy"
 )
 
-// routeFixture is a client whose interfaces and macOS routing are scripted:
-// it tells what each connection by the rules went out through.
+// routeFixture is a client whose interfaces, resolver and macOS routing are
+// scripted: it tells what each connection by the rules went out through.
 type routeFixture struct {
 	c       *Client
 	route   func(context.Context, string, proxy.Target) (net.Conn, error)
 	mu      sync.Mutex
-	went    []string         // "example0 host:port", "system host:port"
-	fail    map[string]error // by interface name, or "system"
-	looked  int              // names looked up
-	address map[string]string
+	went    []string            // "example0 name host:port", "system host:port"
+	fail    map[string]error    // by interface name, or "system"
+	looked  int                 // names looked up
+	address map[string][]string // what a name resolves to; a name without any isn't found
 }
 
 func ruleRef(name string) api.InterfaceRef { return api.InterfaceRef{Name: name} }
@@ -41,6 +41,7 @@ func routeConfig() api.Config {
 			{ID: "lan", Enabled: true, Targets: []string{"198.51.100.0/24"}, Protocol: api.TCP, Action: api.Route, Via: []api.InterfaceRef{ruleRef("example1")}, Fallback: true},
 			{ID: "off", Enabled: false, Targets: []string{"off.example.com"}, Protocol: api.AnyProtocol, Action: api.Route, Via: []api.InterfaceRef{ruleRef("example1")}},
 			{ID: "datagrams", Enabled: true, Targets: []string{"udp.example.com"}, Protocol: api.UDP, Action: api.Block},
+			{ID: "banned", Enabled: true, Targets: []string{"203.0.113.128/25"}, Protocol: api.AnyProtocol, Action: api.Block},
 		}},
 		{ID: "names", Rules: []api.Rule{
 			{ID: "all-names", Enabled: true, Targets: []string{"*.example.com"}, Protocol: api.AnyProtocol, Action: api.Route, Via: []api.InterfaceRef{ruleRef("example1")}},
@@ -55,7 +56,17 @@ func routeConfig() api.Config {
 
 func newRouteFixture(t *testing.T) *routeFixture {
 	t.Helper()
-	f := &routeFixture{c: testClient(t), fail: map[string]error{}, address: map[string]string{}}
+	f := &routeFixture{c: testClient(t), fail: map[string]error{}, address: map[string][]string{
+		"cdn.video.example.com": {"203.0.113.20"},
+		"app.example.com":       {"203.0.113.21"},
+		"off.example.com":       {"203.0.113.22"},
+		"udp.example.com":       {"203.0.113.23"},
+		"nas.example.com":       {"2001:db8::99", "198.51.100.7"},
+		"other.example.com":     {"2001:db8::5", "203.0.113.5"},
+		"banned.example.com":    {"203.0.113.200"},
+		"mixed.example.com":     {"203.0.113.201", "203.0.113.30"},
+		"ads.example.com":       {"203.0.113.40"},
+	}}
 	conn := func() net.Conn {
 		a, b := net.Pipe()
 		t.Cleanup(func() { a.Close(); b.Close() })
@@ -71,10 +82,14 @@ func newRouteFixture(t *testing.T) *routeFixture {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		f.looked++
-		if addr, ok := f.address[host]; ok {
-			return []netip.Addr{netip.MustParseAddr("2001:db8::99"), netip.MustParseAddr(addr)}, nil
+		var addrs []netip.Addr
+		for _, addr := range f.address[host] {
+			addrs = append(addrs, netip.MustParseAddr(addr))
 		}
-		return nil, &net.DNSError{Err: "no such host", Name: host, IsNotFound: true}
+		if len(addrs) == 0 {
+			return nil, &net.DNSError{Err: "no such host", Name: host, IsNotFound: true}
+		}
+		return addrs, nil
 	}
 	f.c.systemDial = func(_ context.Context, network, address string) (net.Conn, error) {
 		if network != "tcp" {
@@ -116,10 +131,11 @@ func (f *routeFixture) connect(scene, host string, port uint16, domain bool) ([]
 	return slices.Clone(f.went), err
 }
 
+// The home scene has rules that name addresses: a name is looked up once,
+// and the connection goes to an address the rules were matched against.
 func TestProxyByRulesGoesWhereTheRulesSend(t *testing.T) {
 	f := newRouteFixture(t)
-	f.address["nas.example.com"] = "198.51.100.7"
-	f.address["other.example.com"] = "203.0.113.5"
+	notFound := &net.DNSError{}
 	for _, tc := range []struct {
 		name   string
 		host   string
@@ -130,31 +146,40 @@ func TestProxyByRulesGoesWhereTheRulesSend(t *testing.T) {
 		err    error
 	}{
 		{name: "a rule's first interface", host: "cdn.video.example.com", port: 443, domain: true,
-			went: []string{"example0 name cdn.video.example.com:443"}},
+			went: []string{"example0 address 203.0.113.20:443"}},
 		{name: "its next interface when the first doesn't connect", host: "cdn.video.example.com", port: 443, domain: true,
 			fail: map[string]error{"example0": syscall.ECONNREFUSED},
-			went: []string{"example0 name cdn.video.example.com:443", "example1 name cdn.video.example.com:443"}},
+			went: []string{"example0 address 203.0.113.20:443", "example1 address 203.0.113.20:443"}},
 		{name: "no fallback: it fails", host: "cdn.video.example.com", port: 443, domain: true,
 			fail: map[string]error{"example0": syscall.ECONNREFUSED, "example1": syscall.EHOSTUNREACH},
-			went: []string{"example0 name cdn.video.example.com:443", "example1 name cdn.video.example.com:443"}, err: syscall.EHOSTUNREACH},
-		{name: "a block rule", host: "ads.example.com", port: 443, domain: true, err: syscall.EACCES},
+			went: []string{"example0 address 203.0.113.20:443", "example1 address 203.0.113.20:443"}, err: syscall.EHOSTUNREACH},
+		{name: "a block rule that names it", host: "ads.example.com", port: 443, domain: true, err: syscall.EACCES},
 		{name: "a rule that names an app never matches", host: "app.example.com", port: 443, domain: true,
-			went: []string{"system app.example.com:443"}},
+			went: []string{"system 203.0.113.21:443"}},
 		{name: "a rule turned off", host: "off.example.com", port: 80, domain: true,
-			went: []string{"system off.example.com:80"}},
+			went: []string{"system 203.0.113.22:80"}},
 		{name: "a rule for UDP", host: "udp.example.com", port: 443, domain: true,
-			went: []string{"system udp.example.com:443"}},
+			went: []string{"system 203.0.113.23:443"}},
 		{name: "an address a rule names", host: "198.51.100.9", port: 22,
 			went: []string{"example1 address 198.51.100.9:22"}},
 		{name: "fallback: where macOS sends it", host: "198.51.100.9", port: 22,
 			fail: map[string]error{"example1": syscall.ENETUNREACH},
 			went: []string{"example1 address 198.51.100.9:22", "system 198.51.100.9:22"}},
-		{name: "a name whose address a rule names goes to that address", host: "nas.example.com", port: 445, domain: true,
+		{name: "a name with an address a rule names goes to that address first", host: "nas.example.com", port: 445, domain: true,
 			went: []string{"example1 address 198.51.100.7:445"}},
-		{name: "a name no rule names, nor its address", host: "other.example.com", port: 443, domain: true,
-			went: []string{"system other.example.com:443"}},
-		{name: "a name that isn't found", host: "nowhere.example.com", port: 443, domain: true,
-			went: []string{"system nowhere.example.com:443"}},
+		{name: "then to the address no rule names", host: "nas.example.com", port: 445, domain: true,
+			fail: map[string]error{"example1": syscall.ECONNREFUSED, "system": syscall.ECONNREFUSED},
+			went: []string{"example1 address 198.51.100.7:445", "system 198.51.100.7:445", "system [2001:db8::99]:445"}, err: syscall.ECONNREFUSED},
+		{name: "a name no rule names, nor its addresses: to one of them", host: "other.example.com", port: 443, domain: true,
+			went: []string{"system [2001:db8::5]:443"}},
+		{name: "its next address when the first doesn't connect", host: "other.example.com", port: 443, domain: true,
+			fail: map[string]error{"system": syscall.EHOSTUNREACH},
+			went: []string{"system [2001:db8::5]:443", "system 203.0.113.5:443"}, err: syscall.EHOSTUNREACH},
+		{name: "a name whose address a block rule names", host: "banned.example.com", port: 443, domain: true, err: syscall.EACCES},
+		{name: "a blocked address of a name is never tried", host: "mixed.example.com", port: 443, domain: true,
+			went: []string{"system 203.0.113.30:443"}},
+		{name: "a name that isn't found is not connected around the rules", host: "nowhere.example.com", port: 443, domain: true, err: notFound},
+		{name: "an address a block rule names", host: "203.0.113.200", port: 443, err: syscall.EACCES},
 		{name: "an address no rule names", host: "2001:db8::7", port: 443,
 			went: []string{"system [2001:db8::7]:443"}},
 		{name: "macOS can't reach it either", host: "203.0.113.9", port: 443,
@@ -169,7 +194,10 @@ func TestProxyByRulesGoesWhereTheRulesSend(t *testing.T) {
 			if !slices.Equal(went, tc.went) {
 				t.Errorf("went %q, want %q", went, tc.went)
 			}
-			if tc.err == nil && err != nil || tc.err != nil && !errors.Is(err, tc.err) {
+			var dns *net.DNSError
+			switch {
+			case tc.err == nil && err != nil, tc.err != nil && tc.err != error(notFound) && !errors.Is(err, tc.err),
+				tc.err == error(notFound) && !errors.As(err, &dns):
 				t.Errorf("error %v, want %v", err, tc.err)
 			}
 		})
@@ -178,7 +206,8 @@ func TestProxyByRulesGoesWhereTheRulesSend(t *testing.T) {
 
 func TestProxyByRulesLooksNamesUpOnlyForAddressRules(t *testing.T) {
 	f := newRouteFixture(t)
-	// The scene's only rule that names addresses names an app too.
+	// The scene's only rule that names addresses names an app too: names
+	// stay names, for what the connection goes out through to resolve.
 	went, err := f.connect("names", "www.example.net", 443, true)
 	if err != nil || !slices.Equal(went, []string{"system www.example.net:443"}) || f.looked != 0 {
 		t.Fatalf("went %q, %v, after %d lookups", went, err, f.looked)
@@ -187,11 +216,12 @@ func TestProxyByRulesLooksNamesUpOnlyForAddressRules(t *testing.T) {
 	if err != nil || !slices.Equal(went, []string{"example1 name www.example.com:443"}) || f.looked != 0 {
 		t.Fatalf("went %q, %v, after %d lookups", went, err, f.looked)
 	}
-	// A name a rule names isn't looked up either.
-	if _, err := f.connect("home", "cdn.video.example.com", 443, true); err != nil || f.looked != 0 {
+	// A name a block rule names is refused without a lookup; any other is
+	// looked up once.
+	if _, err := f.connect("home", "ads.example.com", 443, true); !errors.Is(err, syscall.EACCES) || f.looked != 0 {
 		t.Fatalf("%v, after %d lookups", err, f.looked)
 	}
-	if _, err := f.connect("home", "www.example.net", 443, true); err != nil || f.looked != 1 {
+	if _, err := f.connect("home", "cdn.video.example.com", 443, true); err != nil || f.looked != 1 {
 		t.Fatalf("%v, after %d lookups", err, f.looked)
 	}
 	// A scene no proxy goes out by, or that is gone, connects nothing.
@@ -199,6 +229,34 @@ func TestProxyByRulesLooksNamesUpOnlyForAddressRules(t *testing.T) {
 		if went, err := f.connect(scene, "www.example.com", 443, true); api.Code(err) != api.ErrNoScene || len(went) != 0 {
 			t.Fatalf("scene %q: went %q, %v", scene, went, err)
 		}
+	}
+}
+
+// A name is never resolved a second time: an address the rules haven't
+// seen, as one a second lookup would give, can't be connected to.
+func TestProxyByRulesConnectsOnlyToAddressesItMatched(t *testing.T) {
+	f := newRouteFixture(t)
+	// The first lookup gives an address no rule names; any later one would
+	// give an address a rule blocks.
+	lookups := 0
+	f.c.lookup = func(context.Context, string, string) ([]netip.Addr, error) {
+		lookups++
+		if lookups == 1 {
+			return []netip.Addr{netip.MustParseAddr("203.0.113.30")}, nil
+		}
+		return []netip.Addr{netip.MustParseAddr("203.0.113.200")}, nil
+	}
+	went, err := f.connect("home", "changing.example.com", 443, true)
+	if err != nil || !slices.Equal(went, []string{"system 203.0.113.30:443"}) || lookups != 1 {
+		t.Fatalf("went %q, %v, after %d lookups", went, err, lookups)
+	}
+	// A lookup that fails leaves nothing to match, and nothing to connect.
+	f.c.lookup = func(context.Context, string, string) ([]netip.Addr, error) {
+		return nil, context.DeadlineExceeded
+	}
+	var dns *net.DNSError
+	if went, err := f.connect("home", "slow.example.com", 443, true); !errors.As(err, &dns) || len(went) != 0 {
+		t.Fatalf("after a failed lookup: went %q, %v", went, err)
 	}
 }
 
@@ -214,7 +272,7 @@ func TestProxyByRulesSkipsAnInterfaceThatIsSuspended(t *testing.T) {
 	f.c.proxies = manager
 	manager.Suspend(func(via api.InterfaceRef) bool { return via.Name == "example0" })
 	went, err := f.connect("home", "cdn.video.example.com", 443, true)
-	if err != nil || !slices.Equal(went, []string{"example1 name cdn.video.example.com:443"}) {
+	if err != nil || !slices.Equal(went, []string{"example1 address 203.0.113.20:443"}) {
 		t.Fatalf("went %q, %v", went, err)
 	}
 	manager.Suspend(func(via api.InterfaceRef) bool { return true })
@@ -226,7 +284,7 @@ func TestProxyByRulesSkipsAnInterfaceThatIsSuspended(t *testing.T) {
 		t.Fatalf("a rule that falls back: went %q, %v", went, err)
 	}
 	manager.Resume()
-	if went, _ := f.connect("home", "cdn.video.example.com", 443, true); !slices.Equal(went, []string{"example0 name cdn.video.example.com:443"}) {
+	if went, _ := f.connect("home", "cdn.video.example.com", 443, true); !slices.Equal(went, []string{"example0 address 203.0.113.20:443"}) {
 		t.Fatalf("after Resume: went %q", went)
 	}
 }
