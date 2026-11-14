@@ -26,20 +26,26 @@ func sharedProxyClient(t *testing.T, from string) *Client {
 			Dial: func(ctx context.Context, _ api.InterfaceRef, _ proxy.Target) (net.Conn, error) {
 				return (&net.Dialer{}).DialContext(ctx, "tcp4", echo)
 			},
-			Listen: func(ctx context.Context, network, address string) (net.Listener, error) {
-				host, port, err := net.SplitHostPort(address)
-				if err != nil {
-					return nil, err
-				}
-				ln, err := (&net.ListenConfig{}).Listen(ctx, network, net.JoinHostPort("127.0.0.1", port))
-				if err != nil || host != "0.0.0.0" {
-					return ln, err
-				}
-				return deviceListener{Listener: ln, from: &net.TCPAddr{IP: net.ParseIP(from), Port: 50000}}, nil
-			},
+			Listen: loopbackListen(from),
 		})
 	}
 	return c
+}
+
+// loopbackListen binds every listener on loopback, and has the connections
+// of a shared one seem to come from the device at from.
+func loopbackListen(from string) func(context.Context, string, string) (net.Listener, error) {
+	return func(ctx context.Context, network, address string) (net.Listener, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
+		}
+		ln, err := (&net.ListenConfig{}).Listen(ctx, network, net.JoinHostPort("127.0.0.1", port))
+		if err != nil || host != "0.0.0.0" {
+			return ln, err
+		}
+		return deviceListener{Listener: ln, from: &net.TCPAddr{IP: net.ParseIP(from), Port: 50000}}, nil
+	}
 }
 
 type deviceListener struct {

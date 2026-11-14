@@ -6,10 +6,12 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"os"
 	"slices"
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/Kel077/pith/internal/api"
 	"github.com/Kel077/pith/internal/proxy"
@@ -327,5 +329,86 @@ func TestProxyByRulesNeverConnectsToLoopback(t *testing.T) {
 		if !errors.Is(err, syscall.EACCES) {
 			t.Errorf("%v: %v, want it refused", target, err)
 		}
+	}
+}
+
+// A port goes out by the rules of any scene of the configuration, not the
+// default one alone; the same save takes a device off the list, and a
+// client that starts on the saved configuration runs the port again.
+func TestLocalProxyByRulesOfAnotherSceneSavesReloadsAndRevokes(t *testing.T) {
+	c := testClient(t)
+	installProxyFixture(t, c)
+	echo := proxyEchoServer(t)
+	c.newProxies = func() (*proxy.Manager, error) {
+		dial := func(ctx context.Context, _ api.InterfaceRef, _ proxy.Target) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "tcp4", echo)
+		}
+		return proxy.New(proxy.Options{Dial: dial, Route: c.routeByRules(dial), Listen: loopbackListen("192.0.2.10")})
+	}
+	cfg := api.DefaultConfig()
+	cfg.Scenes = append(cfg.Scenes, api.Scene{ID: "office", Name: "Office", Rules: []api.Rule{
+		{ID: "docs", Enabled: true, Targets: []string{"192.0.2.0/24"}, Protocol: api.AnyProtocol, Action: api.Route, Via: []api.InterfaceRef{ruleRef("example1")}},
+	}})
+	port := proxyPort(t)
+	cfg.Proxies = []api.Proxy{{Port: port, Via: ruleRef("example0"), Enabled: true, Shared: true}}
+	cfg.Devices = []api.Device{{Address: "192.0.2.10"}}
+	if err := c.SaveConfig(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	listed := openLocalProxy(t, port)
+	proxyExchange(t, listed, "listed")
+
+	// One save: the port goes out by the office scene's rules, and the
+	// device is no longer listed.
+	cfg.Proxies[0].Via, cfg.Proxies[0].Scene = api.InterfaceRef{}, "office"
+	cfg.Devices = nil
+	if err := c.SaveConfig(context.Background(), cfg); err != nil {
+		t.Fatal("a port by the rules of a scene other than the default one was not applied: ", err)
+	}
+	_ = listed.SetDeadline(time.Now().Add(time.Second))
+	if _, err := listed.Read(make([]byte, 1)); err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatal("the device taken off the list kept its stream", err)
+	}
+	refused, err := net.DialTimeout("tcp4", net.JoinHostPort("127.0.0.1", portString(port)), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer refused.Close()
+	_ = refused.SetDeadline(time.Now().Add(3 * time.Second))
+	var reply [2]byte
+	if _, err := refused.Write([]byte{5, 1, 0}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadFull(refused, reply[:]); err != nil || reply != [2]byte{5, 0xff} {
+		t.Fatal("the device taken off the list was served again", reply, err)
+	}
+	if st, _ := c.Status(context.Background()); len(st.Proxies) != 1 || !st.Proxies[0].Listening || st.Proxies[0].Error != nil {
+		t.Fatal("status of the port by another scene's rules", st.Proxies)
+	}
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// A client that starts on what was saved.
+	again, err := New(Options{ConfigDir: c.opts.ConfigDir, SocketPath: c.opts.SocketPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { again.Close() })
+	again.binaryPath, again.identityErr = c.binaryPath, nil
+	again.checkFile = func(string, bool) error { return os.ErrNotExist }
+	installProxyFixture(t, again)
+	again.newProxies = func() (*proxy.Manager, error) {
+		dial := func(context.Context, api.InterfaceRef, proxy.Target) (net.Conn, error) {
+			return nil, errors.New("unused")
+		}
+		return proxy.New(proxy.Options{Dial: dial, Route: again.routeByRules(dial), Listen: loopbackListen("192.0.2.10")})
+	}
+	loaded, err := again.LoadConfig(context.Background())
+	if err != nil || len(loaded.Proxies) != 1 || loaded.Proxies[0].Scene != "office" {
+		t.Fatal("the saved configuration did not load: ", loaded.Proxies, err)
+	}
+	if st, _ := again.Status(context.Background()); len(st.Proxies) != 1 || !st.Proxies[0].Listening {
+		t.Fatal("the port did not start again", st.Proxies)
 	}
 }

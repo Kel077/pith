@@ -359,16 +359,6 @@ func sceneProxy(port int, scene string) api.Proxy {
 	return api.Proxy{Port: port, Scene: scene, Enabled: true}
 }
 
-// applyScenes applies proxies that go out by the rules of scenes, which a
-// configuration must hold.
-func applyScenes(t *testing.T, m *Manager, proxies ...api.Proxy) {
-	t.Helper()
-	// Apply validates the proxies alone, against the default scene.
-	if err := m.Apply(context.Background(), proxies, nil); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestPortByRulesAsksRoute(t *testing.T) {
 	peer := echoPeer(t)
 	type asked struct {
@@ -391,10 +381,14 @@ func TestPortByRulesAsksRoute(t *testing.T) {
 			return peer.dial(ctx, api.InterfaceRef{}, target)
 		},
 	})
-	applyScenes(t, m, sceneProxy(1080, "default"))
+	// The scene is one of the caller's configuration, whatever its ID; a
+	// port that is off may name one too.
+	off := sceneProxy(1081, "another scene")
+	off.Enabled = false
+	applyTest(t, m, sceneProxy(1080, "a1b2c3d4e5f6"), off)
 	c := f.dial(t, 1080)
 	code, bound := ask(t, c, Target{Host: "example.com", Port: 443, IsDomain: true})
-	if got := <-calls; got.scene != "default" || got.target != (Target{Host: "example.com", Port: 443, IsDomain: true}) {
+	if got := <-calls; got.scene != "a1b2c3d4e5f6" || got.target != (Target{Host: "example.com", Port: 443, IsDomain: true}) {
 		t.Fatalf("Route asked for %+v", got)
 	}
 	if tcp := bound.(*net.TCPAddr); code != 0 || !tcp.IP.IsLoopback() || tcp.Port == 0 {
@@ -404,7 +398,7 @@ func TestPortByRulesAsksRoute(t *testing.T) {
 	// Suspending an interface leaves a port that has none alone.
 	m.Suspend(func(api.InterfaceRef) bool { return true })
 	roundTrip(t, c, "not an interface's")
-	if st := m.Status(context.Background())[0]; !st.Listening || st.Error != nil || st.Open != 1 {
+	if st := m.Status(context.Background()); len(st) != 2 || !st[0].Listening || st[0].Error != nil || st[0].Open != 1 || st[1].Listening {
 		t.Fatalf("status = %+v", st)
 	}
 	m.Resume()
@@ -428,7 +422,7 @@ func TestPortByRulesAsksRoute(t *testing.T) {
 
 func TestPortByRulesWithoutRouteRefuses(t *testing.T) {
 	m, f := newTestManager(t, Options{Dial: noDial(t)})
-	applyScenes(t, m, sceneProxy(1080, "default"))
+	applyTest(t, m, sceneProxy(1080, "office"))
 	if code, _ := ask(t, f.dial(t, 1080), Target{Host: "192.0.2.9", Port: 443}); code != replyGeneral {
 		t.Fatalf("reply = %d, want a general failure", code)
 	}

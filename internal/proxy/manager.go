@@ -188,8 +188,18 @@ func New(opts Options) (*Manager, error) {
 // listener takes the connections of devices too; a device no longer among
 // them loses its streams.
 func (m *Manager) Apply(ctx context.Context, proxies []api.Proxy, devices []api.Device) error {
+	// The proxies and the devices are validated as a configuration's are. The
+	// scenes that proxies go out by are the caller's, which has them: here
+	// they only have to be named.
 	cfg := api.DefaultConfig()
 	cfg.Proxies, cfg.Devices = proxies, devices
+	named := map[string]bool{cfg.Selected: true}
+	for _, p := range proxies {
+		if p.Scene != "" && !named[p.Scene] {
+			named[p.Scene] = true
+			cfg.Scenes = append(cfg.Scenes, api.Scene{ID: p.Scene})
+		}
+	}
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
