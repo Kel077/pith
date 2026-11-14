@@ -354,3 +354,82 @@ func TestUpstreamStreamsEndWithTheirPort(t *testing.T) {
 	readClosed(t, through)
 	waitFor(t, func() bool { return far.Status(context.Background())[0].Open == 0 })
 }
+
+func sceneProxy(port int, scene string) api.Proxy {
+	return api.Proxy{Port: port, Scene: scene, Enabled: true}
+}
+
+// applyScenes applies proxies that go out by the rules of scenes, which a
+// configuration must hold.
+func applyScenes(t *testing.T, m *Manager, proxies ...api.Proxy) {
+	t.Helper()
+	// Apply validates the proxies alone, against the default scene.
+	if err := m.Apply(context.Background(), proxies, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPortByRulesAsksRoute(t *testing.T) {
+	peer := echoPeer(t)
+	type asked struct {
+		scene  string
+		target Target
+	}
+	calls := make(chan asked, 1)
+	var failure atomic.Pointer[error]
+	m, f := newTestManager(t, Options{
+		Dial: noDial(t),
+		Health: func(context.Context, api.InterfaceRef) error {
+			t.Error("a port by rules has no interface to check")
+			return nil
+		},
+		Route: func(ctx context.Context, scene string, target Target) (net.Conn, error) {
+			calls <- asked{scene, target}
+			if err := failure.Load(); err != nil {
+				return nil, *err
+			}
+			return peer.dial(ctx, api.InterfaceRef{}, target)
+		},
+	})
+	applyScenes(t, m, sceneProxy(1080, "default"))
+	c := f.dial(t, 1080)
+	code, bound := ask(t, c, Target{Host: "example.com", Port: 443, IsDomain: true})
+	if got := <-calls; got.scene != "default" || got.target != (Target{Host: "example.com", Port: 443, IsDomain: true}) {
+		t.Fatalf("Route asked for %+v", got)
+	}
+	if tcp := bound.(*net.TCPAddr); code != 0 || !tcp.IP.IsLoopback() || tcp.Port == 0 {
+		t.Fatalf("reply = %d, bound %v", code, bound)
+	}
+	roundTrip(t, c, "by the rules")
+	// Suspending an interface leaves a port that has none alone.
+	m.Suspend(func(api.InterfaceRef) bool { return true })
+	roundTrip(t, c, "not an interface's")
+	if st := m.Status(context.Background())[0]; !st.Listening || st.Error != nil || st.Open != 1 {
+		t.Fatalf("status = %+v", st)
+	}
+	m.Resume()
+	// A rule that blocks is a connection not allowed; one whose interfaces
+	// don't connect fails as a port through them does.
+	for _, tc := range []struct {
+		err  error
+		code byte
+	}{{syscall.EACCES, replyDenied}, {&api.Error{Code: api.ErrInterfaceUnavailable}, replyNetwork}, {syscall.ECONNREFUSED, replyRefused}} {
+		failure.Store(&tc.err)
+		code, _ := ask(t, f.dial(t, 1080), Target{Host: "192.0.2.9", Port: 443})
+		<-calls
+		if code != tc.code {
+			t.Fatalf("%v: reply = %d, want %d", tc.err, code, tc.code)
+		}
+	}
+	if m.Suspended(testVia) {
+		t.Fatal("still suspended after Resume")
+	}
+}
+
+func TestPortByRulesWithoutRouteRefuses(t *testing.T) {
+	m, f := newTestManager(t, Options{Dial: noDial(t)})
+	applyScenes(t, m, sceneProxy(1080, "default"))
+	if code, _ := ask(t, f.dial(t, 1080), Target{Host: "192.0.2.9", Port: 443}); code != replyGeneral {
+		t.Fatalf("reply = %d, want a general failure", code)
+	}
+}

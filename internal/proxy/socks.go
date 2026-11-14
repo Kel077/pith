@@ -84,15 +84,16 @@ func (m *Manager) serve(e *listener, s *session) {
 
 var (
 	errNoConnection = errors.New("proxy: the dialer returned no connection")
+	errNoRoute      = errors.New("proxy: nothing connects by a scene's rules")
 	// errSessionEnded is a session that ended while its connection was
 	// opened: there is no one left to tell.
 	errSessionEnded = errors.New("proxy: the session ended")
 )
 
-// open connects to target through what e goes out through, an interface or
-// an upstream proxy, and makes the connection the outbound one of s. It
-// returns it with the address it went out from. Its error is what the
-// client is told, in its protocol.
+// open connects to target through what e goes out through, an interface,
+// an upstream proxy or what a scene's rules choose, and makes the
+// connection the outbound one of s. It returns it with the address it went
+// out from. Its error is what the client is told, in its protocol.
 func (m *Manager) open(ctx context.Context, e *listener, s *session, target Target) (net.Conn, net.Addr, error) {
 	var out net.Conn
 	var bound net.Addr
@@ -100,6 +101,13 @@ func (m *Manager) open(ctx context.Context, e *listener, s *session, target Targ
 	switch {
 	case e.cfg.Upstream != "":
 		out, bound, err = m.through(ctx, e, target)
+	case e.cfg.Scene != "":
+		if m.opts.Route == nil {
+			return nil, nil, errNoRoute
+		}
+		if out, err = m.opts.Route(ctx, e.cfg.Scene, target); out != nil {
+			bound = out.LocalAddr()
+		}
 	case m.isSuspended(e.cfg.Via):
 		return nil, nil, errSuspended
 	default:

@@ -45,6 +45,10 @@ type Options struct {
 	// Upstream opens the TCP connection to a port's upstream proxy, by its
 	// "host:port". Nil connects as macOS routes and resolves names.
 	Upstream func(ctx context.Context, network, address string) (net.Conn, error)
+	// Route connects a port that goes out by the rules of a scene, by the
+	// scene's ID: it matches the rules, and dials. Nil refuses such ports'
+	// connections.
+	Route func(ctx context.Context, scene string, target Target) (net.Conn, error)
 
 	HandshakeTimeout time.Duration
 	ConnectTimeout   time.Duration
@@ -274,14 +278,14 @@ var errSuspended = &api.Error{Code: api.ErrInterfaceUnavailable, Detail: "the in
 
 // Suspend has the listeners whose exit match tells refuse connections, as
 // when their interface is down, and closes their streams, until Resume. Other
-// listeners go on, as those that go out through an upstream proxy do;
-// nothing is unbound.
+// listeners go on, as those that go out through an upstream proxy or by a
+// scene's rules do; nothing is unbound.
 func (m *Manager) Suspend(match func(api.InterfaceRef) bool) {
 	m.mu.Lock()
 	m.suspended = match
 	var closing []*session
 	for _, e := range m.entries {
-		if e.cfg.Enabled && e.cfg.Upstream == "" && match(e.cfg.Via) {
+		if e.cfg.Enabled && e.cfg.Via.Name != "" && match(e.cfg.Via) {
 			for s := range e.conns {
 				closing = append(closing, s)
 			}
@@ -300,6 +304,10 @@ func (m *Manager) Resume() {
 	m.mu.Unlock()
 }
 
+// Suspended tells whether connections through via are refused for now, for
+// Route to skip the interface as a port through it would.
+func (m *Manager) Suspended(via api.InterfaceRef) bool { return m.isSuspended(via) }
+
 // isSuspended tells whether connections through via are refused for now.
 func (m *Manager) isSuspended(via api.InterfaceRef) bool {
 	m.mu.Lock()
@@ -309,7 +317,7 @@ func (m *Manager) isSuspended(via api.InterfaceRef) bool {
 
 func sameProxy(a, b api.Proxy) bool {
 	return a.Port == b.Port && a.Enabled == b.Enabled && a.Via.Name == b.Via.Name && a.Via.HardwareAddr == b.Via.HardwareAddr &&
-		a.Upstream == b.Upstream && a.Shared == b.Shared
+		a.Upstream == b.Upstream && a.Scene == b.Scene && a.Shared == b.Shared
 }
 
 // allowLocked makes allow the devices that may use shared listeners. It
@@ -607,7 +615,7 @@ func (m *Manager) Status(ctx context.Context) []api.ProxyStatus {
 						go m.checkUpstream(e)
 					}
 				}
-			} else if m.suspended != nil && m.suspended(e.cfg.Via) {
+			} else if e.cfg.Via.Name != "" && m.suspended != nil && m.suspended(e.cfg.Via) {
 				copy := *errSuspended
 				st.Error = &copy
 			}
