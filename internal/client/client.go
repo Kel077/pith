@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Kel077/pith/internal/api"
@@ -82,6 +83,8 @@ type Client struct {
 	proxies        *proxy.Manager
 	newProxies     func() (*proxy.Manager, error) // tests inject loopback-only forwarding
 	proxiesLoaded  bool
+	sceneRules     atomic.Pointer[map[string]sceneRules]                                // of the scenes local proxies go out by
+	systemDial     func(ctx context.Context, network, address string) (net.Conn, error) // as macOS routes: a plain dialer when nil
 	closed         bool
 	lifetime       context.Context
 	closeLifetime  context.CancelFunc

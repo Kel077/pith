@@ -22,7 +22,7 @@ func (c *Client) LoadConfig(ctx context.Context) (api.Config, error) {
 	}
 	c.recoverDrain(ctx, cfg)
 	c.recoverRouter()
-	return cfg, c.syncProxies(ctx, cfg.Proxies, cfg.Devices, true)
+	return cfg, c.syncProxies(ctx, cfg, true)
 }
 
 func (c *Client) loadConfig(ctx context.Context) (api.Config, error) {
@@ -112,7 +112,7 @@ func (c *Client) SaveConfig(ctx context.Context, cfg api.Config) error {
 	routingUnchanged := previousErr == nil && sameRoutingConfig(previous, cfg)
 	proxyOnly := routingUnchanged && !sameProxies(previous, cfg)
 	c.routingPending = c.routingPending || !routingUnchanged
-	if err := c.syncProxies(ctx, cfg.Proxies, cfg.Devices, false); err != nil {
+	if err := c.syncProxies(ctx, cfg, false); err != nil {
 		return fmt.Errorf("configuration saved; local proxy update failed: %w", err)
 	}
 	dir, err := os.Open(c.opts.ConfigDir)

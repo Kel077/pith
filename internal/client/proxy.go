@@ -50,8 +50,8 @@ func (c *Client) validateProxyInterfaces(ctx context.Context, configs []api.Prox
 		return ctx.Err()
 	}
 	for _, config := range configs {
-		if config.Upstream != "" {
-			continue
+		if config.Via.Name == "" {
+			continue // it goes out through an upstream proxy, or by a scene's rules
 		}
 		if iface := config.Via.Resolve(ifaces); iface != nil && !iface.CanProxy() {
 			return &api.Error{Code: api.ErrInvalidConfig, Detail: fmt.Sprintf("proxy %d: selected interface is not a supported physical exit", config.Port)}
@@ -60,7 +60,8 @@ func (c *Client) validateProxyInterfaces(ctx context.Context, configs []api.Prox
 	return nil
 }
 
-func (c *Client) syncProxies(parent context.Context, configs []api.Proxy, devices []api.Device, firstLoad bool) error {
+func (c *Client) syncProxies(parent context.Context, cfg api.Config, firstLoad bool) error {
+	configs, devices := cfg.Proxies, cfg.Devices
 	c.proxyMu.Lock()
 	if c.closed {
 		c.proxyMu.Unlock()
@@ -75,7 +76,7 @@ func (c *Client) syncProxies(parent context.Context, configs []api.Proxy, device
 		if factory == nil {
 			factory = func() (*proxy.Manager, error) {
 				egress := proxyegress.New(proxyegress.Options{Interfaces: func(ctx context.Context) ([]api.Interface, error) { return c.interfaces(ctx) }})
-				return proxy.New(proxy.Options{Dial: egress.Dial, Health: egress.Health})
+				return proxy.New(proxy.Options{Dial: egress.Dial, Health: egress.Health, Route: c.routeByRules(egress.Dial)})
 			}
 		}
 		manager, err := factory()
@@ -87,6 +88,10 @@ func (c *Client) syncProxies(parent context.Context, configs []api.Proxy, device
 	}
 	manager := c.proxies
 	c.proxyMu.Unlock()
+	// The rules come before the listeners that go out by them.
+	if err := c.compileScenes(cfg); err != nil {
+		return err
+	}
 	// After the configuration was committed, caller cancellation cannot leave
 	// an obsolete enabled listener open. Application Close still cancels setup.
 	base := c.lifetime
