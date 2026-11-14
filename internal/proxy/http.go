@@ -28,7 +28,8 @@ func isMethodLetter(b byte) bool { return b >= 'A' && b <= 'Z' }
 // CONNECT host:port opens a tunnel, and a request for an http:// URL is sent
 // on to its server, which closes the connection after its answer. Devices
 // whose network settings take an HTTP proxy alone use it. Like SOCKS5, it
-// asks for no password: who may connect is the listener's affair.
+// asks for no password: who may connect is the listener's affair. A request
+// whose target is a path asks the port itself instead.
 func (m *Manager) serveHTTP(e *listener, s *session, first byte, connectDeadline time.Time) {
 	if !isMethodLetter(first) {
 		return
@@ -41,11 +42,16 @@ func (m *Manager) serveHTTP(e *listener, s *session, first byte, connectDeadline
 		return
 	}
 	head.N = math.MaxInt64 // a request's body has no bound
+	if req.Method != http.MethodConnect && req.URL.Scheme == "" && req.URL.Host == "" && strings.HasPrefix(req.RequestURI, "/") {
+		m.servePort(e, s, req, br, connectDeadline)
+		return
+	}
 	target, tunnel, ok := httpTarget(req)
 	if !ok {
 		httpError(s.in, http.StatusBadRequest)
 		return
 	}
+	m.markStream(s)
 	if s.ctx.Err() != nil {
 		return
 	}

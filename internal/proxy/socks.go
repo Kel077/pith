@@ -47,6 +47,7 @@ func (m *Manager) serve(e *listener, s *session) {
 		m.serveHTTP(e, s, version[0], connectDeadline)
 		return
 	}
+	m.markStream(s)
 	if err := negotiate(s.in); err != nil {
 		return
 	}

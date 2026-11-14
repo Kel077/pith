@@ -60,8 +60,9 @@ type Options struct {
 	Info func(ctx context.Context, via api.InterfaceRef, maxAge time.Duration) (api.ProxyInfo, error)
 	// ChangeIP changes the public address of an interface, and returns once
 	// the internet works through it again; a call during a change waits for
-	// it and returns what it did. The manager sets the port. Nil, no
-	// interface's address can be changed: api.ErrUnsupported.
+	// it and returns what it did. ctx bounds the caller's wait alone: the
+	// change continues in the client when it ends. The manager sets the port.
+	// Nil, no interface's address can be changed: api.ErrUnsupported.
 	ChangeIP func(ctx context.Context, via api.InterfaceRef) (api.ProxyIPChange, error)
 	// Changing tells whether an interface's public address is being changed
 	// now, whoever asked, for Status. It doesn't block. Nil, none is.
@@ -86,8 +87,8 @@ const (
 	maxRefusing   = 8
 	refuseTimeout = 2 * time.Second
 	// An upstream proxy has a few seconds to take a connection, of the ten a
-	// CONNECT has. One that carried none for a while is asked whether it
-	// answers, when Status is read.
+	// CONNECT has. Status asks whether it answers at most once an interval,
+	// independently of the connections it carries.
 	upstreamAnswer     = 3 * time.Second
 	upstreamCheckEvery = 10 * time.Second
 )
@@ -97,13 +98,14 @@ const (
 type Manager struct {
 	opts Options
 
-	applyMu sync.Mutex
-	mu      sync.Mutex
-	closed  bool
-	entries []*listener
-	byPort  map[int]*listener
-	total   int
-	wg      sync.WaitGroup
+	applyMu  sync.Mutex
+	mu       sync.Mutex
+	closed   bool
+	entries  []*listener
+	byPort   map[int]*listener
+	total    int
+	requests int // requests to the ports themselves, independently of streams
+	wg       sync.WaitGroup
 	// suspended tells the exits whose listeners refuse connections for now.
 	suspended func(api.InterfaceRef) bool
 	// allow is the other devices that may use shared listeners; devices, the
@@ -134,15 +136,20 @@ type listener struct {
 	err      *api.Error
 	retired  bool
 	conns    map[*session]struct{}
+	requests map[*session]struct{}
 	open     int
 	sent     atomic.Uint64
 	received atomic.Uint64
+	// allowChangeIP applies to new requests without replacing the listener.
+	allowChangeIP atomic.Bool
 	// up tells how the upstream proxy last answered, a connection or a check:
 	// guarded by Manager.mu.
 	up struct {
 		checking bool
 		checked  time.Time
 		err      *api.Error
+		info     *api.ProxyInfo
+		changing int
 	}
 }
 
@@ -155,6 +162,7 @@ type session struct {
 	out    net.Conn
 	closed bool
 	active bool // protected by Manager.mu
+	stream bool // a proxy request, rather than an unclassified handshake; Manager.mu
 	// peer is the other device the stream is for, and dev what it moved;
 	// neither is set for this Mac's own.
 	peer netip.Addr
@@ -201,9 +209,9 @@ func New(opts Options) (*Manager, error) {
 
 // Apply keeps unchanged listeners, closes removed/rebound sessions, and retries
 // failed binds. A per-port bind failure is retained in Status, not returned as a
-// configuration failure. Label-only changes do not replace a listener. A shared
-// listener takes the connections of devices too; a device no longer among
-// them loses its streams.
+// configuration failure. Label-only changes and ChangeIP switches do not replace
+// a listener. A shared listener takes the connections of devices too; a device
+// no longer among them loses its streams.
 func (m *Manager) Apply(ctx context.Context, proxies []api.Proxy, devices []api.Device) error {
 	// The proxies and the devices are validated as a configuration's are. The
 	// scenes that proxies go out by are the caller's, which has them: here
@@ -247,11 +255,12 @@ func (m *Manager) Apply(ctx context.Context, proxies []api.Proxy, devices []api.
 			// Label is presentation-only; keep the worker's immutable reference.
 		} else {
 			life, cancel := context.WithCancel(context.Background())
-			e = &listener{cfg: p, ctx: life, cancel: cancel, conns: make(map[*session]struct{})}
+			e = &listener{cfg: p, ctx: life, cancel: cancel, conns: make(map[*session]struct{}), requests: make(map[*session]struct{})}
 			if p.Enabled {
 				start = append(start, e)
 			}
 		}
+		e.allowChangeIP.Store(p.ChangeIP)
 		next = append(next, e)
 		byPort[p.Port] = e
 	}
@@ -314,7 +323,9 @@ func (m *Manager) Suspend(match func(api.InterfaceRef) bool) {
 	for _, e := range m.entries {
 		if e.cfg.Enabled && e.cfg.Via.Name != "" && match(e.cfg.Via) {
 			for s := range e.conns {
-				closing = append(closing, s)
+				if s.stream {
+					closing = append(closing, s)
+				}
 			}
 		}
 	}
@@ -346,7 +357,26 @@ func (m *Manager) isSuspended(via api.InterfaceRef) bool {
 // through, as a POST of /change-ip to the port does, but for this Mac's
 // user: whatever the port's ChangeIP is.
 func (m *Manager) ChangeIP(ctx context.Context, port int) (api.ProxyIPChange, error) {
-	return api.ProxyIPChange{Port: port}, &api.Error{Code: api.ErrUnsupported, Detail: "not written yet"}
+	m.mu.Lock()
+	e := m.byPort[port]
+	if m.closed || e == nil || !e.cfg.Enabled || e.retired || e.ln == nil {
+		m.mu.Unlock()
+		problem := *unsupportedChange
+		return api.ProxyIPChange{Port: port}, &problem
+	}
+	m.wg.Add(1)
+	m.mu.Unlock()
+	defer m.wg.Done()
+	wait, cancel := context.WithTimeout(ctx, changeIPTimeout)
+	defer cancel()
+	stop := context.AfterFunc(e.ctx, cancel)
+	defer stop()
+	result, failure := m.changeIP(wait, e, 0)
+	if failure != nil {
+		problem := *failure.problem
+		return result, &problem
+	}
+	return result, nil
 }
 
 func sameProxy(a, b api.Proxy) bool {
@@ -365,9 +395,11 @@ func (m *Manager) allowLocked(allow []netip.Prefix) []*session {
 	}
 	var unlisted []*session
 	for _, e := range m.entries {
-		for s := range e.conns {
-			if s.peer.IsValid() && !(shared && m.allowedLocked(s.peer)) {
-				unlisted = append(unlisted, s)
+		for _, sessions := range []map[*session]struct{}{e.conns, e.requests} {
+			for s := range sessions {
+				if s.peer.IsValid() && !(shared && m.allowedLocked(s.peer)) {
+					unlisted = append(unlisted, s)
+				}
 			}
 		}
 	}
@@ -512,6 +544,9 @@ func (m *Manager) retireLocked(e *listener) closure {
 	for s := range e.conns {
 		c.conns = append(c.conns, s)
 	}
+	for s := range e.requests {
+		c.conns = append(c.conns, s)
+	}
 	return c
 }
 
@@ -634,6 +669,10 @@ func (m *Manager) Status(ctx context.Context) []api.ProxyStatus {
 		if e.cfg.Enabled {
 			st.Listening, st.Since = e.ln != nil && !e.retired, e.since
 			st.Open, st.Sent, st.Received = e.open, e.sent.Load(), e.received.Load()
+			if e.cfg.Upstream != "" {
+				st.Upstream = cloneInfo(e.up.info)
+				st.Changing = e.up.changing > 0 || e.up.info != nil && e.up.info.Changing
+			}
 			if e.err != nil {
 				copy := *e.err
 				st.Error = &copy
@@ -658,6 +697,13 @@ func (m *Manager) Status(ctx context.Context) []api.ProxyStatus {
 		states[i] = st
 	}
 	m.mu.Unlock()
+	if m.opts.Changing != nil {
+		for i, ref := range refs {
+			if ref.Name != "" {
+				states[i].Changing = m.opts.Changing(ref)
+			}
+		}
+	}
 	if m.opts.Health != nil {
 		ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
@@ -765,10 +811,15 @@ func (m *Manager) finish(e *listener, s *session) {
 // one gave its slot up before its worker finishes.
 func (m *Manager) releaseLocked(e *listener, s *session) {
 	if _, ok := e.conns[s]; !ok {
-		return
+		if _, ok := e.requests[s]; !ok {
+			return
+		}
+		delete(e.requests, s)
+		m.requests--
+	} else {
+		delete(e.conns, s)
+		m.total--
 	}
-	delete(e.conns, s)
-	m.total--
 	if s.active {
 		e.open--
 	}
