@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/netip"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -89,7 +90,14 @@ func (m *Manager) serveHTTP(e *listener, s *session, first byte, connectDeadline
 	// answer, and whatever the client sends after this request is dropped
 	// with the connection.
 	req.RequestURI = ""
-	for _, field := range []string{"Proxy-Connection", "Proxy-Authorization", "Keep-Alive", "Upgrade"} {
+	// The fields of this hop end here: those the request's Connection names
+	// (RFC 9110, section 7.6.1), and the ones known to be of one hop.
+	for _, value := range req.Header.Values("Connection") {
+		for name := range strings.SplitSeq(value, ",") {
+			req.Header.Del(strings.TrimSpace(name))
+		}
+	}
+	for _, field := range []string{"Proxy-Connection", "Proxy-Authorization", "Proxy-Authenticate", "Keep-Alive", "TE", "Upgrade"} {
 		req.Header.Del(field)
 	}
 	req.Header.Set("Connection", "close")

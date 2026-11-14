@@ -107,7 +107,9 @@ func TestHTTPRequestGoesToItsServerOnce(t *testing.T) {
 	applyTest(t, m, testProxy(1080))
 
 	c := f.dial(t, 1080)
-	fmt.Fprint(c, "POST http://example.com/path?q=1 HTTP/1.1\r\nHost: example.com\r\nProxy-Connection: keep-alive\r\nProxy-Authorization: Basic eDp5\r\nContent-Length: 4\r\n\r\nbody")
+	fmt.Fprint(c, "POST http://example.com/path?q=1 HTTP/1.1\r\nHost: example.com\r\nProxy-Connection: keep-alive\r\nProxy-Authorization: Basic eDp5\r\n"+
+		"Connection: X-Hop, keep-alive\r\nConnection: x-other-hop\r\nX-Hop: of this hop\r\nX-Other-Hop: too\r\nKeep-Alive: timeout=5\r\nTE: trailers\r\nX-End-To-End: kept\r\n"+
+		"Content-Length: 4\r\n\r\nbody")
 	if got := <-targets; got != (Target{Host: "example.com", Port: 80, IsDomain: true}) {
 		t.Fatalf("asked for %+v", got)
 	}
@@ -121,6 +123,15 @@ func TestHTTPRequestGoesToItsServerOnce(t *testing.T) {
 	}
 	if r.Header.Get("Proxy-Connection") != "" || r.Header.Get("Proxy-Authorization") != "" || !r.Close {
 		t.Fatalf("the origin got the proxy's fields, or was not asked to close: %v", r.Header)
+	}
+	// The fields of the client's hop end at the proxy; the others go on.
+	for _, field := range []string{"X-Hop", "X-Other-Hop", "Keep-Alive", "Te"} {
+		if value, ok := r.Header[field]; ok {
+			t.Fatalf("the origin got %s %q, a field of the client's hop", field, value)
+		}
+	}
+	if r.Header.Get("X-End-To-End") != "kept" || r.Header.Get("Connection") != "close" {
+		t.Fatalf("the origin got %v", r.Header)
 	}
 	// The request named no client, and the proxy names none for it.
 	if agent, ok := r.Header["User-Agent"]; ok {
