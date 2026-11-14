@@ -309,7 +309,7 @@ func TestExitInfoSharesLookupsAndRemembersFailures(t *testing.T) {
 		t.Fatal("explicit maxAge didn't retry a failure", n.tests(), err)
 	}
 	c.exitMu.Lock()
-	c.exits["example0"].failed = time.Now().Add(-exitFailureAge - time.Second)
+	c.exits["example0"].failed = time.Now().Add(-c.exits["example0"].backoff - time.Second)
 	c.exitMu.Unlock()
 	if _, err := c.exitInfo(context.Background(), api.InterfaceRef{Name: "example0"}, -1); err != nil || n.tests() != [2]int{4, 4} {
 		t.Fatal("failure didn't expire", n.tests(), err)

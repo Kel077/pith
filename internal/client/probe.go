@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/netip"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Kel077/pith/internal/api"
@@ -17,8 +18,15 @@ import (
 
 const probeTimeout = 8 * time.Second
 
+func (c *Client) probeLimit() time.Duration {
+	if c.probeTimeout > 0 {
+		return c.probeTimeout
+	}
+	return probeTimeout
+}
+
 func (c *Client) Probe(ctx context.Context, iface, target string) (api.Probe, error) {
-	result := api.Probe{Interface: iface, Target: target, At: time.Now()}
+	result := api.Probe{Interface: iface, Target: target, At: c.exitTime()}
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
@@ -38,7 +46,8 @@ func (c *Client) Probe(ctx context.Context, iface, target string) (api.Probe, er
 }
 
 func (c *Client) probe(ctx context.Context, iface, target string, interfaces []api.Interface) (api.Probe, error) {
-	result := api.Probe{Interface: iface, Target: target, At: time.Now()}
+	result := api.Probe{Interface: iface, Target: target, At: c.exitTime()}
+	timeout := c.probeLimit()
 	var dns []string
 	for _, link := range interfaces {
 		if link.Name == iface {
@@ -46,13 +55,13 @@ func (c *Client) probe(ctx context.Context, iface, target string, interfaces []a
 			break
 		}
 	}
-	dialer, err := c.dialer(iface, probeTimeout, dns)
+	dialer, err := c.dialer(iface, timeout, dns)
 	if err != nil {
 		result.Problem = err.Error()
 		return result, nil
 	}
 	names := newProbeDNS(dialer, iface, dns, proxyegress.FallbackDNS(interfaces, proxyegress.SystemDNS()))
-	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	started := time.Now()
 	if target != "" {
@@ -82,15 +91,17 @@ func (c *Client) probe(ctx context.Context, iface, target string, interfaces []a
 		err     error
 	}
 	responses := make(chan response, 2)
+	var workers sync.WaitGroup
+	defer workers.Wait()
 	// Separate families prevent a working IPv4 path from concealing broken IPv6.
 	for i, url := range c.probeURLs {
-		go func() {
+		workers.Go(func() {
 			network := "tcp4"
 			if i == 1 {
 				network = "tcp6"
 			}
 			var remote string
-			transport := &http.Transport{Proxy: nil, DisableKeepAlives: true, TLSHandshakeTimeout: probeTimeout, ResponseHeaderTimeout: probeTimeout,
+			transport := &http.Transport{Proxy: nil, DisableKeepAlives: true, TLSHandshakeTimeout: timeout, ResponseHeaderTimeout: timeout,
 				DialContext: func(ctx context.Context, _ string, address string) (net.Conn, error) {
 					conn, err := names.dial(ctx, dialer, network, address)
 					if err == nil {
@@ -124,7 +135,7 @@ func (c *Client) probe(ctx context.Context, iface, target string, interfaces []a
 				err = errors.New("HTTPS probe returned an unexpected address family")
 			}
 			responses <- response{address: address, remote: remote, err: err}
-		}()
+		})
 	}
 	var failures []error
 	for range 2 {

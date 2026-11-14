@@ -22,6 +22,7 @@ func (c *Client) Close() error {
 	c.closeLifetime()
 	manager := c.proxies
 	c.proxyMu.Unlock()
+	c.exitJobs.Wait()
 	// A router that gave its address up is asked for one again first, or
 	// everything on its network would stay offline.
 	renewed := make(chan struct{})

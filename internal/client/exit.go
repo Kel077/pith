@@ -8,7 +8,11 @@ import (
 	"github.com/Kel077/pith/internal/api"
 )
 
-const exitFailureAge = 30 * time.Second
+const (
+	exitFailureAge  = 30 * time.Second
+	exitFailureMax  = 10 * time.Minute
+	exitIdentifyAge = time.Minute
+)
 
 // exitState belongs to one observed interface configuration. Replacing it
 // prevents an old lookup from publishing addresses for a different link.
@@ -16,19 +20,32 @@ type exitState struct {
 	link       api.Interface
 	public     api.Probe
 	failed     time.Time
+	backoff    time.Duration
 	lookup     *exitLookup
 	capability *exitCapability
 }
 
 type exitLookup struct {
-	done   chan struct{}
-	result api.Probe
-	err    error
+	done          chan struct{}
+	result        api.Probe
+	err           error
+	forPoll       bool
+	ownerCanceled bool
+	owned         bool
 }
 
 type exitCapability struct {
 	done chan struct{}
 	can  bool
+	err  error
+	at   time.Time
+}
+
+func (c *Client) exitTime() time.Time {
+	if c.exitNow != nil {
+		return c.exitNow()
+	}
+	return time.Now()
 }
 
 type exitDevice uint8
@@ -88,63 +105,107 @@ func (c *Client) forgetExitAddresses(name string) {
 	defer c.exitMu.Unlock()
 	if state := c.exits[name]; state != nil {
 		state.public, state.failed, state.lookup = api.Probe{}, time.Time{}, nil
+		state.backoff = 0
 	}
 }
 
 // publicProbe shares one test of a link. A nil maxAge always asks for a
 // fresh test, as the interface's Test button and renewals do.
 func (c *Client) publicProbe(ctx context.Context, link api.Interface, links []api.Interface, maxAge *time.Duration) (api.Probe, error) {
-	c.exitMu.Lock()
-	state := c.exits[link.Name]
-	if state == nil || !sameExitLink(state.link, link) {
-		c.exitMu.Unlock()
-		return c.probe(ctx, link.Name, "", links) // an uncached, superseded inventory
-	}
-	if maxAge != nil {
-		known := publicIPs(state.public) > 0
-		fresh := known && (*maxAge < 0 || time.Since(state.public.At) <= *maxAge)
-		if fresh || *maxAge < 0 && !state.failed.IsZero() && time.Since(state.failed) < exitFailureAge {
-			p := state.public
-			c.exitMu.Unlock()
-			return p, nil
+	for {
+		if err := ctx.Err(); err != nil {
+			return api.Probe{}, err
 		}
-	}
-	if pending := state.lookup; pending != nil {
+		c.proxyMu.Lock()
+		if c.closed {
+			c.proxyMu.Unlock()
+			return api.Probe{}, errClientClosed
+		}
+		c.exitMu.Lock()
+		state := c.exits[link.Name]
+		if state == nil || !sameExitLink(state.link, link) {
+			c.exitMu.Unlock()
+			c.proxyMu.Unlock()
+			return api.Probe{}, &api.Error{Code: api.ErrInterfaceUnavailable, Detail: "the interface changed before its public-address test"}
+		}
+		if maxAge != nil {
+			known := publicIPs(state.public) > 0
+			fresh := known && (*maxAge < 0 || c.exitTime().Sub(state.public.At) <= *maxAge)
+			if fresh || *maxAge < 0 && !state.failed.IsZero() && c.exitTime().Sub(state.failed) < state.backoff {
+				p := state.public
+				c.exitMu.Unlock()
+				c.proxyMu.Unlock()
+				return p, nil
+			}
+		}
+		pending := state.lookup
+		if pending == nil {
+			pending = &exitLookup{done: make(chan struct{}), owned: maxAge == nil}
+			state.lookup = pending
+			c.exitJobs.Add(1)
+			parent := ctx
+			if maxAge != nil {
+				parent = c.lifetime
+			}
+			go c.runExitLookup(parent, state, pending, links)
+		}
+		if maxAge != nil {
+			pending.forPoll = true
+		}
 		c.exitMu.Unlock()
+		c.proxyMu.Unlock()
 		select {
 		case <-ctx.Done():
 			return api.Probe{}, ctx.Err()
 		case <-pending.done:
+		}
+		if maxAge == nil || !pending.ownerCanceled {
 			return pending.result, pending.err
 		}
+		// A poll doesn't inherit cancellation from the Test button it joined.
+		// Read the inventory again before starting its own independent test.
+		var err error
+		links, err = c.Interfaces(ctx)
+		if err != nil {
+			return api.Probe{}, err
+		}
+		resolved := (api.InterfaceRef{Name: link.Name, HardwareAddr: link.HardwareAddr}).Resolve(links)
+		if resolved == nil || !resolved.Up {
+			return api.Probe{}, &api.Error{Code: api.ErrInterfaceUnavailable, Detail: "the interface left during its public-address test"}
+		}
+		link = *resolved
 	}
-	pending := &exitLookup{done: make(chan struct{})}
-	state.lookup = pending
-	c.exitMu.Unlock()
+}
 
-	pending.result, pending.err = c.probe(ctx, link.Name, "", links)
-	// A test started before a link changed must not repopulate its cache.
-	_, inventoryErr := c.Interfaces(ctx)
+func (c *Client) runExitLookup(parent context.Context, state *exitState, pending *exitLookup, links []api.Interface) {
+	defer c.exitJobs.Done()
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+	defer context.AfterFunc(c.lifetime, cancel)()
+	pending.result, pending.err = c.probe(ctx, state.link.Name, "", links)
+	// Use the client's context to check identity even when the test timed out.
+	_, inventoryErr := c.Interfaces(c.lifetime)
 	c.exitMu.Lock()
-	if c.exits[link.Name] == state && state.lookup == pending {
+	defer c.exitMu.Unlock()
+	pending.ownerCanceled = pending.owned && parent.Err() != nil
+	if c.exits[state.link.Name] == state && state.lookup == pending {
 		state.lookup = nil
-		if pending.err == nil && inventoryErr == nil && link.Up {
-			if publicIPs(pending.result) > 0 {
+		if c.lifetime.Err() == nil && !pending.ownerCanceled && state.link.Up {
+			if pending.err == nil && inventoryErr == nil && publicIPs(pending.result) > 0 {
 				if !pending.result.At.Before(state.public.At) {
 					state.public = pending.result
 				}
-				state.failed = time.Time{}
+				state.failed, state.backoff = time.Time{}, 0
 			} else {
-				if maxAge != nil {
+				if pending.forPoll {
 					state.public = api.Probe{}
 				}
-				state.failed = time.Now()
+				state.failed = c.exitTime()
+				state.backoff = min(exitFailureMax, max(exitFailureAge, 2*state.backoff))
 			}
 		}
 	}
 	close(pending.done)
-	c.exitMu.Unlock()
-	return pending.result, pending.err
 }
 
 func (c *Client) exitLabel(via api.InterfaceRef, link *api.Interface) string {
@@ -171,46 +232,67 @@ func (c *Client) exitLabel(via api.InterfaceRef, link *api.Interface) string {
 	return via.Name
 }
 
-// exitCanChange identifies a device once per interface configuration. A
-// missing password doesn't change whether the device supports a renewal.
+// exitCanChange shares identification independent of its readers. Only an
+// unsupported device is permanently negative for this interface configuration.
 func (c *Client) exitCanChange(ctx context.Context, link api.Interface) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	c.proxyMu.Lock()
+	if c.closed {
+		c.proxyMu.Unlock()
+		return false
+	}
 	c.exitMu.Lock()
 	state := c.exits[link.Name]
 	if state == nil || !sameExitLink(state.link, link) {
 		c.exitMu.Unlock()
+		c.proxyMu.Unlock()
 		return false
 	}
-	if pending := state.capability; pending != nil {
-		c.exitMu.Unlock()
+	pending := state.capability
+	if pending != nil {
 		select {
 		case <-pending.done:
-			return pending.can
+			if pending.err != nil && api.Code(pending.err) != api.ErrUnsupported && c.exitTime().Sub(pending.at) >= exitIdentifyAge {
+				pending = nil
+			}
 		default:
 		}
-		select {
-		case <-ctx.Done():
-			return false
-		case <-pending.done:
-			return pending.can
-		}
 	}
-	pending := &exitCapability{done: make(chan struct{})}
-	state.capability = pending
+	if pending == nil {
+		pending = &exitCapability{done: make(chan struct{})}
+		state.capability = pending
+		c.exitJobs.Add(1)
+		go c.runExitIdentification(state, pending)
+	}
 	c.exitMu.Unlock()
-	_, err := c.hotspot(ctx, link.Name)
+	c.proxyMu.Unlock()
+	select {
+	case <-pending.done:
+		return pending.can
+	default:
+	}
+	select {
+	case <-ctx.Done():
+		return false
+	case <-pending.done:
+		return pending.can
+	}
+}
+
+func (c *Client) runExitIdentification(state *exitState, pending *exitCapability) {
+	defer c.exitJobs.Done()
+	ctx, cancel := context.WithTimeout(c.lifetime, 5*time.Second)
+	defer cancel()
+	_, err := c.hotspot(ctx, state.link.Name)
 	if api.Code(err) == api.ErrUnsupported {
-		_, err = c.router(ctx, link.Name)
+		_, err = c.router(ctx, state.link.Name)
 	}
-	pending.can = err == nil
 	c.exitMu.Lock()
-	// Cancellation isn't evidence about the device. Other failures are kept
-	// until the interface changes, just as an unsupported device is.
-	if ctx.Err() != nil && state.capability == pending {
-		state.capability = nil
-	}
+	pending.can, pending.err, pending.at = err == nil, err, c.exitTime()
 	close(pending.done)
 	c.exitMu.Unlock()
-	return pending.can
 }
 
 func (c *Client) ChangeProxyIP(ctx context.Context, port int) (api.ProxyIPChange, error) {

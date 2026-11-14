@@ -94,6 +94,9 @@ type Client struct {
 	exits          map[string]*exitState
 	exitChanges    map[string]*exitChange
 	exitAliases    atomic.Pointer[map[string]string]
+	exitJobs       sync.WaitGroup // public-address lookups and device identifications
+	exitNow        func() time.Time
+	probeTimeout   time.Duration // probeTimeout when zero
 }
 
 var _ api.Service = (*Client)(nil)
