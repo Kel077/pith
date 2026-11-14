@@ -15,9 +15,11 @@ const MaxProxies = 32
 const MaxDevices = 64
 
 // Proxy exposes SOCKS5 no-auth CONNECT on 127.0.0.1:Port in the App process,
-// and HTTP on the same port: CONNECT, and requests for http:// URLs.
-// It supports literal IPv4/IPv6 and names resolved through Via's own DNS.
-// It never uses another interface as fallback and does not depend on TUN.
+// and HTTP on the same port: CONNECT, and requests for http:// URLs. It
+// goes out through Via, one interface, unless Upstream or Scene is set: to
+// literal IPv4/IPv6 destinations and to names resolved through Via's own
+// DNS, never through another interface as fallback. It does not depend on
+// TUN. Whatever it goes out through, it connects to no loopback destination.
 type Proxy struct {
 	Port    int          `json:"port"`         // 1024..65535; unique even when disabled
 	Via     InterfaceRef `json:"via,omitzero"` // one supported physical exit, resolved by Resolve
