@@ -290,6 +290,102 @@ func TestDroppedHelperStreamReopensWithoutReportingFailure(t *testing.T) {
 	}
 }
 
+// A helper can end stream after stream, as when its interface watcher fails
+// on a busy Mac, while it still answers: Pith reopens them, and never reports
+// the helper as not responding.
+func TestHelperThatKeepsEndingStreamsIsNotReported(t *testing.T) {
+	engine := newFakeEngine()
+	c, _, _ := startLocalHelper(t, "test", engine)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	events, err := c.Subscribe(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-events
+	<-events
+	subscribed := func() bool {
+		engine.mu.Lock()
+		defer engine.mu.Unlock()
+		return len(engine.subs) == 1
+	}
+	for drop := range 3 {
+		engine.drop()
+		deadline := time.After(5 * time.Second)
+		for !subscribed() {
+			select {
+			case event := <-events:
+				if event.Status != nil && event.Status.Error != nil {
+					t.Fatalf("after drop %d, the helper was reported: %v", drop, event.Status.Error)
+				}
+			case <-deadline:
+				t.Fatalf("after drop %d, no stream was reopened", drop)
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+	}
+}
+
+// slowEngine answers its status late, as a background daemon may on a busy Mac.
+type slowEngine struct {
+	*fakeEngine
+	delay time.Duration
+}
+
+func (e slowEngine) Status(ctx context.Context) (api.Status, error) {
+	select {
+	case <-time.After(e.delay):
+	case <-ctx.Done():
+		return api.Status{}, ctx.Err()
+	}
+	return e.fakeEngine.Status(ctx)
+}
+
+// A helper that answers late, and can't open a stream because its interface
+// watcher failed, still answers: Pith shows its status, not a failure.
+func TestSlowHelperIsNotReported(t *testing.T) {
+	engine := slowEngine{fakeEngine: newFakeEngine(), delay: time.Second}
+	c, _, _ := startLocalHelper(t, "test", engine, func(o *helper.ServerOptions) {
+		o.WatchInterfaces = func(context.Context) (<-chan []api.Interface, error) {
+			return nil, errors.New("read routes: context deadline exceeded")
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	events, err := c.Subscribe(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := <-events
+	if first.Status == nil || first.Status.Error != nil || !first.Status.Helper.Running {
+		t.Fatalf("a slow helper was reported: %+v", first.Status)
+	}
+}
+
+// A helper that stops is reported at once.
+func TestHelperThatStopsIsReported(t *testing.T) {
+	c, stop, _ := startLocalHelper(t, "test", newFakeEngine())
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	events, err := c.Subscribe(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-events
+	<-events
+	stop()
+	for {
+		select {
+		case event := <-events:
+			if event.Status != nil && api.Code(event.Status.Error) == api.ErrHelperNotResponding {
+				return
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("a helper that stopped was not reported")
+		}
+	}
+}
+
 func TestIPCArtifactAndRootPeerChecks(t *testing.T) {
 	c, _, _ := startLocalHelper(t, "older", newFakeEngine())
 	status, err := c.Status(context.Background())

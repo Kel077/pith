@@ -17,11 +17,19 @@ type helperEvents struct {
 	err    error
 }
 
+// The helper is a background daemon: on a busy Mac, macOS gives it little
+// time, and it may answer late. Only a helper that doesn't answer within
+// these is reported as not responding.
+const (
+	streamSetup  = 5 * time.Second // to open a stream and read its two snapshots
+	statusAnswer = 5 * time.Second // to answer its status, when no stream opened
+)
+
 // openHelperEvents bounds setup without attaching a short deadline to a healthy
 // long-lived stream. Every stream still inherits the App/subscriber lifetime.
 func (c *Client) openHelperEvents(parent context.Context) helperEvents {
 	ctx, cancel := context.WithCancel(parent)
-	timer := time.AfterFunc(2*time.Second, cancel)
+	timer := time.AfterFunc(streamSetup, cancel)
 	defer timer.Stop()
 	result := helperEvents{cancel: cancel}
 	result.events, result.err = c.subscribeHelper(ctx)
@@ -69,7 +77,7 @@ func (c *Client) unavailableStatus(parent context.Context, failure error) api.St
 	if status, ok := c.helperProblem(failure); ok {
 		return status
 	}
-	ctx, cancel := context.WithTimeout(parent, 500*time.Millisecond)
+	ctx, cancel := context.WithTimeout(parent, statusAnswer)
 	defer cancel()
 	status, err := c.helperStatus(ctx)
 	if err == nil {
@@ -177,18 +185,16 @@ func (c *Client) events(ctx context.Context, output chan<- api.Event, stream hel
 				stream.cancel()
 				connected = nil
 				// A helper that still answers can end a stream, as when it drops a
-				// reader that fell behind. Reopen it at once and report the helper
-				// only if that fails, or if streams keep ending.
+				// reader that fell behind, or its interface watcher can't read the
+				// network configuration. Reopen it at once; when streams keep
+				// ending, at the next attempt, three seconds after the last. An
+				// attempt that opens no stream asks the helper's status: only a
+				// helper that doesn't answer is reported.
 				now := time.Now()
-				quiet := now.Sub(lastLoss) >= 3*time.Second
-				lastLoss = now
-				if quiet {
+				if now.Sub(lastLoss) >= 3*time.Second {
 					reconnect(now)
-					continue
 				}
-				if !publish(api.Status{State: api.Failed, Helper: api.HelperStatus{Installed: latest.Helper.Installed}, Error: &api.Error{Code: api.ErrHelperNotResponding, Detail: "helper event stream closed; routing state is unknown"}}) {
-					return
-				}
+				lastLoss = now
 				continue
 			}
 			if event.Status != nil {
