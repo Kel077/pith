@@ -87,6 +87,30 @@ func (m *Manager) serve(e *listener, s *session) {
 // through: not allowed, as a client reads it.
 var errOwnTarget = fmt.Errorf("proxy: a loopback, unspecified or multicast destination: %w", syscall.EACCES)
 
+// canonical gives a destination the form every check reads, and every exit
+// is asked in: an address spelled where a name goes, as SOCKS5 lets a client
+// spell it, is the address. It refuses a name that is no host's, and that a
+// lenient resolver would read as an address: one whose last label is a
+// number, as 127.1, 2130706433 or 0x7f.1 (RFC 3696, section 2: a top-level
+// label is never all digits).
+func canonical(target Target) (Target, bool) {
+	if !target.IsDomain {
+		return target, true
+	}
+	host := strings.TrimSuffix(target.Host, ".")
+	if addr, err := netip.ParseAddr(host); err == nil {
+		return Target{Host: addr.Unmap().WithZone("").String(), Port: target.Port}, true
+	}
+	last := strings.ToLower(host[strings.LastIndexByte(host, '.')+1:])
+	digits := strings.TrimPrefix(last, "0x")
+	for _, c := range []byte(digits) {
+		if !(c >= '0' && c <= '9' || digits != last && c >= 'a' && c <= 'f') {
+			return target, true
+		}
+	}
+	return Target{}, false
+}
+
 // ownTarget tells the destinations that would reach the Mac a connection
 // leaves from rather than the network: loopback, unspecified and multicast
 // addresses, and the names reserved for loopback (RFC 6761, section 6.3). A
@@ -119,7 +143,8 @@ var (
 // connection the outbound one of s. It returns it with the address it went
 // out from. Its error is what the client is told, in its protocol.
 func (m *Manager) open(ctx context.Context, e *listener, s *session, target Target) (net.Conn, net.Addr, error) {
-	if ownTarget(target) {
+	target, ok := canonical(target)
+	if !ok || ownTarget(target) {
 		return nil, nil, errOwnTarget
 	}
 	var out net.Conn

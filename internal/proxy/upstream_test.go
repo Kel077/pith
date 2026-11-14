@@ -459,6 +459,10 @@ func TestNoPortConnectsToThisMacItself(t *testing.T) {
 			{Host: "127.0.0.1", Port: 8080}, {Host: "127.8.8.8", Port: 80}, {Host: "::1", Port: 8080}, {Host: "::ffff:127.0.0.1", Port: 8080},
 			{Host: "0.0.0.0", Port: 80}, {Host: "::", Port: 80}, {Host: "224.0.0.251", Port: 5353}, {Host: "ff02::fb", Port: 5353},
 			{Host: "localhost", Port: 8080, IsDomain: true}, {Host: "LocalHost.", Port: 8080, IsDomain: true}, {Host: "db.localhost", Port: 5432, IsDomain: true},
+			// An address spelled where a name goes, as a resolver would read it.
+			{Host: "127.0.0.1", Port: 8080, IsDomain: true}, {Host: "127.0.0.1.", Port: 8080, IsDomain: true}, {Host: "0.0.0.0", Port: 80, IsDomain: true},
+			{Host: "127.1", Port: 8080, IsDomain: true}, {Host: "2130706433", Port: 8080, IsDomain: true}, {Host: "0x7f000001", Port: 8080, IsDomain: true},
+			{Host: "0x7F.0.0.1", Port: 8080, IsDomain: true}, {Host: "0177.0.0.01", Port: 8080, IsDomain: true}, {Host: "example.123", Port: 80, IsDomain: true},
 		} {
 			if code, _ := ask(t, f.dial(t, port), target); code != replyDenied {
 				t.Errorf("port %d, %v: reply = %d, want not allowed", port, target, code)
@@ -478,9 +482,33 @@ func TestNoPortConnectsToThisMacItself(t *testing.T) {
 		}
 	}
 	// A name that only looks like one of them is a name like any other.
-	for _, host := range []string{"localhost.example.com", "notlocalhost", "example.com"} {
-		if ownTarget(Target{Host: host, Port: 80, IsDomain: true}) {
-			t.Errorf("%s was taken for this Mac", host)
+	for _, host := range []string{"localhost.example.com", "notlocalhost", "example.com", "face", "0xface.example", "123.example.com", "nas"} {
+		target, ok := canonical(Target{Host: host, Port: 80, IsDomain: true})
+		if !ok || !target.IsDomain || target.Host != host || ownTarget(target) {
+			t.Errorf("%s was taken for an address, or for this Mac: %+v, %v", host, target, ok)
+		}
+	}
+}
+
+// An address a client spells where a name goes is asked for as the
+// address, of an interface, an upstream and a scene's rules alike.
+func TestAnAddressSpelledAsANameIsTheAddress(t *testing.T) {
+	asked := make(chan Target, 1)
+	peer := echoPeer(t)
+	m, f := newTestManager(t, Options{Dial: func(ctx context.Context, via api.InterfaceRef, target Target) (net.Conn, error) {
+		asked <- target
+		return peer.dial(ctx, via, target)
+	}})
+	applyTest(t, m, testProxy(1080))
+	for spelled, want := range map[string]Target{
+		"192.0.2.9":  {Host: "192.0.2.9", Port: 443},
+		"192.0.2.9.": {Host: "192.0.2.9", Port: 443},
+	} {
+		if code, _ := ask(t, f.dial(t, 1080), Target{Host: spelled, Port: 443, IsDomain: true}); code != 0 {
+			t.Fatalf("%q: reply = %d", spelled, code)
+		}
+		if got := <-asked; got != want {
+			t.Fatalf("%q: asked for %+v, want %+v", spelled, got, want)
 		}
 	}
 }
