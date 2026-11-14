@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/netip"
@@ -82,6 +83,29 @@ func (m *Manager) serve(e *listener, s *session) {
 	relay(s, out, e)
 }
 
+// errOwnTarget is a destination no port connects to, whatever it goes out
+// through: not allowed, as a client reads it.
+var errOwnTarget = fmt.Errorf("proxy: a loopback, unspecified or multicast destination: %w", syscall.EACCES)
+
+// ownTarget tells the destinations that would reach the Mac a connection
+// leaves from rather than the network: loopback, unspecified and multicast
+// addresses, and the names reserved for loopback (RFC 6761, section 6.3). A
+// port through an interface or by a scene's rules also checks the addresses
+// a name resolves to. A port through an upstream proxy can't: the upstream
+// resolves names, and answers for what they reach there.
+func ownTarget(target Target) bool {
+	if target.IsDomain {
+		host := strings.ToLower(strings.TrimSuffix(target.Host, "."))
+		return host == "localhost" || strings.HasSuffix(host, ".localhost")
+	}
+	addr, err := netip.ParseAddr(target.Host)
+	if err != nil {
+		return true
+	}
+	addr = addr.Unmap()
+	return addr.IsLoopback() || addr.IsUnspecified() || addr.IsMulticast()
+}
+
 var (
 	errNoConnection = errors.New("proxy: the dialer returned no connection")
 	errNoRoute      = errors.New("proxy: nothing connects by a scene's rules")
@@ -95,6 +119,9 @@ var (
 // connection the outbound one of s. It returns it with the address it went
 // out from. Its error is what the client is told, in its protocol.
 func (m *Manager) open(ctx context.Context, e *listener, s *session, target Target) (net.Conn, net.Addr, error) {
+	if ownTarget(target) {
+		return nil, nil, errOwnTarget
+	}
 	var out net.Conn
 	var bound net.Addr
 	var err error

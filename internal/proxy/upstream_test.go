@@ -3,8 +3,10 @@ package proxy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -426,4 +428,137 @@ func TestPortByRulesWithoutRouteRefuses(t *testing.T) {
 	if code, _ := ask(t, f.dial(t, 1080), Target{Host: "192.0.2.9", Port: 443}); code != replyGeneral {
 		t.Fatalf("reply = %d, want a general failure", code)
 	}
+}
+
+// No port connects to a loopback, unspecified or multicast destination, or
+// to a name reserved for loopback, whatever it goes out through: neither the
+// dialer, nor the upstream, nor the rules are asked.
+func TestNoPortConnectsToThisMacItself(t *testing.T) {
+	asked := func(what string) {
+		t.Errorf("%s was asked for a destination on this Mac", what)
+	}
+	far, farPorts := newTestManager(t, Options{Dial: func(context.Context, api.InterfaceRef, Target) (net.Conn, error) {
+		asked("the upstream")
+		return nil, errors.New("must not dial")
+	}})
+	applyTest(t, far, testProxy(2080))
+	m, f := newTestManager(t, Options{
+		Dial: func(context.Context, api.InterfaceRef, Target) (net.Conn, error) {
+			asked("an interface")
+			return nil, errors.New("must not dial")
+		},
+		Route: func(context.Context, string, Target) (net.Conn, error) {
+			asked("a scene's rules")
+			return nil, errors.New("must not route")
+		},
+		Upstream: farPorts.upstream(t, 2080, "192.0.2.7:2080", ""),
+	})
+	applyTest(t, m, testProxy(1080), upstreamProxy(1081, "192.0.2.7:2080"), sceneProxy(1082, "office"))
+	for _, port := range []int{1080, 1081, 1082} {
+		for _, target := range []Target{
+			{Host: "127.0.0.1", Port: 8080}, {Host: "127.8.8.8", Port: 80}, {Host: "::1", Port: 8080}, {Host: "::ffff:127.0.0.1", Port: 8080},
+			{Host: "0.0.0.0", Port: 80}, {Host: "::", Port: 80}, {Host: "224.0.0.251", Port: 5353}, {Host: "ff02::fb", Port: 5353},
+			{Host: "localhost", Port: 8080, IsDomain: true}, {Host: "LocalHost.", Port: 8080, IsDomain: true}, {Host: "db.localhost", Port: 5432, IsDomain: true},
+		} {
+			if code, _ := ask(t, f.dial(t, port), target); code != replyDenied {
+				t.Errorf("port %d, %v: reply = %d, want not allowed", port, target, code)
+			}
+		}
+		for _, authority := range []string{"127.0.0.1:8080", "[::1]:8080", "localhost:8080"} {
+			c := f.dial(t, port)
+			fmt.Fprintf(c, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", authority, authority)
+			if res := httpAnswer(t, c); res.StatusCode != 403 {
+				t.Errorf("port %d, CONNECT %s: status %d, want 403", port, authority, res.StatusCode)
+			}
+		}
+		c := f.dial(t, port)
+		fmt.Fprint(c, "GET http://localhost:8080/ HTTP/1.1\r\nHost: localhost:8080\r\n\r\n")
+		if res := httpAnswer(t, c); res.StatusCode != 403 {
+			t.Errorf("port %d, GET http://localhost: status %d, want 403", port, res.StatusCode)
+		}
+	}
+	// A name that only looks like one of them is a name like any other.
+	for _, host := range []string{"localhost.example.com", "notlocalhost", "example.com"} {
+		if ownTarget(Target{Host: host, Port: 80, IsDomain: true}) {
+			t.Errorf("%s was taken for this Mac", host)
+		}
+	}
+}
+
+// addrConn is a connection known by its two addresses alone.
+type addrConn struct {
+	net.Conn
+	local, remote net.Addr
+}
+
+func (c addrConn) LocalAddr() net.Addr  { return c.local }
+func (c addrConn) RemoteAddr() net.Addr { return c.remote }
+
+// A shared port doesn't go out through a proxy on this Mac: other devices
+// would reach, through a proxy that may not refuse them, what listens for
+// this Mac alone. The upstream is told nothing; a port that isn't shared
+// goes through it as before.
+func TestSharedPortRefusesAnUpstreamOnThisMac(t *testing.T) {
+	tcp := func(address string) net.Addr { return net.TCPAddrFromAddrPort(netip.MustParseAddrPort(address)) }
+	for _, tc := range []struct {
+		local, remote string
+		own           bool
+	}{
+		{"127.0.0.1:50000", "127.0.0.1:1081", true}, {"[::1]:50000", "[::1]:1081", true},
+		{"192.0.2.7:50000", "192.0.2.7:1081", true}, {"192.0.2.7:50000", "127.0.0.1:1081", true},
+		{"192.0.2.7:50000", "192.0.2.8:1081", false}, {"192.0.2.7:50000", "198.51.100.7:1081", false},
+	} {
+		if got := toThisMac(addrConn{local: tcp(tc.local), remote: tcp(tc.remote)}); got != tc.own {
+			t.Errorf("toThisMac(%s -> %s) = %v", tc.local, tc.remote, got)
+		}
+	}
+
+	var greeted atomic.Int64
+	upstream := newPeer(t, func(c *net.TCPConn) {
+		var b [1]byte
+		if n, _ := c.Read(b[:]); n > 0 {
+			greeted.Add(1)
+		}
+	})
+	echo, far := echoPeer(t), newFixture()
+	farManager, err := New(Options{Dial: echo.dial, Listen: far.listen})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = farManager.Close() })
+	applyTest(t, farManager, testProxy(2080))
+	reach := far.upstream(t, 2080, "studio.example.com:2080", "")
+	m, f := newTestManager(t, Options{Dial: noDial(t), Upstream: func(ctx context.Context, network, address string) (net.Conn, error) {
+		if address == "studio.example.com:2080" {
+			return reach(ctx, network, address) // the test's upstream, on loopback
+		}
+		return upstream.reach(ctx, network, address)
+	}})
+	shared := upstreamProxy(1080, "mac.example.com:1081")
+	shared.Shared = true
+	shareTest(t, m, []string{"192.0.2.10"}, shared, upstreamProxy(1081, "studio.example.com:2080"))
+	// Without any connection, the status tells.
+	waitFor(t, func() bool {
+		st := m.Status(context.Background())[0]
+		return st.Error != nil && st.Error.Code == api.ErrUpstreamRefused
+	})
+	for _, from := range []string{"192.0.2.10", ""} {
+		c := f.dial(t, 1080)
+		if from != "" {
+			_ = c.Close()
+			c = f.dialFrom(t, 1080, from)
+		}
+		if code, _ := ask(t, c, Target{Host: "example.com", Port: 443, IsDomain: true}); code != replyDenied {
+			t.Fatalf("from %q: reply = %d, want not allowed", from, code)
+		}
+	}
+	if greeted.Load() != 0 {
+		t.Fatalf("the upstream on this Mac was told something %d times", greeted.Load())
+	}
+	// The same upstream address carries a port that isn't shared.
+	c := f.dial(t, 1081)
+	if code, _ := ask(t, c, Target{Host: "example.com", Port: 443, IsDomain: true}); code != 0 {
+		t.Fatalf("a port that isn't shared: reply = %d", code)
+	}
+	roundTrip(t, c, "this Mac's own")
 }

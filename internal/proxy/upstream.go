@@ -25,6 +25,10 @@ var (
 	errUpstreamUnreachable = &api.Error{Code: api.ErrUpstreamUnreachable, Detail: "the upstream proxy doesn't answer"}
 	errUpstreamNotSOCKS    = &api.Error{Code: api.ErrUpstreamUnreachable, Detail: "the upstream is not a SOCKS5 proxy"}
 	errUpstreamRefused     = &api.Error{Code: api.ErrUpstreamRefused, Detail: "the upstream proxy refuses this Mac"}
+	// errUpstreamOwn is a shared port whose upstream turned out to be on
+	// this Mac: other devices would reach, through a proxy Pith can't answer
+	// for, what listens for this Mac alone.
+	errUpstreamOwn = &api.Error{Code: api.ErrUpstreamRefused, Detail: "a shared proxy doesn't go out through a proxy on this Mac"}
 	// errUpstreamClosed is an upstream that took this Mac and then left a
 	// request unanswered: that request's failure, not the upstream's.
 	errUpstreamClosed = errors.New("proxy: the upstream proxy closed the connection")
@@ -34,11 +38,25 @@ var (
 // the connection with the address the upstream went out from. It notes how
 // the upstream answered, for Status.
 func (m *Manager) through(ctx context.Context, e *listener, target Target) (net.Conn, net.Addr, error) {
-	conn, bound, err := connectUpstream(ctx, m.opts.Upstream, e.cfg.Upstream, &target)
+	conn, bound, err := connectUpstream(ctx, m.opts.Upstream, e.cfg.Upstream, &target, e.cfg.Shared)
 	if !errors.Is(err, context.Canceled) {
 		m.noteUpstream(e, err)
 	}
 	return conn, bound, err
+}
+
+// toThisMac tells whether conn reached this Mac itself: a loopback address,
+// or the very address it left from.
+func toThisMac(conn net.Conn) bool {
+	remote, ok := conn.RemoteAddr().(*net.TCPAddr)
+	if !ok {
+		return false
+	}
+	if remote.IP.IsLoopback() {
+		return true
+	}
+	local, ok := conn.LocalAddr().(*net.TCPAddr)
+	return ok && local.IP.Equal(remote.IP)
 }
 
 // noteUpstream keeps what a connection or a check told of the upstream of
@@ -58,7 +76,7 @@ func (m *Manager) noteUpstream(e *listener, err error) {
 // this Mac, without asking it for any connection.
 func (m *Manager) checkUpstream(e *listener) {
 	defer m.wg.Done()
-	conn, _, err := connectUpstream(e.ctx, m.opts.Upstream, e.cfg.Upstream, nil)
+	conn, _, err := connectUpstream(e.ctx, m.opts.Upstream, e.cfg.Upstream, nil, e.cfg.Shared)
 	if conn != nil {
 		_ = conn.Close()
 	}
@@ -76,8 +94,9 @@ func (m *Manager) checkUpstream(e *listener) {
 // It returns the connection, ready to relay, and the address the upstream
 // bound for it, or the connection's own when the upstream tells none. An
 // upstream that hasn't agreed within upstreamAnswer is unreachable; once it
-// has, a deadline of ctx is the target's.
-func connectUpstream(ctx context.Context, dial func(context.Context, string, string) (net.Conn, error), address string, target *Target) (net.Conn, net.Addr, error) {
+// has, a deadline of ctx is the target's. For a shared port, an upstream on
+// this Mac is refused before it is told anything.
+func connectUpstream(ctx context.Context, dial func(context.Context, string, string) (net.Conn, error), address string, target *Target, shared bool) (net.Conn, net.Addr, error) {
 	answer, answered := context.WithTimeout(ctx, upstreamAnswer)
 	defer answered()
 	conn, err := dial(answer, "tcp", address)
@@ -89,6 +108,10 @@ func connectUpstream(ctx context.Context, dial func(context.Context, string, str
 			return nil, nil, ctx.Err()
 		}
 		return nil, nil, errUpstreamUnreachable
+	}
+	if shared && toThisMac(conn) {
+		closeConn(conn, true)
+		return nil, nil, errUpstreamOwn
 	}
 	// Reads and writes end with their context, as the dial does.
 	greeted := false
