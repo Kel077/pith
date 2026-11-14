@@ -19,7 +19,10 @@ const MaxDevices = 64
 // goes out through Via, one interface, unless Upstream or Scene is set: to
 // literal IPv4/IPv6 destinations and to names resolved through Via's own
 // DNS, never through another interface as fallback. It does not depend on
-// TUN. Whatever it goes out through, it connects to no loopback destination.
+// TUN. Whatever it goes out through, it refuses a loopback address and the
+// names reserved for loopback; a name that resolves to a loopback address
+// is refused through an interface and by a scene's rules, while what a name
+// reaches through an Upstream is that proxy's to answer for.
 type Proxy struct {
 	Port    int          `json:"port"`         // 1024..65535; unique even when disabled
 	Via     InterfaceRef `json:"via,omitzero"` // one supported physical exit, resolved by Resolve
