@@ -60,6 +60,8 @@ type Service struct {
 	portInUse int                          // Options.ProxyPortInUse
 	devices   map[string]*api.DeviceStatus // what the devices of shared proxies moved, by address
 	stranger  bool                         // a device that isn't listed tries the shared proxies
+	changing  map[int]bool                 // the proxies whose public address is being changed, by port
+	upstream  int                          // how often the Pith behind the proxies' upstreams changed its address
 }
 
 // flow is an open connection's plan: how long it lasts and how fast it goes.
@@ -84,6 +86,7 @@ func New(o Options) *Service {
 		proxies:   map[int]*api.ProxyStatus{},
 		portInUse: o.ProxyPortInUse,
 		devices:   map[string]*api.DeviceStatus{},
+		changing:  map[int]bool{},
 		stranger:  o.Sample,
 	}
 	if s.clock.IsZero() && !o.Live {

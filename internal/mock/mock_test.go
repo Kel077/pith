@@ -238,3 +238,57 @@ func TestDevices(t *testing.T) {
 		t.Errorf("a proxy by the rules of a scene that doesn't exist: %v", err)
 	}
 }
+
+// A proxy's public address changes with what it goes out through: the
+// hotspot or the router behind its interface, or the Pith behind its
+// upstream, which tells the address it has.
+func TestChangeProxyIP(t *testing.T) {
+	ctx := context.Background()
+	s := New(Options{})
+	cfg := SampleConfig()
+	cfg.Proxies = append(cfg.Proxies, api.Proxy{Port: 1083, Upstream: "studio.example.com:1081", Enabled: true},
+		api.Proxy{Port: 1084, Scene: "home", Enabled: true}, api.Proxy{Port: 1085, Via: api.InterfaceRef{Name: "en7"}, Enabled: true})
+	if err := s.SaveConfig(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	upstream := func() *api.ProxyInfo {
+		st, _ := s.Status(ctx)
+		for _, p := range st.Proxies {
+			if p.Port == 1083 {
+				return p.Upstream
+			}
+			if p.Upstream != nil || p.Changing {
+				t.Fatalf("proxy %d tells of an upstream it doesn't have: %+v", p.Port, p)
+			}
+		}
+		return nil
+	}
+	was := upstream()
+	if was == nil || was.Pith != api.ProxyInfoVersion || was.Port != 1081 || was.Exit != api.ExitInterface || was.Interface == "" || !was.Online || !was.CanChangeIP || was.PublicIPv4 == "" {
+		t.Fatalf("the upstream says %+v", was)
+	}
+	change, err := s.ChangeProxyIP(ctx, 1083)
+	if err != nil || change.Port != 1083 || change.BeforeIPv4 != was.PublicIPv4 || change.PublicIPv4 == was.PublicIPv4 || change.PublicIPv6 == was.PublicIPv6 || change.Seconds <= 0 {
+		t.Fatalf("through an upstream: %+v, %v", change, err)
+	}
+	if now := upstream(); now.PublicIPv4 != change.PublicIPv4 || now.PublicIPv6 != change.PublicIPv6 {
+		t.Fatalf("the upstream still says %+v after %+v", now, change)
+	}
+	for port, name := range map[int]string{1081: "a hotspot", 1080: "a router"} {
+		change, err := s.ChangeProxyIP(ctx, port)
+		if err != nil || change.Port != port || change.BeforeIPv4 == "" || change.PublicIPv4 == "" || change.BeforeIPv4 == change.PublicIPv4 {
+			t.Fatalf("through %s: %+v, %v", name, change, err)
+		}
+	}
+	// A scene's rules have no one address, an iPhone is not Pith's to
+	// renew, a proxy that is off or gone has nothing to change.
+	for _, port := range []int{1084, 1085, 1082 + 100} {
+		if _, err := s.ChangeProxyIP(ctx, port); api.Code(err) != api.ErrUnsupported {
+			t.Fatalf("proxy %d: %v", port, err)
+		}
+	}
+	cfg.Proxies[4].ChangeIP = true
+	if err := s.SaveConfig(ctx, cfg); api.Code(err) != api.ErrInvalidConfig {
+		t.Fatal("a proxy by a scene's rules may have its address changed", err)
+	}
+}
