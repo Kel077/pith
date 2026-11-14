@@ -222,3 +222,103 @@ func TestProxySheets(t *testing.T) {
 		t.Fatalf("the device was not taken: %+v", a.cfg.Devices)
 	}
 }
+
+// Removing a row that isn't the last, a proxy or a device, takes it away
+// without disturbing the rows drawn after it in the same frame.
+func TestRemovingARowThatIsNotTheLast(t *testing.T) {
+	a, _ := testApp(t, mock.Options{Sample: true, HelperInstalled: true, Running: true})
+	a.page = "settings"
+	if !a.addDevice("198.51.100.9", "Tablet") || !a.addDevice("198.51.100.10", "Phone") {
+		t.Fatal("devices were refused")
+	}
+	tt := ui.NewTester(a.WindowView, 1040, 1700)
+	tt.Frame()
+	// The button that removes a row is at its right end.
+	remove := func(row string) {
+		t.Helper()
+		r, ok := tt.Find(row)
+		if !ok {
+			t.Fatalf("no row %q among %q", row, tt.Texts())
+		}
+		tt.ClickAt(1040-32-settingsInset-13, r.Y+r.H/2+8)
+		tt.Frame()
+	}
+	remove("MacBook Pro")
+	if got := a.cfg.Devices; len(got) != 2 || got[0].Name != "Tablet" || got[1].Name != "Phone" {
+		t.Fatalf("devices after removing the first: %+v", got)
+	}
+	remove("Tablet")
+	if got := a.cfg.Devices; len(got) != 1 || got[0].Name != "Phone" {
+		t.Fatalf("devices after removing the first again: %+v", got)
+	}
+	if err := tt.Click(locales.Remove()); err != nil { // the first proxy's
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if got := a.cfg.Proxies; len(got) != 2 || got[0].Port != 1081 || got[1].Port != 1082 {
+		t.Fatalf("proxies after removing the first: %+v", got)
+	}
+	if !tt.HasText("127.0.0.1:1081") || tt.HasText("10.0.1.20:1080") || !tt.HasText("Phone") {
+		t.Errorf("after the removals: %q", tt.Texts())
+	}
+}
+
+// What a proxy goes out through is chosen by what the choice is, not by
+// how it reads: an interface named as a scene's rules read, or two scenes
+// of one name, are told apart.
+func TestProxyExitChoicesAreToldApart(t *testing.T) {
+	a, _ := testApp(t, mock.Options{Sample: true, HelperInstalled: true})
+	office := locales.RulesOfScene("Office")
+	a.change(func(cfg *api.Config) {
+		cfg.Aliases = map[string]string{a.cfg.Proxies[0].Via.Key(): office}
+		cfg.Scenes = append(cfg.Scenes, api.Scene{ID: "office-2", Name: "Office"})
+	})
+	a.setUpstream(1082, "studio.example.com:1080")
+	choices, _ := a.exitChoices(a.cfg.Proxies[1])
+	labels := map[string]int{}
+	for _, choice := range choices {
+		labels[choice.label]++
+	}
+	for label, n := range labels {
+		if n != 1 {
+			t.Errorf("%d choices read %q", n, label)
+		}
+	}
+	pick := func(k int, is func(exitChoice) bool) {
+		t.Helper()
+		choices, _ := a.exitChoices(a.cfg.Proxies[k])
+		for _, choice := range choices {
+			if is(choice) {
+				a.chooseExit(k, choice)
+				return
+			}
+		}
+		t.Fatalf("no such choice among %+v", choices)
+	}
+	pick(1, func(c exitChoice) bool { return c.scene == "office" })
+	if p := a.cfg.Proxies[1]; p.Scene != "office" || p.Via != (api.InterfaceRef{}) {
+		t.Fatalf("the office scene's rules were chosen: %+v", p)
+	}
+	pick(1, func(c exitChoice) bool { return c.scene == "office-2" })
+	if p := a.cfg.Proxies[1]; p.Scene != "office-2" {
+		t.Fatalf("the other scene of that name was chosen: %+v", p)
+	}
+	pick(1, func(c exitChoice) bool { return c.via.Name == "en0" })
+	if p := a.cfg.Proxies[1]; p.Via.Name != "en0" || p.Scene != "" {
+		t.Fatalf("the interface named as the scene's rules read was chosen: %+v", p)
+	}
+	// Each proxy's menu shows what it goes out through now.
+	for k, want := range []func(exitChoice) bool{
+		func(c exitChoice) bool { return c.via.Name == "en0" },
+		func(c exitChoice) bool { return c.via.Name == "en0" },
+		func(c exitChoice) bool { return c.upstream },
+	} {
+		if choices, at := a.exitChoices(a.cfg.Proxies[k]); !want(choices[at]) {
+			t.Errorf("proxy %d shows %+v", k, choices[at])
+		}
+	}
+	pick(2, func(c exitChoice) bool { return c.other })
+	if !a.settings.upstream.open || a.settings.upstream.port != 1082 || a.settings.upstream.address != "studio.example.com:1080" {
+		t.Fatalf("another proxy was not asked for: %+v", a.settings.upstream)
+	}
+}

@@ -31,8 +31,18 @@ type deviceDialog struct {
 // another proxy, and a last row that adds one.
 func (a *App) proxiesGroup(c *ui.Context) {
 	group(c, locales.LocalProxies(), func() {
+		// A row is removed once all are drawn: the rows after it are still
+		// drawn from the list as it was.
+		remove := -1
 		for k := range a.cfg.Proxies {
-			a.proxyRow(c, k)
+			if a.proxyRow(c, k) {
+				remove = k
+			}
+		}
+		if remove >= 0 {
+			a.change(func(cfg *api.Config) {
+				cfg.Proxies = append(cfg.Proxies[:remove:remove], cfg.Proxies[remove+1:]...)
+			})
 		}
 		exits, _ := a.proxyExits(api.InterfaceRef{})
 		ui.Row(c).Gap(16).Padding(9, settingsInset).MinHeight(52).Children(func() {
@@ -49,8 +59,8 @@ func (a *App) proxiesGroup(c *ui.Context) {
 // proxyRow is a proxy's row: its address, which a double-click changes the
 // port of, and how it is doing; on the right, what it goes out through, a
 // button that shares it with the devices, its switch, and a button that
-// removes it.
-func (a *App) proxyRow(c *ui.Context, k int) {
+// removes it: proxyRow tells when that one is clicked.
+func (a *App) proxyRow(c *ui.Context, k int) (remove bool) {
 	p := a.cfg.Proxies[k]
 	s := &a.settings
 	ui.Row(c.Key(fmt.Sprint("proxy-", k))).Gap(16).Padding(9, settingsInset).MinHeight(52).Children(func() {
@@ -69,38 +79,15 @@ func (a *App) proxyRow(c *ui.Context, k int) {
 			a.proxyState(c, p)
 		})
 		ui.Row(c).Shrink(0).Gap(12).AlignItems(ui.Center).Children(func() {
-			refs, labels := a.proxyExits(p.Via)
-			chosen := a.ifaceLabel(p.Via)
-			for j, r := range refs {
-				if r.Key() == p.Via.Key() {
-					chosen = labels[j]
-				}
+			choices, at := a.exitChoices(p)
+			options := make([]string, len(choices))
+			for j := range choices {
+				options[j] = choices[j].label
 			}
-			// After the interfaces: the rules of each scene, the proxy it
-			// goes out through, when it does, and a choice that asks for one.
-			options, other := slices.Clone(labels), locales.AnotherProxy()
-			scenes := make([]string, len(a.cfg.Scenes))
-			for j := range a.cfg.Scenes {
-				scenes[j] = locales.RulesOfScene(sceneName(&a.cfg.Scenes[j]))
-				if a.cfg.Scenes[j].ID == p.Scene {
-					chosen = scenes[j]
-				}
-			}
-			options = append(options, scenes...)
-			if p.Upstream != "" {
-				options, chosen = append(options, p.Upstream), p.Upstream
-			}
-			options = append(options, other)
+			chosen := options[at]
 			if settingsSelect(c, &chosen, options).Label(locales.Interfaces()).Changed() {
-				switch j, by := slices.Index(labels, chosen), slices.Index(scenes, chosen); {
-				case chosen == other:
-					s.upstream = upstreamDialog{open: true, port: p.Port, address: p.Upstream}
-				case j >= 0:
-					a.change(func(cfg *api.Config) {
-						cfg.Proxies[k].Via, cfg.Proxies[k].Upstream, cfg.Proxies[k].Scene = refs[j], "", ""
-					})
-				case by >= 0:
-					a.setProxyScene(k, a.cfg.Scenes[by].ID)
+				if j := slices.Index(options, chosen); j >= 0 {
+					a.chooseExit(k, choices[j])
 				}
 			}
 			if shareButton(c, p.Shared) {
@@ -110,11 +97,73 @@ func (a *App) proxyRow(c *ui.Context, k int) {
 			if ui.Switch(c, &on).Label("127.0.0.1:" + strconv.Itoa(p.Port)).Changed() {
 				a.change(func(cfg *api.Config) { cfg.Proxies[k].Enabled = on })
 			}
-			if quietButton(c, "remove-proxy", icX, locales.Remove(), false) {
-				a.change(func(cfg *api.Config) { cfg.Proxies = append(cfg.Proxies[:k:k], cfg.Proxies[k+1:]...) })
-			}
+			remove = quietButton(c, "remove-proxy", icX, locales.Remove(), false)
 		})
 	})
+	return remove
+}
+
+// exitChoice is one thing a proxy can go out through, in its menu.
+type exitChoice struct {
+	label    string
+	via      api.InterfaceRef // an interface
+	scene    string           // the rules of a scene, by its ID
+	upstream bool             // the proxy it goes out through now
+	other    bool             // asks for another proxy
+}
+
+// exitChoices is the menu of what p can go out through, and which of them
+// it does: the interfaces; the rules of each scene; the proxy it goes out
+// through, when it does; and a last choice that asks for one. A choice is
+// what it is, not how it reads: labels that would read the same are told
+// apart by a number.
+func (a *App) exitChoices(p api.Proxy) ([]exitChoice, int) {
+	var choices []exitChoice
+	at := 0
+	refs, labels := a.proxyExits(p.Via)
+	for j, r := range refs {
+		if p.Via.Name != "" && r.Key() == p.Via.Key() {
+			at = len(choices)
+		}
+		choices = append(choices, exitChoice{label: labels[j], via: r})
+	}
+	for j := range a.cfg.Scenes {
+		if a.cfg.Scenes[j].ID == p.Scene {
+			at = len(choices)
+		}
+		choices = append(choices, exitChoice{label: locales.RulesOfScene(sceneName(&a.cfg.Scenes[j])), scene: a.cfg.Scenes[j].ID})
+	}
+	if p.Upstream != "" {
+		at = len(choices)
+		choices = append(choices, exitChoice{label: p.Upstream, upstream: true})
+	}
+	choices = append(choices, exitChoice{label: locales.AnotherProxy(), other: true})
+	seen := map[string]bool{}
+	for j := range choices {
+		label := choices[j].label
+		for n := 2; seen[label]; n++ {
+			label = choices[j].label + " (" + strconv.Itoa(n) + ")"
+		}
+		choices[j].label = label
+		seen[label] = true
+	}
+	return choices, at
+}
+
+// chooseExit sends the proxy at k out through what was chosen in its menu.
+func (a *App) chooseExit(k int, choice exitChoice) {
+	switch {
+	case choice.other:
+		a.settings.upstream = upstreamDialog{open: true, port: a.cfg.Proxies[k].Port, address: a.cfg.Proxies[k].Upstream}
+	case choice.upstream:
+		// What it goes out through already.
+	case choice.scene != "":
+		a.setProxyScene(k, choice.scene)
+	default:
+		a.change(func(cfg *api.Config) {
+			cfg.Proxies[k].Via, cfg.Proxies[k].Upstream, cfg.Proxies[k].Scene = choice.via, "", ""
+		})
+	}
 }
 
 // shareButton is the small button that shares a proxy with the devices:
@@ -356,8 +405,19 @@ func (a *App) devicesGroup(c *ui.Context) {
 	t := c.Theme()
 	group(c, locales.Devices(), func() {
 		listed := map[string]bool{}
+		remove := -1
 		for k := range a.cfg.Devices {
-			listed[a.deviceRow(c, k)] = true
+			address, removed := a.deviceRow(c, k)
+			listed[address] = true
+			if removed {
+				remove = k
+			}
+		}
+		if remove >= 0 {
+			a.settings.renaming = 0
+			a.change(func(cfg *api.Config) {
+				cfg.Devices = append(cfg.Devices[:remove:remove], cfg.Devices[remove+1:]...)
+			})
 		}
 		full := len(a.cfg.Devices) >= api.MaxDevices
 		for _, st := range a.status.Devices {
@@ -383,12 +443,13 @@ func (a *App) devicesGroup(c *ui.Context) {
 // deviceRow is the row of a listed device: its name, which a double-click
 // changes, or its address; under it, its address when it has a name, and
 // what it moves through the shared proxies; on the right, a button that
-// removes it. It returns the device's address, empty for a range.
-func (a *App) deviceRow(c *ui.Context, k int) string {
+// removes it. It returns the device's address, empty for a range, and
+// whether that button was clicked.
+func (a *App) deviceRow(c *ui.Context, k int) (single string, remove bool) {
 	t := c.Theme()
 	d := a.cfg.Devices[k]
 	s := &a.settings
-	address, single := d.Address, ""
+	address := d.Address
 	if prefix, err := d.Prefix(); err == nil {
 		address = prefix.String()
 		if prefix.IsSingleIP() {
@@ -433,12 +494,9 @@ func (a *App) deviceRow(c *ui.Context, k int) string {
 				}
 			})
 		})
-		if quietButton(c, "remove-device", icX, locales.Remove(), false) {
-			s.renaming = 0
-			a.change(func(cfg *api.Config) { cfg.Devices = append(cfg.Devices[:k:k], cfg.Devices[k+1:]...) })
-		}
+		remove = quietButton(c, "remove-device", icX, locales.Remove(), false)
 	})
-	return single
+	return single, remove
 }
 
 // deviceStatus is what the device at address moved through the shared
