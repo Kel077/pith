@@ -76,7 +76,8 @@ func (c *Client) syncProxies(parent context.Context, cfg api.Config, firstLoad b
 		if factory == nil {
 			factory = func() (*proxy.Manager, error) {
 				egress := proxyegress.New(proxyegress.Options{Interfaces: func(ctx context.Context) ([]api.Interface, error) { return c.interfaces(ctx) }})
-				return proxy.New(proxy.Options{Dial: egress.Dial, Health: egress.Health, Route: c.routeByRules(egress.Dial)})
+				return proxy.New(proxy.Options{Dial: egress.Dial, Health: egress.Health, Route: c.routeByRules(egress.Dial),
+					Info: c.exitInfo, ChangeIP: c.changeExitIP, Changing: c.exitChanging})
 			}
 		}
 		manager, err := factory()

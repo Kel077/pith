@@ -49,6 +49,23 @@ type Options struct {
 	// scene's ID: it matches the rules, and dials. Nil refuses such ports'
 	// connections.
 	Route func(ctx context.Context, scene string, target Target) (net.Conn, error)
+	// Info tells a port of the interface it goes out through, for what the
+	// port says of itself (api.ProxyInfo): the interface's name, whether it
+	// is connected, its public addresses and when they were found, whether
+	// they can be changed and whether they are being changed. The manager
+	// sets the rest, and counts the port's ChangeIP in. maxAge bounds the age
+	// of the addresses, which are looked up again when they are older;
+	// negative, any age will do, and they are looked up only when none is
+	// known. Nil, a port tells nothing of its interface.
+	Info func(ctx context.Context, via api.InterfaceRef, maxAge time.Duration) (api.ProxyInfo, error)
+	// ChangeIP changes the public address of an interface, and returns once
+	// the internet works through it again; a call during a change waits for
+	// it and returns what it did. The manager sets the port. Nil, no
+	// interface's address can be changed: api.ErrUnsupported.
+	ChangeIP func(ctx context.Context, via api.InterfaceRef) (api.ProxyIPChange, error)
+	// Changing tells whether an interface's public address is being changed
+	// now, whoever asked, for Status. It doesn't block. Nil, none is.
+	Changing func(via api.InterfaceRef) bool
 
 	HandshakeTimeout time.Duration
 	ConnectTimeout   time.Duration
@@ -323,6 +340,13 @@ func (m *Manager) isSuspended(via api.InterfaceRef) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.suspended != nil && m.suspended(via)
+}
+
+// ChangeIP changes the public address of what the proxy on port goes out
+// through, as a POST of /change-ip to the port does, but for this Mac's
+// user: whatever the port's ChangeIP is.
+func (m *Manager) ChangeIP(ctx context.Context, port int) (api.ProxyIPChange, error) {
+	return api.ProxyIPChange{Port: port}, &api.Error{Code: api.ErrUnsupported, Detail: "not written yet"}
 }
 
 func sameProxy(a, b api.Proxy) bool {
