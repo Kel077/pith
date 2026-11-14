@@ -1,6 +1,7 @@
-// Package proxy implements bounded local SOCKS5 CONNECT listeners. It has no
-// resolver, and no default-route dialer but to reach a port's upstream proxy:
-// every other outbound connection is supplied by Dial.
+// Package proxy implements bounded local listeners that speak SOCKS5 CONNECT
+// and, on the same port, HTTP: CONNECT, and plain requests one a connection.
+// It has no resolver, and no default-route dialer but to reach a port's
+// upstream proxy: every other outbound connection is supplied by Dial.
 package proxy
 
 import (
@@ -10,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/netip"
 	"slices"
 	"strconv"
@@ -422,8 +424,9 @@ func (m *Manager) Devices() []api.DeviceStatus {
 }
 
 // refuse tells a device that isn't listed that no way of signing in is
-// accepted, as RFC 1928 has a proxy refuse, so that it can tell a proxy that
-// refuses it from one that is gone.
+// accepted, as RFC 1928 has a proxy refuse, or that its HTTP request is
+// forbidden, so that it can tell a proxy that refuses it from one that is
+// gone.
 func (m *Manager) refuse(conn net.Conn) {
 	defer m.wg.Done()
 	defer func() {
@@ -436,7 +439,13 @@ func (m *Manager) refuse(conn net.Conn) {
 		return
 	}
 	var header [2]byte
-	if _, err := io.ReadFull(conn, header[:]); err != nil || header[0] != 5 {
+	if _, err := io.ReadFull(conn, header[:]); err != nil {
+		return
+	}
+	if header[0] != 5 {
+		if isMethodLetter(header[0]) {
+			httpError(conn, http.StatusForbidden)
+		}
 		return
 	}
 	var methods [255]byte

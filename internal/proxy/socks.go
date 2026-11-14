@@ -26,12 +26,24 @@ const (
 	replyAddress = byte(8)
 )
 
-// The wire layout and reply codes follow RFC 1928 sections 3 through 6.
-// This intentionally implements only no-auth CONNECT on IPv4 listeners.
+// serve tells the protocol of a connection by its first byte, the version of
+// SOCKS5 or the first letter of an HTTP method, and serves it.
+//
+// The wire layout and reply codes of SOCKS5 follow RFC 1928 sections 3
+// through 6. This intentionally implements only no-auth CONNECT on IPv4
+// listeners.
 func (m *Manager) serve(e *listener, s *session) {
 	defer m.finish(e, s)
 	connectDeadline := s.start.Add(m.opts.ConnectTimeout)
 	if err := s.in.SetDeadline(minTime(s.start.Add(m.opts.HandshakeTimeout), connectDeadline)); err != nil {
+		return
+	}
+	var version [1]byte
+	if _, err := io.ReadFull(s.in, version[:]); err != nil {
+		return
+	}
+	if version[0] != 5 {
+		m.serveHTTP(e, s, version[0], connectDeadline)
 		return
 	}
 	if err := negotiate(s.in); err != nil {
@@ -50,34 +62,13 @@ func (m *Manager) serve(e *listener, s *session) {
 	if err := s.in.SetDeadline(connectDeadline); err != nil {
 		return
 	}
-	if e.cfg.Upstream == "" && m.isSuspended(e.cfg.Via) {
-		_ = writeReply(s.in, dialReply(errSuspended), nil)
-		return
-	}
 	ctx, cancel := context.WithDeadline(s.ctx, connectDeadline)
 	defer cancel()
-	var out net.Conn
-	var bound net.Addr
-	if e.cfg.Upstream != "" {
-		out, bound, err = m.through(ctx, e, target)
-	} else if out, err = m.opts.Dial(ctx, e.cfg.Via, target); out != nil {
-		bound = out.LocalAddr()
-	}
+	out, bound, err := m.open(ctx, e, s, target)
 	if err != nil {
-		if out != nil {
-			closeConn(out, true)
-		}
-		if s.ctx.Err() == nil {
+		if s.ctx.Err() == nil && !errors.Is(err, errSessionEnded) {
 			_ = writeReply(s.in, dialReply(err), nil)
 		}
-		return
-	}
-	if out == nil {
-		_ = writeReply(s.in, replyGeneral, nil)
-		return
-	}
-	if ctx.Err() != nil || !s.setOutbound(out) {
-		closeConn(out, true)
 		return
 	}
 	if err := writeReply(s.in, replySuccess, bound); err != nil {
@@ -91,23 +82,63 @@ func (m *Manager) serve(e *listener, s *session) {
 	relay(s, out, e)
 }
 
+var (
+	errNoConnection = errors.New("proxy: the dialer returned no connection")
+	// errSessionEnded is a session that ended while its connection was
+	// opened: there is no one left to tell.
+	errSessionEnded = errors.New("proxy: the session ended")
+)
+
+// open connects to target through what e goes out through, an interface or
+// an upstream proxy, and makes the connection the outbound one of s. It
+// returns it with the address it went out from. Its error is what the
+// client is told, in its protocol.
+func (m *Manager) open(ctx context.Context, e *listener, s *session, target Target) (net.Conn, net.Addr, error) {
+	var out net.Conn
+	var bound net.Addr
+	var err error
+	switch {
+	case e.cfg.Upstream != "":
+		out, bound, err = m.through(ctx, e, target)
+	case m.isSuspended(e.cfg.Via):
+		return nil, nil, errSuspended
+	default:
+		if out, err = m.opts.Dial(ctx, e.cfg.Via, target); out != nil {
+			bound = out.LocalAddr()
+		}
+	}
+	if err != nil {
+		if out != nil {
+			closeConn(out, true)
+		}
+		return nil, nil, err
+	}
+	if out == nil {
+		return nil, nil, errNoConnection
+	}
+	if ctx.Err() != nil || !s.setOutbound(out) {
+		closeConn(out, true)
+		return nil, nil, errSessionEnded
+	}
+	return out, bound, nil
+}
+
+// negotiate agrees on no authentication with a client whose first byte,
+// the version, is read already.
 func negotiate(conn net.Conn) error {
-	var header [2]byte
-	if _, err := io.ReadFull(conn, header[:]); err != nil {
+	var count [1]byte
+	if _, err := io.ReadFull(conn, count[:]); err != nil {
 		return err
 	}
-	if header[0] != 5 {
-		return errors.New("proxy: invalid SOCKS version")
-	}
-	if header[1] == 0 {
+	if count[0] == 0 {
 		_ = writeAll(conn, []byte{5, 0xff})
 		return errors.New("proxy: empty authentication method list")
 	}
 	var methods [255]byte
-	if _, err := io.ReadFull(conn, methods[:int(header[1])]); err != nil {
+	if _, err := io.ReadFull(conn, methods[:int(count[0])]); err != nil {
 		return err
 	}
-	for _, method := range methods[:int(header[1])] {
+	for _, method := range methods[:int(count[0])] {
 		if method == 0 {
 			return writeAll(conn, []byte{5, 0})
 		}
