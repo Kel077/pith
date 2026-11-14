@@ -287,9 +287,12 @@ through the right public address. A device that wasn't listed was answered
 `0xFF` and listed as refused, and a port of the second Mac that went out
 through a shared one reported `upstream_refused` until the first Mac listed
 it. A 25 MB download through the two ports in a row ran at about 490 Mbit/s,
-as it did through an SSH port forward between the same Macs. HTTP, CONNECT
-and plain, at `5069804`, and a port by a scene's rules, at `c9a3027`, were
-tried on one Mac only.
+as it did through an SSH port forward between the same Macs. At `b5c3e1c`,
+the second Mac used one shared port that goes out by a scene's rules as its
+HTTP proxy: a name a rule sends through the cellular interface left by it, a
+name no rule names left by the wired default, and a name a rule blocks was
+refused; a SOCKS5 CONNECT and a request for an `http://` URL went the same
+way.
 
 ## Capturing and forwarding
 
