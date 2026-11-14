@@ -115,9 +115,10 @@ func bindControl(index int) func(context.Context, string, string, syscall.RawCon
 }
 
 // Watch emits an initial snapshot and later distinct snapshots. It keeps one
-// idle scutil notification reader, reaps it on cancellation, and never polls.
-// Cancel ctx when the consumer stops receiving. A discovery/reader error closes
-// the stream; the subscriber can re-establish it with bounded backoff.
+// idle scutil notification reader, reaps it on cancellation, and polls only to
+// read again after a failed read. Cancel ctx when the consumer stops receiving.
+// A reader error closes the stream; the subscriber can re-establish it with
+// bounded backoff. A failed read doesn't: see follow.
 func Watch(ctx context.Context) (<-chan []api.Interface, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(ctx, "/usr/sbin/scutil")
@@ -155,45 +156,62 @@ func Watch(ctx context.Context) (<-chan []api.Interface, error) {
 			}
 		}
 	}()
-	initial, err := List(ctx)
+	return follow(ctx, changes, List, time.Second, func() { cancel(); _ = cmd.Wait() })
+}
+
+// follow sends list's snapshot, then each distinct one read after changes
+// says the network configuration changed, until ctx ends or changes closes;
+// then it calls stop and closes the channel. A read can fail on a busy Mac, as
+// when the route table doesn't come within its bound: the first is tried three
+// times, and a later one keeps the last snapshot, and the stream, and is tried
+// again at the next change or after pause, which doubles up to half a minute.
+func follow(ctx context.Context, changes <-chan struct{}, list func(context.Context) ([]api.Interface, error), pause time.Duration, stop func()) (<-chan []api.Interface, error) {
+	initial, err := list(ctx)
+	for try := 1; err != nil && try < 3 && sleep(ctx, pause/4); try++ {
+		initial, err = list(ctx)
+	}
 	if err != nil {
-		cancel()
-		_ = cmd.Wait()
+		stop()
 		return nil, err
 	}
 	output := make(chan []api.Interface, 1)
 	output <- initial
 	go func() {
-		defer func() { cancel(); _ = cmd.Wait(); close(output) }()
+		defer func() { stop(); close(output) }()
 		last := initial
+		var retry <-chan time.Time
+		wait := pause
 		for {
 			select {
 			case <-ctx.Done():
 				return
+			case <-retry:
 			case _, ok := <-changes:
 				if !ok {
 					return
 				}
-			}
-			timer := time.NewTimer(150 * time.Millisecond)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return
-			case <-timer.C:
-			}
-			// Coalesce bursts from one network reconfiguration.
-			select {
-			case _, ok := <-changes:
-				if !ok {
+				// Coalesce bursts from one network reconfiguration.
+				if !sleep(ctx, 150*time.Millisecond) {
 					return
 				}
-			default:
+				select {
+				case _, ok := <-changes:
+					if !ok {
+						return
+					}
+				default:
+				}
 			}
-			current, err := List(ctx)
+			current, err := list(ctx)
 			if err != nil {
-				return
+				if ctx.Err() != nil {
+					return
+				}
+				retry = time.After(wait)
+				wait = min(2*wait, 30*time.Second)
+				continue
 			}
+			retry, wait = nil, pause
 			if !reflect.DeepEqual(current, last) {
 				select {
 				case output <- current:
@@ -205,4 +223,16 @@ func Watch(ctx context.Context) (<-chan []api.Interface, error) {
 		}
 	}()
 	return output, nil
+}
+
+// sleep waits d, or less if ctx ends first: then it reports false.
+func sleep(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
