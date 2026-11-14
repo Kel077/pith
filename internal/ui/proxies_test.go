@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -375,5 +376,120 @@ func TestSettingsListsSurviveAConfigurationPutInTheirPlace(t *testing.T) {
 	want := []api.Device{{Address: "198.51.100.9", Name: "Tablet"}, {Address: "198.51.100.10", Name: "Guest's phone"}}
 	if !slices.Equal(a.cfg.Devices, want) || a.settings.renaming != "" {
 		t.Fatalf("devices %+v, renaming %q", a.cfg.Devices, a.settings.renaming)
+	}
+}
+
+// A proxy through a port of another Mac's Pith says what that one goes out
+// through and its public IP; a button has that Pith change it, and the row
+// then says what the change did. A proxy lets what uses it change its IP
+// by a button of its row, but not one by a scene's rules.
+func TestProxyChangesItsIP(t *testing.T) {
+	ctx := context.Background()
+	a, svc := testApp(t, mock.Options{Sample: true, HelperInstalled: true, Running: true})
+	a.page = "settings"
+	tt := ui.NewTester(a.WindowView, 1040, 1500)
+	tt.Frame()
+	if tt.HasText(locales.ChangeIp()) {
+		t.Fatalf("a proxy through an interface offers to change its IP here: %q", tt.Texts())
+	}
+	if !a.setUpstream(1081, "studio.example.com:1081") {
+		t.Fatal("the upstream was refused")
+	}
+	a.Sync(ctx)
+	tt.Frame()
+	up := a.proxyStatus(1081).Upstream
+	if up == nil || up.Interface == "" || up.PublicIPv4 == "" {
+		t.Fatalf("the upstream says %+v", up)
+	}
+	state := locales.ProxyListening() + " · " + up.Interface + " · " + up.PublicIPv4 + " · "
+	has := func(prefix string) bool {
+		return slices.ContainsFunc(tt.Texts(), func(s string) bool { return strings.HasPrefix(s, prefix) })
+	}
+	if !has(state) {
+		t.Fatalf("no %q among %q", state, tt.Texts())
+	}
+	if err := tt.Click(locales.ChangeIp()); err != nil {
+		t.Fatal(err)
+	}
+	change, ok := a.settings.changes[1081]
+	if !ok || a.settings.changing[1081] || change.BeforeIPv4 != up.PublicIPv4 || change.PublicIPv4 == up.PublicIPv4 {
+		t.Fatalf("the change: %+v, changing %v", change, a.settings.changing)
+	}
+	a.Sync(ctx)
+	tt.Frame()
+	changed := locales.ProxyListening() + " · " + up.Interface + " · " + up.PublicIPv4 + " → " + change.PublicIPv4 + " · "
+	if !has(changed) {
+		t.Fatalf("no %q among %q", changed, tt.Texts())
+	}
+	// Changed again elsewhere, the address is the upstream's, not this change's.
+	if _, err := svc.ChangeProxyIP(ctx, 1081); err != nil {
+		t.Fatal(err)
+	}
+	a.Sync(ctx)
+	tt.Frame()
+	if now := a.proxyStatus(1081).Upstream.PublicIPv4; now == change.PublicIPv4 || has(changed) || !has(locales.ProxyListening()+" · "+up.Interface+" · "+now+" · ") {
+		t.Fatalf("after another change to %s: %q", now, tt.Texts())
+	}
+
+	// The button of a row that lets what uses the proxy change its IP: the
+	// first is the first proxy's.
+	if a.cfg.Proxies[0].ChangeIP {
+		t.Fatal("the sample lets a proxy's IP be changed")
+	}
+	if err := tt.Click(locales.LetAppsAndDevicesChangeItsIp()); err != nil {
+		t.Fatal(err)
+	}
+	saved, _ := svc.LoadConfig(ctx)
+	if !a.cfg.Proxies[0].ChangeIP || !saved.Proxies[0].ChangeIP || saved.Proxies[1].ChangeIP {
+		t.Fatalf("after the click: %+v, saved %+v", a.cfg.Proxies, saved.Proxies)
+	}
+	a.setProxyScene(0, "home")
+	if saved, _ = svc.LoadConfig(ctx); a.cfg.Proxies[0].ChangeIP || saved.Proxies[0].ChangeIP || saved.Proxies[0].Scene != "home" {
+		t.Fatalf("by a scene's rules: %+v, saved %+v", a.cfg.Proxies[0], saved.Proxies[0])
+	}
+	a.setProxyScene(1, "home")
+	a.setProxyScene(2, "home")
+	a.Sync(ctx)
+	tt.Frame()
+	if tt.Click(locales.LetAppsAndDevicesChangeItsIp()) == nil {
+		t.Fatal("a proxy by a scene's rules has the button")
+	}
+}
+
+// While what uses a local proxy has the IP of its interface changed, the
+// interface's card says so and tests nothing; afterwards it forgets the
+// public IP its last test found.
+func TestNetworkSaysAProxyChangesItsIP(t *testing.T) {
+	a, _ := testApp(t, mock.Options{Sample: true, HelperInstalled: true, Running: true})
+	a.speeds["en9"] = api.SpeedTest{Interface: "en9", OK: true, PublicIP: "198.51.100.80"}
+	st := a.status
+	st.Proxies = slices.Clone(st.Proxies)
+	for k := range st.Proxies {
+		st.Proxies[k].Changing = st.Proxies[k].Port == 1081
+	}
+	a.setStatus(st)
+	if !a.exitChanging("en9") || a.exitChanging("en0") {
+		t.Fatal("which interface's IP is being changed")
+	}
+	if _, ok := a.speeds["en9"]; !ok {
+		t.Fatal("the test's result went before the change ended")
+	}
+	a.testSpeeds([]string{"en9"})
+	if a.speeding["en9"] {
+		t.Fatal("a test started during the change")
+	}
+	a.page = "network"
+	tt := ui.NewTester(a.WindowView, 1040, 900)
+	tt.Frame()
+	if !tt.HasText(locales.ChangingIp()) {
+		t.Fatalf("no %q among %q", locales.ChangingIp(), tt.Texts())
+	}
+	st.Proxies = slices.Clone(st.Proxies)
+	for k := range st.Proxies {
+		st.Proxies[k].Changing = false
+	}
+	a.setStatus(st)
+	if _, ok := a.speeds["en9"]; ok || a.exitChanging("en9") {
+		t.Fatal("the old public IP stayed after the change")
 	}
 }

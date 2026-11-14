@@ -771,6 +771,14 @@
   "@notAllowed": {
     "description": "A local proxy whose other proxy refuses this Mac: the other Mac hasn't listed it as a device."
   },
+  "letAppsAndDevicesChangeItsIp": "Let apps and devices change its IP",
+  "@letAppsAndDevicesChangeItsIp": {
+    "description": "Tooltip and label of the button of a local proxy that lets what uses the proxy, apps on this Mac and the devices it is shared with, have Pith change the proxy's public IP by asking the proxy's port."
+  },
+  "changingItsIp": "Changing IP…",
+  "@changingItsIp": {
+    "description": "Under a local proxy's address while the public IP of what it goes out through is being changed, which takes from seconds to a minute or two."
+  },
   "devices": "Devices",
   "@devices": {
     "description": "The title of the settings' group of the other devices that may use the shared local proxies."

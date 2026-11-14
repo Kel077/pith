@@ -68,7 +68,7 @@ func (m *Manager) noteUpstream(e *listener, err error) {
 		errors.As(err, &problem)
 	}
 	m.mu.Lock()
-	e.up.checked, e.up.err = time.Now(), problem
+	e.up.err = problem
 	m.mu.Unlock()
 }
 
@@ -76,13 +76,7 @@ func (m *Manager) noteUpstream(e *listener, err error) {
 // this Mac, without asking it for any connection.
 func (m *Manager) checkUpstream(e *listener) {
 	defer m.wg.Done()
-	conn, _, err := connectUpstream(e.ctx, m.opts.Upstream, e.cfg.Upstream, nil, e.cfg.Shared)
-	if conn != nil {
-		_ = conn.Close()
-	}
-	if !errors.Is(err, context.Canceled) {
-		m.noteUpstream(e, err)
-	}
+	_, _ = m.upstreamInfo(e.ctx, e, -1, 0)
 	m.mu.Lock()
 	e.up.checking = false
 	m.mu.Unlock()

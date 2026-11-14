@@ -197,7 +197,6 @@ func TestHTTPRefusesWhatIsNotAProxyRequest(t *testing.T) {
 	}})
 	applyTest(t, m, testProxy(1080))
 	for _, wire := range []string{
-		"GET / HTTP/1.1\r\nHost: 192.0.2.7:1080\r\n\r\n",
 		"GET https://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n",
 		"CONNECT example.com HTTP/1.1\r\nHost: example.com\r\n\r\n",
 		"CONNECT example.com:0 HTTP/1.1\r\nHost: example.com:0\r\n\r\n",

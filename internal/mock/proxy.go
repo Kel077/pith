@@ -3,6 +3,7 @@ package mock
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"net/netip"
 	"slices"
 	"time"
@@ -31,9 +32,13 @@ func (s *Service) proxiesLocked() []api.ProxyStatus {
 				s.proxies[p.Port] = live
 			}
 			st = *live
-			if p.Upstream != "" || p.Scene != "" {
-				// The proxy it goes out through answers; the rules of its
-				// scene have somewhere to send each connection.
+			st.Changing = s.changing[p.Port]
+			if p.Upstream != "" {
+				// The proxy it goes out through answers, as a port of another
+				// Mac's Pith does.
+				st.Upstream = s.upstreamLocked(p)
+			} else if p.Scene != "" {
+				// The rules of its scene have somewhere to send each connection.
 			} else if i := p.Via.Resolve(s.ifaces); i == nil || !i.Up {
 				st.Error = &api.Error{Code: api.ErrInterfaceUnavailable}
 			} else if len(i.DNS) == 0 {
@@ -45,8 +50,78 @@ func (s *Service) proxiesLocked() []api.ProxyStatus {
 	return out
 }
 
+// upstreamInterface is the name of the hotspot the mock pretends every
+// upstream proxy goes out through: each is a port of another Mac's Pith.
+const upstreamInterface = "5G Hotspot"
+
+// upstreamLocked is what the Pith behind the upstream of p says of itself.
+func (s *Service) upstreamLocked(p api.Proxy) *api.ProxyInfo {
+	_, port, err := api.ParseUpstream(p.Upstream)
+	if err != nil {
+		return nil
+	}
+	return &api.ProxyInfo{Pith: api.ProxyInfoVersion, Port: port, Exit: api.ExitInterface, Interface: upstreamInterface, Online: true,
+		PublicIPv4: fmt.Sprintf("198.51.100.%d", 140+s.upstream%100), PublicIPv6: fmt.Sprintf("2001:db8:%x::1", 0x140+s.upstream),
+		At: s.born, CanChangeIP: true, Changing: s.changing[p.Port]}
+}
+
 func (s *Service) ChangeProxyIP(ctx context.Context, port int) (api.ProxyIPChange, error) {
-	return api.ProxyIPChange{Port: port}, &api.Error{Code: api.ErrUnsupported}
+	change := api.ProxyIPChange{Port: port}
+	s.mu.Lock()
+	var p api.Proxy
+	for _, q := range s.cfg.Proxies {
+		if q.Port == port && q.Enabled {
+			p = q
+		}
+	}
+	if p.Port == 0 || p.Scene != "" || s.changing[port] {
+		s.mu.Unlock()
+		return change, &api.Error{Code: api.ErrUnsupported, Detail: "no address of this proxy to change"}
+	}
+	s.changing[port] = true
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.changing, port)
+		s.mu.Unlock()
+	}()
+	var before, after api.Probe
+	var took time.Duration
+	switch {
+	case p.Upstream != "":
+		// The other Mac's hotspot reconnects to its carrier.
+		s.mu.Lock()
+		was := s.upstreamLocked(p)
+		s.mu.Unlock()
+		if s.live {
+			select {
+			case <-ctx.Done():
+				return change, ctx.Err()
+			case <-time.After(3 * time.Second):
+			}
+		}
+		s.mu.Lock()
+		s.upstream++
+		now := s.upstreamLocked(p)
+		s.mu.Unlock()
+		before = api.Probe{PublicIPv4: was.PublicIPv4, PublicIPv6: was.PublicIPv6}
+		after, took = api.Probe{PublicIPv4: now.PublicIPv4, PublicIPv6: now.PublicIPv6, At: s.now()}, 14*time.Second
+	case p.Via.Name == hotspotIface:
+		r, err := s.RenewHotspot(ctx, p.Via.Name)
+		if err != nil {
+			return change, err
+		}
+		before, after, took = r.Before, r.After, r.Took
+	default:
+		r, err := s.RenewRouter(ctx, p.Via.Name)
+		if err != nil {
+			return change, err
+		}
+		before, after, took = r.Before, r.After, r.Took
+	}
+	change.BeforeIPv4, change.BeforeIPv6 = before.PublicIPv4, before.PublicIPv6
+	change.PublicIPv4, change.PublicIPv6, change.At, change.Seconds = after.PublicIPv4, after.PublicIPv6, after.At, took.Seconds()
+	return change, nil
 }
 
 // restartProxiesLocked forgets the counters of the proxies that a new

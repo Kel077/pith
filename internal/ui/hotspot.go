@@ -238,9 +238,16 @@ func hotspotScreen(c *ui.Context, h api.Hotspot, col ui.Color) {
 // after: the public IPv4 before and after, or the IPv6 when there is no IPv4
 // after.
 func renewalText(b, a api.Probe) string {
-	before, after := b.PublicIPv4, a.PublicIPv4
+	return ipChangeText(b.PublicIPv4, b.PublicIPv6, a.PublicIPv4, a.PublicIPv6)
+}
+
+// ipChangeText tells what changing an IP did, from the public addresses
+// before and after: the IPv4 ones, or the IPv6 ones when there is no IPv4
+// after.
+func ipChangeText(before4, before6, after4, after6 string) string {
+	before, after := before4, after4
 	if after == "" {
-		before, after = b.PublicIPv6, a.PublicIPv6
+		before, after = before6, after6
 	}
 	switch {
 	case after == "":

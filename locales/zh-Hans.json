@@ -311,6 +311,8 @@
   "useHostAndPort": "请填写主机和端口，如 mac.local:1080",
   "shareWithDevices": "共享给其他设备",
   "notAllowed": "未获允许",
+  "letAppsAndDevicesChangeItsIp": "允许应用和设备更换它的 IP",
+  "changingItsIp": "正在更换 IP…",
   "devices": "设备",
   "addDevice": "添加设备",
   "allow": "允许",
