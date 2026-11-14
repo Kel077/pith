@@ -89,23 +89,24 @@ func localProxyClient(t *testing.T) (*Client, *[]string, *sync.Mutex) {
 	var mu sync.Mutex
 	echo := proxyEchoServer(t)
 	c.newProxies = func() (*proxy.Manager, error) {
-		return proxy.New(proxy.Options{Dial: func(ctx context.Context, via api.InterfaceRef, target proxy.Target) (net.Conn, error) {
-			if target.Host != "192.0.2.80" || target.Port != 443 || target.IsDomain {
-				return nil, errors.New("unexpected synthetic target")
-			}
-			if via.Name == "missing0" {
-				return nil, &api.Error{Code: api.ErrInterfaceUnavailable}
-			}
-			mu.Lock()
-			calls = append(calls, via.Name)
-			mu.Unlock()
-			return (&net.Dialer{}).DialContext(ctx, "tcp4", echo)
-		}, Health: func(_ context.Context, via api.InterfaceRef) error {
-			if via.Name == "missing0" {
-				return &api.Error{Code: api.ErrInterfaceUnavailable}
-			}
-			return nil
-		}})
+		return proxy.New(proxy.Options{Info: c.exitInfo, ChangeIP: c.changeExitIP, Changing: c.exitChanging,
+			Dial: func(ctx context.Context, via api.InterfaceRef, target proxy.Target) (net.Conn, error) {
+				if target.Host != "192.0.2.80" || target.Port != 443 || target.IsDomain {
+					return nil, errors.New("unexpected synthetic target")
+				}
+				if via.Name == "missing0" {
+					return nil, &api.Error{Code: api.ErrInterfaceUnavailable}
+				}
+				mu.Lock()
+				calls = append(calls, via.Name)
+				mu.Unlock()
+				return (&net.Dialer{}).DialContext(ctx, "tcp4", echo)
+			}, Health: func(_ context.Context, via api.InterfaceRef) error {
+				if via.Name == "missing0" {
+					return &api.Error{Code: api.ErrInterfaceUnavailable}
+				}
+				return nil
+			}})
 	}
 	return c, &calls, &mu
 }
@@ -276,17 +277,18 @@ func TestLoadConfigActivatesOnlyOnSuccessfulUncanceledLoad(t *testing.T) {
 			entered := make(chan struct{})
 			listens := 0
 			c.newProxies = func() (*proxy.Manager, error) {
-				return proxy.New(proxy.Options{Dial: func(context.Context, api.InterfaceRef, proxy.Target) (net.Conn, error) {
-					return nil, errors.New("unexpected dial")
-				}, Listen: func(ctx context.Context, network, address string) (net.Listener, error) {
-					listens++
-					if action == "cancel-partial" && listens == 1 {
-						return (&net.ListenConfig{}).Listen(ctx, network, address)
-					}
-					close(entered)
-					<-ctx.Done()
-					return nil, ctx.Err()
-				}})
+				return proxy.New(proxy.Options{Info: c.exitInfo, ChangeIP: c.changeExitIP, Changing: c.exitChanging,
+					Dial: func(context.Context, api.InterfaceRef, proxy.Target) (net.Conn, error) {
+						return nil, errors.New("unexpected dial")
+					}, Listen: func(ctx context.Context, network, address string) (net.Listener, error) {
+						listens++
+						if action == "cancel-partial" && listens == 1 {
+							return (&net.ListenConfig{}).Listen(ctx, network, address)
+						}
+						close(entered)
+						<-ctx.Done()
+						return nil, ctx.Err()
+					}})
 			}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -368,9 +370,10 @@ func TestHelperStreamLossDoesNotEndLocalProxySubscription(t *testing.T) {
 	installProxyFixture(t, c)
 	echo := proxyEchoServer(t)
 	c.newProxies = func() (*proxy.Manager, error) {
-		return proxy.New(proxy.Options{Dial: func(ctx context.Context, _ api.InterfaceRef, _ proxy.Target) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, "tcp4", echo)
-		}})
+		return proxy.New(proxy.Options{Info: c.exitInfo, ChangeIP: c.changeExitIP, Changing: c.exitChanging,
+			Dial: func(ctx context.Context, _ api.InterfaceRef, _ proxy.Target) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, "tcp4", echo)
+			}})
 	}
 	cfg := proxyConfig(proxyPort(t), "example0")
 	if err := c.SaveConfig(context.Background(), cfg); err != nil {

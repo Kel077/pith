@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 
 	"github.com/Kel077/pith/internal/api"
@@ -31,7 +32,9 @@ func (c *Client) loadConfig(ctx context.Context) (api.Config, error) {
 	}
 	f, err := os.Open(c.configPath)
 	if errors.Is(err, os.ErrNotExist) {
-		return api.DefaultConfig(), nil
+		cfg := api.DefaultConfig()
+		c.keepExitAliases(cfg)
+		return cfg, nil
 	}
 	if err != nil {
 		return api.Config{}, fmt.Errorf("open config: %w", err)
@@ -51,7 +54,17 @@ func (c *Client) loadConfig(ctx context.Context) (api.Config, error) {
 	if err := cfg.Validate(); err != nil {
 		return api.Config{}, err
 	}
-	return cfg, ctx.Err()
+	if err := ctx.Err(); err != nil {
+		return cfg, err
+	}
+	c.keepExitAliases(cfg)
+	return cfg, nil
+}
+
+// keepExitAliases publishes a private copy for port status reads.
+func (c *Client) keepExitAliases(cfg api.Config) {
+	aliases := maps.Clone(cfg.Aliases)
+	c.exitAliases.Store(&aliases)
 }
 
 func (c *Client) SaveConfig(ctx context.Context, cfg api.Config) error {
@@ -109,6 +122,7 @@ func (c *Client) SaveConfig(ctx context.Context, cfg api.Config) error {
 	if err := os.Rename(tmp, c.configPath); err != nil {
 		return err
 	}
+	c.keepExitAliases(cfg)
 	routingUnchanged := previousErr == nil && sameRoutingConfig(previous, cfg)
 	proxyOnly := routingUnchanged && !sameProxies(previous, cfg)
 	c.routingPending = c.routingPending || !routingUnchanged

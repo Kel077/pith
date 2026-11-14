@@ -74,7 +74,7 @@ type Client struct {
 	routerPauses   []time.Duration // a renewing router's pauses: routerPauses when nil
 	routerSettle   time.Duration   // for apps to move to another primary: two seconds when zero
 	renewing       sync.Mutex      // one router renews at a time
-	renewals       sync.WaitGroup  // router renewals in progress, which Close waits for
+	renewals       sync.WaitGroup  // address changes in progress, which Close waits for
 	recovery       sync.Once       // of a router a renewal left without an address
 	drained        *drainState     // guarded by mu; an interface that counts as down
 	secretGet      func(ctx context.Context, service, account string) (string, error)
@@ -90,6 +90,13 @@ type Client struct {
 	closeLifetime  context.CancelFunc
 	subscriptions  sync.WaitGroup
 	routingPending bool // guarded by mu; persisted configuration has not reached the helper
+	exitMu         sync.Mutex
+	exits          map[string]*exitState
+	exitChanges    map[string]*exitChange
+	exitAliases    atomic.Pointer[map[string]string]
+	exitJobs       sync.WaitGroup // public-address lookups and device identifications
+	exitNow        func() time.Time
+	probeTimeout   time.Duration // probeTimeout when zero
 }
 
 var _ api.Service = (*Client)(nil)
@@ -123,5 +130,9 @@ func New(opts Options) (*Client, error) {
 }
 
 func (c *Client) Interfaces(ctx context.Context) ([]api.Interface, error) {
-	return c.interfaces(ctx)
+	links, err := c.interfaces(ctx)
+	if err == nil {
+		c.observeExits(links)
+	}
+	return links, err
 }

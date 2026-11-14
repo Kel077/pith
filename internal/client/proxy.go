@@ -22,6 +22,7 @@ func (c *Client) Close() error {
 	c.closeLifetime()
 	manager := c.proxies
 	c.proxyMu.Unlock()
+	c.exitJobs.Wait()
 	// A router that gave its address up is asked for one again first, or
 	// everything on its network would stay offline.
 	renewed := make(chan struct{})
@@ -43,7 +44,7 @@ func (c *Client) validateProxyInterfaces(ctx context.Context, configs []api.Prox
 	if len(configs) == 0 {
 		return nil
 	}
-	ifaces, err := c.interfaces(ctx)
+	ifaces, err := c.Interfaces(ctx)
 	if err != nil {
 		// An unavailable inventory cannot invalidate an unplugged adapter's saved
 		// intent. The strict dialer still requires fresh usable identity before I/O.
@@ -75,7 +76,7 @@ func (c *Client) syncProxies(parent context.Context, cfg api.Config, firstLoad b
 		factory := c.newProxies
 		if factory == nil {
 			factory = func() (*proxy.Manager, error) {
-				egress := proxyegress.New(proxyegress.Options{Interfaces: func(ctx context.Context) ([]api.Interface, error) { return c.interfaces(ctx) }})
+				egress := proxyegress.New(proxyegress.Options{Interfaces: func(ctx context.Context) ([]api.Interface, error) { return c.Interfaces(ctx) }})
 				return proxy.New(proxy.Options{Dial: egress.Dial, Health: egress.Health, Route: c.routeByRules(egress.Dial),
 					Info: c.exitInfo, ChangeIP: c.changeExitIP, Changing: c.exitChanging})
 			}

@@ -49,6 +49,14 @@ func (c *Client) SetHotspotPassword(ctx context.Context, iface, password string)
 }
 
 func (c *Client) RenewHotspot(ctx context.Context, iface string) (api.HotspotRenewal, error) {
+	change, err := c.changeAddress(ctx, api.InterfaceRef{Name: iface}, exitHotspot, false)
+	if change == nil {
+		return api.HotspotRenewal{}, err
+	}
+	return change.hotspot, err
+}
+
+func (c *Client) renewHotspot(ctx context.Context, iface string) (api.HotspotRenewal, error) {
 	var r api.HotspotRenewal
 	s, err := c.hotspot(ctx, iface)
 	if err != nil {
@@ -58,6 +66,9 @@ func (c *Client) RenewHotspot(ctx context.Context, iface string) (api.HotspotRen
 	// Its public IP before, tested while the hotspot gets ready.
 	err = s.device.Renew(ctx, func(ctx context.Context) (err error) {
 		r.Before, err = c.Probe(ctx, iface, "")
+		if err == nil {
+			c.forgetExitAddresses(iface)
+		}
 		return err
 	})
 	if err != nil {
@@ -121,7 +132,7 @@ func publicIPs(p api.Probe) int {
 
 // hotspot finds the hotspot behind an interface, or ErrUnsupported.
 func (c *Client) hotspot(ctx context.Context, name string) (*hotspotSession, error) {
-	ifaces, err := c.interfaces(ctx)
+	ifaces, err := c.Interfaces(ctx)
 	if err != nil {
 		return nil, err
 	}

@@ -41,7 +41,7 @@ func (c *Client) SpeedTest(ctx context.Context, iface string) (api.SpeedTest, er
 	if iface == "" {
 		return result, fmt.Errorf("speed test needs an interface name")
 	}
-	interfaces, err := c.interfaces(ctx)
+	interfaces, err := c.Interfaces(ctx)
 	if err != nil {
 		return result, err
 	}

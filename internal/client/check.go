@@ -82,7 +82,7 @@ func (c *Client) Check(ctx context.Context, in api.CheckInput) (api.CheckResult,
 	}
 	d, checks := set.Explain(f)
 	result.RuleID, result.Rules = d.RuleID, checks
-	interfaces, err := c.interfaces(ctx)
+	interfaces, err := c.Interfaces(ctx)
 	if err != nil {
 		return result, err
 	}

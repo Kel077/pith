@@ -124,6 +124,9 @@ func (c *Client) Subscribe(parent context.Context) (<-chan api.Event, error) {
 		return nil, err
 	}
 	output := make(chan api.Event, 32)
+	if stream.links != nil {
+		c.observeExits(stream.links)
+	}
 	output <- api.Event{Status: &status}
 	output <- api.Event{Interfaces: stream.links}
 	go func() {
@@ -204,6 +207,7 @@ func (c *Client) events(ctx context.Context, output chan<- api.Event, stream hel
 			} else {
 				if event.Interfaces != nil {
 					links = event.Interfaces
+					c.observeExits(links)
 				}
 				if !send(event) {
 					return
@@ -221,6 +225,7 @@ func (c *Client) events(ctx context.Context, output chan<- api.Event, stream hel
 			}
 			if connected != nil && !reflect.DeepEqual(links, result.links) {
 				links = result.links
+				c.observeExits(links)
 				if !send(api.Event{Interfaces: links}) {
 					return
 				}
