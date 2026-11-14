@@ -318,11 +318,11 @@ the second Mac used one shared port that goes out by a scene's rules as its
 HTTP proxy: a name a rule sends through the cellular interface left by it, a
 name no rule names left by the wired default, and a name a rule blocks was
 refused; a SOCKS5 CONNECT and a request for an `http://` URL went the same
-way. At `eb51a5d`, with a rule that names addresses in the scene, the same
-held, and an address a rule blocks was refused. Loopback destinations, by
-address, by `localhost` and by a public name that resolves to a loopback
-address, were refused through a shared port, through a port by rules and
-through two ports in a row.
+way. At `081e567`, with a rule that names addresses in a scene other than
+the default one, the same held, and an address a rule blocks was refused.
+Loopback destinations, by address, by `localhost`, by `127.1` and `2130706433`
+and by a public name that resolves to a loopback address, were refused through
+a shared port and through two ports in a row.
 
 ## Capturing and forwarding
 
