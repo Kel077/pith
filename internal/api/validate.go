@@ -29,6 +29,7 @@ const (
 	ErrNoStandby            ErrorCode = "no_standby"            // no other connected interface has internet to carry the Mac while a router renews its address
 	ErrUpstreamUnreachable  ErrorCode = "upstream_unreachable"  // the proxy a local proxy goes out through doesn't answer
 	ErrUpstreamRefused      ErrorCode = "upstream_refused"      // it answers and refuses this Mac: a shared proxy that doesn't list it as a device, or one that wants a password
+	ErrNotAllowed           ErrorCode = "not_allowed"           // a proxy's port doesn't let what connects to it change its address: Proxy.ChangeIP is off there
 	ErrInternal             ErrorCode = "internal"
 )
 
@@ -197,6 +198,9 @@ func (c Config) Validate() error {
 		if proxy.Scene != "" {
 			if !scenes[proxy.Scene] {
 				return bad("proxy %d: scene %q does not exist", i+1, proxy.Scene)
+			}
+			if proxy.ChangeIP {
+				return bad("proxy %d: a proxy by a scene's rules has no one address to change", i+1)
 			}
 			continue
 		}

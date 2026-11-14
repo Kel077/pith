@@ -91,6 +91,17 @@ type Service interface {
 	// refuse connections. The router's other devices are offline meanwhile.
 	RenewRouter(ctx context.Context, iface string) (RouterRenewal, error)
 
+	// ChangeProxyIP changes the public address of what the local proxy on a
+	// port goes out through, and returns once the internet works through it
+	// again. Through an interface, the hotspot or the router behind it
+	// renews, as RenewHotspot and RenewRouter have it. Through an upstream
+	// that is another Pith's port, that Pith is asked: ErrNotAllowed unless
+	// its port's ChangeIP is on. ErrUnsupported for a proxy by a scene's
+	// rules, for an interface that leads to neither, and for an upstream
+	// that isn't Pith's. One change runs at a time for an interface: a call
+	// during one waits for it, and returns what it did.
+	ChangeProxyIP(ctx context.Context, port int) (ProxyIPChange, error)
+
 	// Connections returns logged connections, newest first.
 	Connections(ctx context.Context, q ConnectionQuery) ([]Connection, error)
 	// ClearConnections empties the connection log.

@@ -161,6 +161,7 @@ func TestProxyGoesOutByTheRulesOfASceneThatExists(t *testing.T) {
 		{"missing scene", Proxy{Port: 1080, Scene: "gone"}, false},
 		{"scene and interface", Proxy{Port: 1080, Scene: "default", Via: via}, false},
 		{"scene and upstream", Proxy{Port: 1080, Scene: "default", Upstream: "192.0.2.7:1080"}, false},
+		{"scene, and an address to change", Proxy{Port: 1080, Scene: "default", ChangeIP: true}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := DefaultConfig()
@@ -229,5 +230,46 @@ func TestDevicesAreOtherIPv4DevicesOrRanges(t *testing.T) {
 	before, err := json.Marshal(DefaultConfig())
 	if err != nil || strings.Contains(string(before), `"devices"`) {
 		t.Fatal("empty device list changed legacy JSON", string(before), err)
+	}
+}
+
+// What uses a port may change the address of an interface or of an upstream
+// proxy, and the answers a port gives of itself keep the names programs
+// read them by.
+func TestProxyLetsItsAddressBeChanged(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Proxies = []Proxy{
+		{Port: 1080, Via: InterfaceRef{Name: "example0"}, Enabled: true, ChangeIP: true},
+		{Port: 1081, Upstream: "192.0.2.7:1081", Enabled: true, Shared: true, ChangeIP: true},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(cfg.Proxies[0])
+	if err != nil || !strings.Contains(string(data), `"changeIP":true`) {
+		t.Fatal("a proxy's ChangeIP was not saved", string(data), err)
+	}
+	var decoded Proxy
+	if err := json.Unmarshal(data, &decoded); err != nil || decoded != cfg.Proxies[0] {
+		t.Fatal("a proxy's ChangeIP did not round trip", decoded, err)
+	}
+	if data, _ := json.Marshal(Proxy{Port: 1080, Via: InterfaceRef{Name: "example0"}}); strings.Contains(string(data), "changeIP") {
+		t.Fatal("a proxy that keeps its address says so", string(data))
+	}
+	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	info := ProxyInfo{Pith: ProxyInfoVersion, Port: 1081, Exit: ExitUpstream, Online: true, PublicIPv4: "203.0.113.7", At: at, CanChangeIP: true,
+		Upstream: &ProxyInfo{Pith: ProxyInfoVersion, Port: 1081, Exit: ExitInterface, Interface: "Hotspot", Online: true, PublicIPv4: "203.0.113.7", PublicIPv6: "2001:db8::7", At: at, CanChangeIP: true, Changing: true}}
+	data, err = json.Marshal(info)
+	want := `{"pith":1,"port":1081,"exit":"upstream","online":true,"publicIPv4":"203.0.113.7","at":"2026-01-02T03:04:05Z","canChangeIP":true,` +
+		`"upstream":{"pith":1,"port":1081,"exit":"interface","interface":"Hotspot","online":true,"publicIPv4":"203.0.113.7","publicIPv6":"2001:db8::7","at":"2026-01-02T03:04:05Z","canChangeIP":true,"changing":true}}`
+	if err != nil || string(data) != want {
+		t.Fatalf("what a port says of itself reads\n%s\nwant\n%s (%v)", data, want, err)
+	}
+	if data, _ := json.Marshal(ProxyInfo{Pith: ProxyInfoVersion, Port: 1082, Exit: ExitScene}); string(data) != `{"pith":1,"port":1082,"exit":"scene","online":false,"canChangeIP":false}` {
+		t.Fatal("a port that knows little reads", string(data))
+	}
+	change := ProxyIPChange{Port: 1081, BeforeIPv4: "203.0.113.7", PublicIPv4: "203.0.113.9", At: at, Seconds: 17.5}
+	if data, _ := json.Marshal(change); string(data) != `{"port":1081,"beforeIPv4":"203.0.113.7","publicIPv4":"203.0.113.9","at":"2026-01-02T03:04:05Z","seconds":17.5}` {
+		t.Fatal("a changed address reads", string(data))
 	}
 }

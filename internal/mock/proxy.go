@@ -2,6 +2,7 @@ package mock
 
 import (
 	"cmp"
+	"context"
 	"net/netip"
 	"slices"
 	"time"
@@ -42,6 +43,10 @@ func (s *Service) proxiesLocked() []api.ProxyStatus {
 		out = append(out, st)
 	}
 	return out
+}
+
+func (s *Service) ChangeProxyIP(ctx context.Context, port int) (api.ProxyIPChange, error) {
+	return api.ProxyIPChange{Port: port}, &api.Error{Code: api.ErrUnsupported}
 }
 
 // restartProxiesLocked forgets the counters of the proxies that a new

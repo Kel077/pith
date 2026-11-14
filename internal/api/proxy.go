@@ -22,7 +22,8 @@ const MaxDevices = 64
 // TUN. Whatever it goes out through, it refuses a loopback address and the
 // names reserved for loopback; a name that resolves to a loopback address
 // is refused through an interface and by a scene's rules, while what a name
-// reaches through an Upstream is that proxy's to answer for.
+// reaches through an Upstream is that proxy's to answer for. An HTTP request
+// made to the port rather than through it asks Pith itself: see ProxyInfo.
 type Proxy struct {
 	Port    int          `json:"port"`         // 1024..65535; unique even when disabled
 	Via     InterfaceRef `json:"via,omitzero"` // one supported physical exit, resolved by Resolve
@@ -54,6 +55,11 @@ type Proxy struct {
 	// Upstream is on another machine: one on this Mac is refused, when saved
 	// if its host is a loopback address, else when it is reached.
 	Shared bool `json:"shared,omitempty"`
+	// ChangeIP lets what connects to the port have Pith change the public
+	// address of what the port goes out through, by asking the port itself:
+	// see ProxyInfo. Off, only this Mac's user changes it, in Pith. A proxy
+	// by a scene's rules has no one address to change, and can't have it on.
+	ChangeIP bool `json:"changeIP,omitempty"`
 }
 
 // Device is another device, or a range of them, that may use the proxies
@@ -149,6 +155,12 @@ type ProxyStatus struct {
 	// of the helper's connection history or TUN traffic statistics.
 	Sent     uint64 `json:"sent"`
 	Received uint64 `json:"received"`
+	// Upstream is what the Upstream says of itself when it is a port of
+	// another Pith: nil for another kind of proxy, and until it has answered.
+	Upstream *ProxyInfo `json:"upstream,omitempty"`
+	// Changing: the public address of what the proxy goes out through is
+	// being changed, whoever asked.
+	Changing bool `json:"changing,omitempty"`
 }
 
 // DeviceStatus describes another device that connected to a shared proxy
@@ -163,6 +175,89 @@ type DeviceStatus struct {
 	// since it first connected.
 	Sent     uint64 `json:"sent"`
 	Received uint64 `json:"received"`
+}
+
+// ProxyInfoVersion is the version of what a proxy's port says of itself:
+// ProxyInfo.Pith.
+const ProxyInfoVersion = 1
+
+// MaxProxyHops bounds the ports a request to a port is passed along: a port
+// whose upstream is another Pith's port asks it in turn.
+const MaxProxyHops = 4
+
+// ProxyExit is the kind of thing a proxy goes out through.
+type ProxyExit string
+
+const (
+	ExitInterface ProxyExit = "interface" // Proxy.Via
+	ExitUpstream  ProxyExit = "upstream"  // Proxy.Upstream
+	ExitScene     ProxyExit = "scene"     // Proxy.Scene
+)
+
+// ProxyInfo is what a proxy's port says of itself, as JSON, to an HTTP
+// request made to the port rather than through it: one whose target is a
+// path, as a server is sent, not a URL or the authority of a CONNECT.
+//
+//	GET /            answers with a ProxyInfo
+//	POST /change-ip  changes the public address of what the port goes out
+//	                 through, and answers with a ProxyIPChange once it has
+//
+// Whatever may connect to the port may GET; a POST also needs the port's
+// ChangeIP. What fails answers with its HTTP status and {"error": Error}:
+// 403 and ErrNotAllowed without ChangeIP, 501 and ErrUnsupported for an
+// exit Pith can't change the address of, 502 and what went wrong for a
+// change that failed. A request a web page made, which has an Origin field
+// or a Sec-Fetch-Site other than "none", is refused with 403: the answers
+// are for programs, and for a person who opens the address in a browser.
+//
+// A port whose Upstream is another Pith's port asks it the same way: it
+// answers with what the upstream says, and passes a change on to it, through
+// MaxProxyHops ports at most.
+type ProxyInfo struct {
+	Pith int       `json:"pith"` // ProxyInfoVersion: it tells Pith's answer from another server's
+	Port int       `json:"port"`
+	Exit ProxyExit `json:"exit"`
+	// Interface is the interface the port goes out through, by the name its
+	// Mac's user knows it by: empty unless Exit is ExitInterface.
+	Interface string `json:"interface,omitempty"`
+	// Online: the port listens, and what it goes out through is there. Its
+	// interface is connected; or its upstream answers and, when that is
+	// Pith's, is online itself. A port by a scene's rules is online while it
+	// listens. It is not proof that the internet answers.
+	Online bool `json:"online"`
+	// PublicIPv4 and PublicIPv6 are the addresses the internet sees the
+	// port's connections come from, as Pith's HTTPS test found them through
+	// its interface at At, or as its upstream tells them. Pith looks them up
+	// for a GET when it knows none, and again when they are older than the
+	// request allows: "GET /?max-age=60", in seconds. Empty when they
+	// couldn't be found, and for a port by a scene's rules, whose connections
+	// leave from where each rule sends them.
+	PublicIPv4 string    `json:"publicIPv4,omitempty"`
+	PublicIPv6 string    `json:"publicIPv6,omitempty"`
+	At         time.Time `json:"at,omitzero"`
+	// CanChangeIP: a POST of /change-ip by whoever asked would be tried. The
+	// port's ChangeIP is on, and its interface leads to a hotspot or a router
+	// whose address Pith changes, or its upstream says the same of itself.
+	CanChangeIP bool `json:"canChangeIP"`
+	// Changing: the address is being changed now.
+	Changing bool `json:"changing,omitempty"`
+	// Upstream is the answer of the port's upstream, when Exit is
+	// ExitUpstream and it is another Pith's port. Online, the addresses, At
+	// and Changing above are then the upstream's.
+	Upstream *ProxyInfo `json:"upstream,omitempty"`
+}
+
+// ProxyIPChange tells what changing the public address of what a proxy
+// goes out through did: the addresses before, and the ones now. A router
+// changes its IPv4 address alone.
+type ProxyIPChange struct {
+	Port       int       `json:"port"`
+	BeforeIPv4 string    `json:"beforeIPv4,omitempty"`
+	BeforeIPv6 string    `json:"beforeIPv6,omitempty"`
+	PublicIPv4 string    `json:"publicIPv4,omitempty"`
+	PublicIPv6 string    `json:"publicIPv6,omitempty"`
+	At         time.Time `json:"at,omitzero"` // when the addresses now were found
+	Seconds    float64   `json:"seconds"`     // it took, until the internet worked through it again
 }
 
 // CanProxy reports supported exit type, not current availability. Down physical
