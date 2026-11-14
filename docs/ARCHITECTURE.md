@@ -739,9 +739,14 @@ bounded, with NDJSON events. Status/rates and connection updates are coalesced o
 a one-second tick only while running. Each publication reaches an event subscriber
 as one batch, so a tick's connection updates take one of its 128 slots however
 many connections changed; a subscriber that leaves 128 batches unread is closed.
-The client reopens a closed stream at once, and reports the helper as not
-responding only if that fails or another stream closed in the previous three
-seconds. See [helper protocol](../internal/helper/README.md).
+A stream also ends when the helper's interface watcher can't read the network
+configuration: its route table read gets 250 ms, and launchd runs the helper as a
+background process, which macOS gives little time on a busy Mac. The client
+reopens a closed stream at once, or, when streams keep closing, three seconds
+after its last attempt. It reports the helper as not responding only when nothing
+listens on its socket, or when no stream opens within five seconds and the
+helper's status doesn't come within five more. See
+[helper protocol](../internal/helper/README.md).
 
 For approved development tests the root helper accepts repeated `--capture CIDR`
 flags, `--safe-target IP:443`, `--safe-server-name example.com`, `--data-dir` and
