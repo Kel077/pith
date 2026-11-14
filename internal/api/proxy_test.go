@@ -145,6 +145,40 @@ func TestProxyGoesOutThroughAnInterfaceOrAnUpstream(t *testing.T) {
 	}
 }
 
+func TestProxyGoesOutByTheRulesOfASceneThatExists(t *testing.T) {
+	via := InterfaceRef{Name: "example0"}
+	for _, tc := range []struct {
+		name  string
+		proxy Proxy
+		valid bool
+	}{
+		{"scene", Proxy{Port: 1080, Scene: "default", Enabled: true}, true},
+		{"shared", Proxy{Port: 1080, Scene: "default", Shared: true}, true},
+		{"missing scene", Proxy{Port: 1080, Scene: "gone"}, false},
+		{"scene and interface", Proxy{Port: 1080, Scene: "default", Via: via}, false},
+		{"scene and upstream", Proxy{Port: 1080, Scene: "default", Upstream: "192.0.2.7:1080"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			cfg.Proxies = []Proxy{tc.proxy}
+			err := cfg.Validate()
+			if (err == nil) != tc.valid || err != nil && Code(err) != ErrInvalidConfig {
+				t.Fatal("unexpected scene result", err)
+			}
+		})
+	}
+	cfg := DefaultConfig()
+	cfg.Proxies = []Proxy{{Port: 1080, Scene: "default", Enabled: true}}
+	data, err := json.Marshal(cfg)
+	if err != nil || strings.Contains(string(data), `"via"`) || strings.Contains(string(data), `"upstream"`) {
+		t.Fatal("a proxy by rules was saved with another exit", string(data), err)
+	}
+	var decoded Config
+	if err := json.Unmarshal(data, &decoded); err != nil || len(decoded.Proxies) != 1 || decoded.Proxies[0] != cfg.Proxies[0] {
+		t.Fatal("proxy by rules did not round trip", err)
+	}
+}
+
 func TestDevicesAreOtherIPv4DevicesOrRanges(t *testing.T) {
 	for _, tc := range []struct{ address, want string }{
 		{"192.0.2.10", "192.0.2.10/32"},

@@ -136,7 +136,8 @@ func (r Rule) Problems() []Problem {
 // Validate checks what SaveConfig requires: the current version, at least
 // one scene, IDs that are set and unique, a selected scene that exists,
 // rules without problems, bounded unique local proxy ports, each with an
-// interface or an upstream proxy, and bounded unique devices.
+// interface, an upstream proxy or a scene that exists, and bounded unique
+// devices.
 // Physical-interface eligibility is checked by the client when Via resolves;
 // an offline or not-yet-present adapter does not invalidate saved configuration.
 func (c Config) Validate() error {
@@ -184,14 +185,20 @@ func (c Config) Validate() error {
 			return bad("proxy %d: port %d is not unique", i+1, proxy.Port)
 		}
 		ports[proxy.Port] = true
-		if proxy.Upstream == "" {
+		if proxy.Upstream == "" && proxy.Scene == "" {
 			if proxy.Via.Name == "" {
 				return bad("proxy %d: via name is empty", i+1)
 			}
 			continue
 		}
-		if proxy.Via != (InterfaceRef{}) {
-			return bad("proxy %d: both an interface and an upstream proxy", i+1)
+		if proxy.Via != (InterfaceRef{}) || proxy.Upstream != "" && proxy.Scene != "" {
+			return bad("proxy %d: more than one of an interface, an upstream proxy and a scene", i+1)
+		}
+		if proxy.Scene != "" {
+			if !scenes[proxy.Scene] {
+				return bad("proxy %d: scene %q does not exist", i+1, proxy.Scene)
+			}
+			continue
 		}
 		host, port, err := ParseUpstream(proxy.Upstream)
 		if err != nil {

@@ -25,8 +25,21 @@ type Proxy struct {
 	// Upstream replaces Via: the "host:port" of a SOCKS5 proxy without
 	// authentication that every connection goes out through, as a port
 	// another Mac's Pith shares. It is reached as macOS routes, and resolves
-	// the names it is asked for itself. Exactly one of Via and Upstream is set.
+	// the names it is asked for itself.
 	Upstream string `json:"upstream,omitempty"`
+	// Scene replaces Via: the ID of a scene whose rules choose what each
+	// connection goes out through, whether or not that scene routes this
+	// Mac. Its enabled rules are matched against the destination alone, a
+	// name as the client asks for it or an address; rules that name apps
+	// never match, since a proxy can't tell the app. A block rule refuses
+	// the connection. A route rule's interfaces are tried in order, each as
+	// a proxy through it would; when none connects, the connection goes
+	// where macOS sends it if the rule falls back, and fails if not. A
+	// connection no rule matches goes where macOS sends it. A name no rule
+	// matches is looked up as macOS does, for the rules that name addresses.
+	// Changed rules apply to new connections. Exactly one of Via, Upstream
+	// and Scene is set.
+	Scene string `json:"scene,omitempty"`
 	// Shared also takes connections from Config.Devices, on every IPv4
 	// address of this Mac rather than on 127.0.0.1 alone.
 	Shared bool `json:"shared,omitempty"`
