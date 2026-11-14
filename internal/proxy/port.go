@@ -100,7 +100,7 @@ func (m *Manager) servePort(e *listener, s *session, req *http.Request, br *bufi
 	}
 	deadline := connectDeadline
 	if method == http.MethodPost {
-		if !e.cfg.ChangeIP {
+		if !e.allowChangeIP.Load() {
 			writePortError(s.in, portProblem(http.StatusForbidden, api.ErrNotAllowed, "this proxy port does not allow address changes"))
 			return
 		}
@@ -223,7 +223,7 @@ func (m *Manager) portInfo(ctx context.Context, e *listener, maxAge time.Duratio
 			info.Upstream = up
 			info.Online, info.PublicIPv4, info.PublicIPv6 = up.Online, up.PublicIPv4, up.PublicIPv6
 			info.At, info.Changing = up.At, up.Changing
-			info.CanChangeIP = e.cfg.ChangeIP && up.CanChangeIP
+			info.CanChangeIP = e.allowChangeIP.Load() && up.CanChangeIP
 		}
 	case e.cfg.Scene != "":
 		info.Exit, info.Online = api.ExitScene, true
@@ -236,7 +236,7 @@ func (m *Manager) portInfo(ctx context.Context, e *listener, maxAge time.Duratio
 			if found, err := m.opts.Info(ctx, e.cfg.Via, maxAge); err == nil {
 				info.Interface, info.Online = found.Interface, found.Online
 				info.PublicIPv4, info.PublicIPv6, info.At = found.PublicIPv4, found.PublicIPv6, found.At
-				info.CanChangeIP, info.Changing = e.cfg.ChangeIP && found.CanChangeIP, found.Changing
+				info.CanChangeIP, info.Changing = e.allowChangeIP.Load() && found.CanChangeIP, found.Changing
 			}
 		}
 		if m.opts.Changing != nil {

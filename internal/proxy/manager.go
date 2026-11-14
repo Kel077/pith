@@ -140,6 +140,8 @@ type listener struct {
 	open     int
 	sent     atomic.Uint64
 	received atomic.Uint64
+	// allowChangeIP applies to new requests without replacing the listener.
+	allowChangeIP atomic.Bool
 	// up tells how the upstream proxy last answered, a connection or a check:
 	// guarded by Manager.mu.
 	up struct {
@@ -207,9 +209,9 @@ func New(opts Options) (*Manager, error) {
 
 // Apply keeps unchanged listeners, closes removed/rebound sessions, and retries
 // failed binds. A per-port bind failure is retained in Status, not returned as a
-// configuration failure. Label-only changes do not replace a listener. A shared
-// listener takes the connections of devices too; a device no longer among
-// them loses its streams.
+// configuration failure. Label-only changes and ChangeIP switches do not replace
+// a listener. A shared listener takes the connections of devices too; a device
+// no longer among them loses its streams.
 func (m *Manager) Apply(ctx context.Context, proxies []api.Proxy, devices []api.Device) error {
 	// The proxies and the devices are validated as a configuration's are. The
 	// scenes that proxies go out by are the caller's, which has them: here
@@ -258,6 +260,7 @@ func (m *Manager) Apply(ctx context.Context, proxies []api.Proxy, devices []api.
 				start = append(start, e)
 			}
 		}
+		e.allowChangeIP.Store(p.ChangeIP)
 		next = append(next, e)
 		byPort[p.Port] = e
 	}
@@ -378,7 +381,7 @@ func (m *Manager) ChangeIP(ctx context.Context, port int) (api.ProxyIPChange, er
 
 func sameProxy(a, b api.Proxy) bool {
 	return a.Port == b.Port && a.Enabled == b.Enabled && a.Via.Name == b.Via.Name && a.Via.HardwareAddr == b.Via.HardwareAddr &&
-		a.Upstream == b.Upstream && a.Scene == b.Scene && a.Shared == b.Shared && a.ChangeIP == b.ChangeIP
+		a.Upstream == b.Upstream && a.Scene == b.Scene && a.Shared == b.Shared
 }
 
 // allowLocked makes allow the devices that may use shared listeners. It

@@ -264,6 +264,9 @@ GET uses the connect timeout, with a little time reserved for the answer;
 POST waits at most ten minutes. A departed caller ends only its wait:
 the client owns an interface's change, and coalesces other callers onto it.
 Configuration replacement and manager close still end these sessions.
+Turning a port's `ChangeIP` on or off applies to new requests without
+replacing its listener or interrupting streams and requests already in
+progress; counters and the listening time are preserved.
 `Manager.ChangeIP` does the same work for this Mac's user, without requiring
 this port's flag; an upstream's flag still applies.
 
