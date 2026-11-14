@@ -204,10 +204,17 @@ func (c Config) Validate() error {
 		if err != nil {
 			return bad("proxy %d: upstream %q is not the host:port of a proxy", i+1, proxy.Upstream)
 		}
+		addr, err := netip.ParseAddr(host)
+		own := host == "localhost" || err == nil && addr.Unmap().IsLoopback()
 		// A port that goes out through itself would open connections to itself
 		// until it is full.
-		if addr, err := netip.ParseAddr(host); port == proxy.Port && (host == "localhost" || err == nil && addr.IsLoopback()) {
+		if own && port == proxy.Port {
 			return bad("proxy %d: its upstream is itself", i+1)
+		}
+		// Through a proxy on this Mac, other devices could reach what listens
+		// for this Mac alone: Pith can't answer for another proxy's care.
+		if own && proxy.Shared {
+			return bad("proxy %d: a shared proxy can't go out through a proxy on this Mac", i+1)
 		}
 	}
 	if len(c.Devices) > MaxDevices {

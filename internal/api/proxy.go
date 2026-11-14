@@ -25,7 +25,8 @@ type Proxy struct {
 	// Upstream replaces Via: the "host:port" of a SOCKS5 proxy without
 	// authentication that every connection goes out through, as a port
 	// another Mac's Pith shares. It is reached as macOS routes, and resolves
-	// the names it is asked for itself.
+	// the names it is asked for itself. It is never asked for a loopback
+	// address or name.
 	Upstream string `json:"upstream,omitempty"`
 	// Scene replaces Via: the ID of a scene whose rules choose what each
 	// connection goes out through, whether or not that scene routes this
@@ -41,7 +42,9 @@ type Proxy struct {
 	// and Scene is set.
 	Scene string `json:"scene,omitempty"`
 	// Shared also takes connections from Config.Devices, on every IPv4
-	// address of this Mac rather than on 127.0.0.1 alone.
+	// address of this Mac rather than on 127.0.0.1 alone. A shared proxy's
+	// Upstream is on another machine: one on this Mac is refused, when saved
+	// if its host is a loopback address, else when it is reached.
 	Shared bool `json:"shared,omitempty"`
 }
 
