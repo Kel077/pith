@@ -26,11 +26,14 @@ type Service interface {
 	// decision or first-choice interface changes are closed to reconnect;
 	// unaffected connections retain their route. Local proxy changes apply after
 	// saving, independently of helper availability. Removed, disabled or rebound
-	// proxy listeners close their connections; unrelated listeners stay open.
+	// proxy listeners close their connections, as one that starts or stops being
+	// shared does; unrelated listeners stay open. A device no longer listed
+	// loses its connections.
 	// Listener failures do not invalidate a saved configuration: see Status.Proxies.
 	SaveConfig(ctx context.Context, cfg Config) error
 
-	// Status reports the helper, engine and independent local proxy listeners.
+	// Status reports the helper, engine and independent local proxy listeners,
+	// with the other devices that use the shared ones.
 	Status(ctx context.Context) (Status, error)
 	// InstallHelper explicitly installs, updates or repairs the privileged
 	// helper. macOS asks for an administrator's password: ErrCanceled when the
@@ -127,6 +130,9 @@ type Config struct {
 	// Proxies are independent of scenes and TUN routing. Empty disables all
 	// local listeners. A port identifies one configuration entry.
 	Proxies []Proxy `json:"proxies,omitempty"`
+	// Devices are the other devices that may use the proxies that are Shared.
+	// Empty, shared proxies still take this Mac's own connections alone.
+	Devices []Device `json:"devices,omitempty"`
 }
 
 // Scene is a named, ordered list of rules. One scene routes at a time.
@@ -305,6 +311,10 @@ type Status struct {
 	// entries. State, Error and the top-level traffic counters describe TUN only.
 	// Helper errors never replace or clear this list.
 	Proxies []ProxyStatus `json:"proxies,omitempty"`
+	// Devices are the other devices that connected to shared proxies since
+	// Pith opened, the latest first, at most MaxDevices: local App state, as
+	// Proxies is.
+	Devices []DeviceStatus `json:"devices,omitempty"`
 	// LastCapture identifies the most recently prepared capture in this helper
 	// process, including after Stop or a SafeStart failure. Nil before the first
 	// successful preparation and after a helper restart. This is historical

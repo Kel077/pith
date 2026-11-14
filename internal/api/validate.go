@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/netip"
 )
 
 // ErrorCode identifies an error the interface explains to the user.
@@ -26,6 +27,8 @@ const (
 	ErrInterfaceUnavailable ErrorCode = "interface_unavailable" // the selected local proxy exit cannot be resolved or used
 	ErrDNSUnavailable       ErrorCode = "dns_unavailable"       // the selected local proxy exit has no usable DNS servers
 	ErrNoStandby            ErrorCode = "no_standby"            // no other connected interface has internet to carry the Mac while a router renews its address
+	ErrUpstreamUnreachable  ErrorCode = "upstream_unreachable"  // the proxy a local proxy goes out through doesn't answer
+	ErrUpstreamRefused      ErrorCode = "upstream_refused"      // it answers and refuses this Mac: a shared proxy that doesn't list it as a device, or one that wants a password
 	ErrInternal             ErrorCode = "internal"
 )
 
@@ -132,7 +135,8 @@ func (r Rule) Problems() []Problem {
 
 // Validate checks what SaveConfig requires: the current version, at least
 // one scene, IDs that are set and unique, a selected scene that exists,
-// rules without problems, and bounded unique local proxy ports with an exit.
+// rules without problems, bounded unique local proxy ports, each with an
+// interface or an upstream proxy, and bounded unique devices.
 // Physical-interface eligibility is checked by the client when Via resolves;
 // an offline or not-yet-present adapter does not invalidate saved configuration.
 func (c Config) Validate() error {
@@ -180,9 +184,38 @@ func (c Config) Validate() error {
 			return bad("proxy %d: port %d is not unique", i+1, proxy.Port)
 		}
 		ports[proxy.Port] = true
-		if proxy.Via.Name == "" {
-			return bad("proxy %d: via name is empty", i+1)
+		if proxy.Upstream == "" {
+			if proxy.Via.Name == "" {
+				return bad("proxy %d: via name is empty", i+1)
+			}
+			continue
 		}
+		if proxy.Via != (InterfaceRef{}) {
+			return bad("proxy %d: both an interface and an upstream proxy", i+1)
+		}
+		host, port, err := ParseUpstream(proxy.Upstream)
+		if err != nil {
+			return bad("proxy %d: upstream %q is not the host:port of a proxy", i+1, proxy.Upstream)
+		}
+		// A port that goes out through itself would open connections to itself
+		// until it is full.
+		if addr, err := netip.ParseAddr(host); port == proxy.Port && (host == "localhost" || err == nil && addr.IsLoopback()) {
+			return bad("proxy %d: its upstream is itself", i+1)
+		}
+	}
+	if len(c.Devices) > MaxDevices {
+		return bad("devices: %d entries exceed the limit of %d", len(c.Devices), MaxDevices)
+	}
+	devices := make(map[netip.Prefix]bool, len(c.Devices))
+	for i, device := range c.Devices {
+		prefix, err := device.Prefix()
+		if err != nil {
+			return bad("device %d: %q is not an IPv4 address of another device, or a range of at least 8 bits", i+1, device.Address)
+		}
+		if devices[prefix] {
+			return bad("device %d: %s is not unique", i+1, prefix)
+		}
+		devices[prefix] = true
 	}
 	return nil
 }
