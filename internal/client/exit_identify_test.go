@@ -70,7 +70,8 @@ func TestExitIdentificationRetriesTransientFailures(t *testing.T) {
 	var calls atomic.Int64
 	c.dialer = func(name string, d time.Duration, dns []string) (*net.Dialer, error) {
 		if calls.Add(1) == 1 {
-			return nil, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("synthetic temporary failure")}
+			// Not a refused connection, which tells a router Pith doesn't know.
+			return nil, errors.New("synthetic temporary failure")
 		}
 		return base(name, d, dns)
 	}

@@ -144,7 +144,8 @@ func (c *Client) router(ctx context.Context, name string) (*routerSession, error
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		if api.Code(err) != api.ErrUnsupported {
+		var dial *net.OpError
+		if api.Code(err) != api.ErrUnsupported && !errors.As(err, &dial) && !errors.As(err, new(tls.AlertError)) && !errors.As(err, new(tls.RecordHeaderError)) {
 			return nil, err // a router that may answer later
 		}
 		c.keepRouter(name, s) // a router Pith doesn't know: no need to ask again
