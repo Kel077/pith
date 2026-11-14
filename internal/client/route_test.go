@@ -287,3 +287,45 @@ func TestLocalProxyByRulesFollowsSavedRules(t *testing.T) {
 		t.Fatal("a scene a port goes out by was removed", err)
 	}
 }
+
+// What macOS would send to this Mac itself is refused: a port by rules
+// reaches no more of this Mac than a port through an interface does.
+func TestProxyByRulesNeverConnectsToLoopback(t *testing.T) {
+	for address, refused := range map[string]bool{
+		"127.0.0.1:8080": true, "127.9.9.9:80": true, "[::1]:8080": true, "[::ffff:127.0.0.1]:80": true,
+		"0.0.0.0:80": true, "[::]:80": true, "224.0.0.251:5353": true, "[ff02::fb]:5353": true,
+		"192.0.2.9:443": false, "[2001:db8::9]:443": false, "[fe80::1%lo0]:80": false,
+	} {
+		if err := notLoopback("tcp", address, nil); errors.Is(err, syscall.EACCES) != refused || !refused && err != nil {
+			t.Errorf("notLoopback(%s) = %v, refused %v", address, err, refused)
+		}
+	}
+	if notLoopback("tcp", "example.com:80", nil) == nil || notLoopback("tcp", "192.0.2.9", nil) == nil {
+		t.Error("what isn't a literal address and a port was let through")
+	}
+	// A listener of this Mac alone, asked for by address and by name.
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	port := uint16(ln.Addr().(*net.TCPAddr).Port)
+	c := testClient(t)
+	route := c.routeByRules(func(context.Context, api.InterfaceRef, proxy.Target) (net.Conn, error) {
+		return nil, errors.New("no rule sends anything through an interface")
+	})
+	cfg := api.DefaultConfig()
+	cfg.Proxies = []api.Proxy{{Port: 1080, Scene: "default", Enabled: true}}
+	if err := c.compileScenes(cfg); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []proxy.Target{{Host: "127.0.0.1", Port: port}, {Host: "localhost", Port: port, IsDomain: true}} {
+		conn, err := route(context.Background(), "default", target)
+		if conn != nil {
+			conn.Close()
+		}
+		if !errors.Is(err, syscall.EACCES) {
+			t.Errorf("%v: %v, want it refused", target, err)
+		}
+	}
+}
