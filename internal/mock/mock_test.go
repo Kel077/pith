@@ -169,3 +169,64 @@ func TestRouter(t *testing.T) {
 		t.Fatalf("the router says %s, the test %s", got.PublicIPv4, r.After.PublicIPv4)
 	}
 }
+
+// The sample shares a proxy with a laptop: the devices it lists report
+// what they move, and a stranger is refused until the configuration lists
+// it. With nothing shared, there are no devices; a proxy can go out through
+// another proxy rather than an interface.
+func TestDevices(t *testing.T) {
+	ctx := context.Background()
+	s := New(Options{Sample: true, Seed: 1})
+	s.Simulate(3 * time.Second)
+	device := func(address string) (api.DeviceStatus, bool) {
+		st, _ := s.Status(ctx)
+		for _, d := range st.Devices {
+			if d.Address == address {
+				return d, true
+			}
+		}
+		return api.DeviceStatus{}, false
+	}
+	st, _ := s.Status(ctx)
+	if len(st.Devices) != 2 || st.Devices[0].Address != "192.0.2.21" {
+		t.Fatalf("devices %+v", st.Devices)
+	}
+	if d, _ := device("192.0.2.21"); !d.Allowed || d.Open == 0 || d.Received == 0 || d.Seen.IsZero() {
+		t.Errorf("laptop %+v", d)
+	}
+	if d, ok := device(stranger); !ok || d.Allowed || d.Open != 0 || d.Received != 0 {
+		t.Errorf("stranger %+v", d)
+	}
+
+	cfg, _ := s.LoadConfig(ctx)
+	cfg.Devices = append(cfg.Devices, api.Device{Address: stranger})
+	if err := s.SaveConfig(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	s.Simulate(time.Second)
+	if d, _ := device(stranger); !d.Allowed || d.Received == 0 {
+		t.Errorf("stranger once listed %+v", d)
+	}
+
+	cfg.Devices = cfg.Devices[1:]
+	if err := s.SaveConfig(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := device("192.0.2.21"); ok {
+		t.Error("a device no longer listed is still reported")
+	}
+
+	cfg.Proxies[0].Shared = false
+	cfg.Proxies[1] = api.Proxy{Port: 1081, Upstream: "studio.example.com:1080", Enabled: true}
+	if err := s.SaveConfig(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	s.Simulate(time.Second)
+	st, _ = s.Status(ctx)
+	if st.Devices != nil {
+		t.Errorf("devices with nothing shared: %+v", st.Devices)
+	}
+	if p := st.Proxies[1]; !p.Listening || p.Error != nil || p.Received == 0 {
+		t.Errorf("a proxy through another proxy: %+v", p)
+	}
+}

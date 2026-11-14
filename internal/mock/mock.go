@@ -56,8 +56,10 @@ type Service struct {
 	routerLocked   bool // Pith has no admin password for Ethernet's router
 	routerRenewals int  // how often the router was renewed: its public IPv4 address
 
-	proxies   map[int]*api.ProxyStatus // the counters of listening proxies, by port
-	portInUse int                      // Options.ProxyPortInUse
+	proxies   map[int]*api.ProxyStatus     // the counters of listening proxies, by port
+	portInUse int                          // Options.ProxyPortInUse
+	devices   map[string]*api.DeviceStatus // what the devices of shared proxies moved, by address
+	stranger  bool                         // a device that isn't listed tries the shared proxies
 }
 
 // flow is an open connection's plan: how long it lasts and how fast it goes.
@@ -81,6 +83,8 @@ func New(o Options) *Service {
 		ifaces:    sampleInterfaces(),
 		proxies:   map[int]*api.ProxyStatus{},
 		portInUse: o.ProxyPortInUse,
+		devices:   map[string]*api.DeviceStatus{},
+		stranger:  o.Sample,
 	}
 	if s.clock.IsZero() && !o.Live {
 		s.clock = time.Date(2026, 11, 4, 9, 30, 0, 0, time.Local)
@@ -167,11 +171,14 @@ func (s *Service) SaveConfig(ctx context.Context, cfg api.Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for k, p := range cfg.Proxies {
+		if p.Upstream != "" {
+			continue
+		}
 		if i := p.Via.Resolve(s.ifaces); i != nil && !i.CanProxy() {
 			return &api.Error{Code: api.ErrInvalidConfig, Detail: fmt.Sprintf("proxy %d: %s can't carry a proxy", k+1, i.Name)}
 		}
 	}
-	s.restartProxiesLocked(cfg.Proxies)
+	s.restartProxiesLocked(cfg)
 	defer s.publishStatusLocked()
 	old := s.scene(s.status.SceneID)
 	s.cfg = clone(cfg)
@@ -225,7 +232,7 @@ func (s *Service) Status(ctx context.Context) (api.Status, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st := s.status
-	st.Proxies = s.proxiesLocked()
+	st.Proxies, st.Devices = s.proxiesLocked(), s.devicesLocked()
 	return st, nil
 }
 
@@ -809,7 +816,7 @@ func (s *Service) refreshWarningsLocked() {
 
 func (s *Service) publishStatusLocked() {
 	st := s.status
-	st.Proxies = s.proxiesLocked()
+	st.Proxies, st.Devices = s.proxiesLocked(), s.devicesLocked()
 	for ch := range s.subs {
 		select {
 		case ch <- api.Event{Status: &st}:
@@ -899,8 +906,10 @@ func SampleConfig() api.Config {
 	}
 	c.Selected = "home"
 	// Local proxies, one an interface: the last one's Wi-Fi isn't connected.
+	// The first is shared with a laptop.
 	hotspot := api.InterfaceRef{Name: hotspotIface, Label: "M2000", HardwareAddr: "02:00:5e:10:00:09"}
-	c.Proxies = []api.Proxy{{Port: 1080, Via: eth, Enabled: true}, {Port: 1081, Via: hotspot, Enabled: true}, {Port: 1082, Via: wifi, Enabled: true}}
+	c.Proxies = []api.Proxy{{Port: 1080, Via: eth, Enabled: true, Shared: true}, {Port: 1081, Via: hotspot, Enabled: true}, {Port: 1082, Via: wifi, Enabled: true}}
+	c.Devices = []api.Device{{Address: "192.0.2.21", Name: "MacBook Pro"}}
 	return c
 }
 
@@ -984,6 +993,7 @@ func clone(c api.Config) api.Config {
 		}
 	}
 	out.Proxies = slices.Clone(c.Proxies)
+	out.Devices = slices.Clone(c.Devices)
 	return out
 }
 
