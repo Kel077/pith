@@ -201,7 +201,8 @@ fields of the client's hop, those its `Connection` names included
 `Connection: close`: one request a connection, whose answer is relayed while
 the request's body is still being sent. Its header fields are written anew,
 in `net/http`'s order and spelling, and none is added but `Connection`; a
-tunnel's bytes are relayed as they are. Anything else is answered `400`: a
+request's trailer fields are not sent on. A tunnel's bytes are relayed as
+they are. Anything else is answered `400`: a
 request that names no host, an `https://` URL outside CONNECT, a port of zero.
 A connection that can't be opened is answered `403` where SOCKS5 says not
 allowed, `504` where it says host unreachable, else `502`. Names, targets,
@@ -234,7 +235,10 @@ is taken reaches what the Mac reaches through the port's exit, the networks it
 is connected to included. Not the Mac itself: every port refuses loopback,
 unspecified and multicast destinations, and the names reserved for loopback,
 before it asks its interface, its upstream or its rules, and a port through an
-interface or by a scene's rules refuses a name that resolves to one. A port
+interface or by a scene's rules refuses a name that resolves to one. An
+address a client spells where a name goes is read as the address, and a name
+whose last label is a number, which only a lenient resolver reads as an
+address, is refused. A port
 through an upstream can't see what a name resolves to there, so a shared
 port's upstream is on another machine: a loopback one is refused when saved,
 and one that turns out to be on this Mac when it is reached, a loopback
@@ -277,23 +281,28 @@ open stream keeps the exit it has. A destination is matched as TCP; a rule
 that names apps never matches, since nothing tells the app behind a proxy's
 connection, least of all on another device. A block rule's connection is refused as not allowed. A route
 rule's interfaces are tried in order through the same interface-bound dialer
-as a port through one interface, names resolved by each interface's own DNS,
-with three seconds each; an interface that is suspended is skipped. When none
+as a port through one interface, with three seconds each; an interface that is
+suspended is skipped. When none
 connects, a rule that falls back, like a connection no rule matches, is dialed
 unbound, with macOS's routes and resolver, but never to a loopback address,
 which a name may resolve to: such a port reaches no more of this Mac than a
 port through an interface does. While a scene routes, that
 connection of the App is captured and follows that scene's rules as any app's.
 In a scene whose rules name domains alone, a name stays a name: the rules see
-it as the client asked for it, and the interface, or macOS, resolves it. When
+it as the client asked for it, and each interface's own DNS, or macOS,
+resolves it. When
 an enabled rule without apps names an address, a name is looked up once with
 macOS's resolver, for two seconds at most, unless a block rule names it. The
 rules then see the name with each of its first eight addresses, as the engine
 sees a connection an app makes, and the connection goes to those addresses
 alone, as literals: first to the ones a rule sends somewhere, then to the ones
-no rule names, never to one a rule blocks. A name is not looked up a second
-time, so no socket connects to an address the rules haven't seen, and a name
-that can't be looked up fails. Such a port has no interface to report on, and
+no rule names, never to one a rule blocks. Each address has a quarter of a
+second's head start on the next, as
+[RFC 8305, section 5](https://www.rfc-editor.org/rfc/rfc8305.html#section-5)
+has a client try the addresses of a name, and the first to connect is the
+connection: an address that never answers doesn't take the others' time. A
+name is not looked up a second time, so no socket connects to an address the
+rules haven't seen, and a name that can't be looked up fails. Such a port has no interface to report on, and
 takes no part in the connection log or the traffic statistics, like the other
 ports.
 
