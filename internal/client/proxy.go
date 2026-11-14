@@ -50,6 +50,9 @@ func (c *Client) validateProxyInterfaces(ctx context.Context, configs []api.Prox
 		return ctx.Err()
 	}
 	for _, config := range configs {
+		if config.Upstream != "" {
+			continue
+		}
 		if iface := config.Via.Resolve(ifaces); iface != nil && !iface.CanProxy() {
 			return &api.Error{Code: api.ErrInvalidConfig, Detail: fmt.Sprintf("proxy %d: selected interface is not a supported physical exit", config.Port)}
 		}
@@ -57,7 +60,7 @@ func (c *Client) validateProxyInterfaces(ctx context.Context, configs []api.Prox
 	return nil
 }
 
-func (c *Client) syncProxies(parent context.Context, configs []api.Proxy, firstLoad bool) error {
+func (c *Client) syncProxies(parent context.Context, configs []api.Proxy, devices []api.Device, firstLoad bool) error {
 	c.proxyMu.Lock()
 	if c.closed {
 		c.proxyMu.Unlock()
@@ -94,13 +97,13 @@ func (c *Client) syncProxies(parent context.Context, configs []api.Proxy, firstL
 	defer cancel()
 	stopClose := context.AfterFunc(c.lifetime, cancel)
 	defer stopClose()
-	err := manager.Apply(ctx, configs)
+	err := manager.Apply(ctx, configs, devices)
 	if firstLoad && parent.Err() != nil {
 		// Loading is not a committed Save. Retract any initial listeners that
 		// were opened before the caller canceled, so a failed load stays idle.
 		undoCtx, undoCancel := context.WithTimeout(c.lifetime, 2*time.Second)
 		defer undoCancel()
-		return errors.Join(parent.Err(), manager.Apply(undoCtx, nil))
+		return errors.Join(parent.Err(), manager.Apply(undoCtx, nil, nil))
 	}
 	if err != nil {
 		return err
@@ -130,8 +133,19 @@ func (c *Client) proxyStatus(ctx context.Context) []api.ProxyStatus {
 
 func (c *Client) withProxyStatus(ctx context.Context, status api.Status) api.Status {
 	// Helper JSON cannot supply or replace state owned by this App process.
-	status.Proxies = c.proxyStatus(ctx)
+	status.Proxies, status.Devices = c.proxyStatus(ctx), c.deviceStatus()
 	return status
+}
+
+// deviceStatus is the other devices that connected to shared proxies.
+func (c *Client) deviceStatus() []api.DeviceStatus {
+	c.proxyMu.Lock()
+	manager := c.proxies
+	c.proxyMu.Unlock()
+	if manager == nil {
+		return nil
+	}
+	return manager.Devices()
 }
 
 func sameRoutingConfig(a, b api.Config) bool {
@@ -139,6 +153,8 @@ func sameRoutingConfig(a, b api.Config) bool {
 		a.Settings.SniffDomains == b.Settings.SniffDomains && a.Settings.SafeStart == b.Settings.SafeStart && a.Settings.LogDays == b.Settings.LogDays
 }
 
-func sameProxies(a, b []api.Proxy) bool {
-	return reflect.DeepEqual(a, b)
+// sameProxies tells whether two configurations have the same local proxies
+// and the same devices that may use them.
+func sameProxies(a, b api.Config) bool {
+	return reflect.DeepEqual(a.Proxies, b.Proxies) && reflect.DeepEqual(a.Devices, b.Devices)
 }

@@ -1,12 +1,17 @@
 // Package proxy implements bounded local SOCKS5 CONNECT listeners. It has no
-// resolver or default-route dialer: every outbound connection is supplied by Dial.
+// resolver, and no default-route dialer but to reach a port's upstream proxy:
+// every other outbound connection is supplied by Dial.
 package proxy
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/netip"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -35,6 +40,9 @@ type Options struct {
 	Dial   DialFunc
 	Health func(context.Context, api.InterfaceRef) error
 	Listen func(context.Context, string, string) (net.Listener, error)
+	// Upstream opens the TCP connection to a port's upstream proxy, by its
+	// "host:port". Nil connects as macOS routes and resolves names.
+	Upstream func(ctx context.Context, network, address string) (net.Conn, error)
 
 	HandshakeTimeout time.Duration
 	ConnectTimeout   time.Duration
@@ -50,6 +58,15 @@ const (
 	defaultConnectTimeout   = 10 * time.Second
 	defaultMaxPerPort       = 1024
 	defaultMaxTotal         = 2048
+	// A refused device is told so, a few at a time and briefly: one that
+	// isn't listed can't hold the slots of those that are.
+	maxRefusing   = 8
+	refuseTimeout = 2 * time.Second
+	// An upstream proxy has a few seconds to take a connection, of the ten a
+	// CONNECT has. One that carried none for a while is asked whether it
+	// answers, when Status is read.
+	upstreamAnswer     = 3 * time.Second
+	upstreamCheckEvery = 10 * time.Second
 )
 
 // Manager owns all listeners and workers for one App client. Apply and Close
@@ -66,6 +83,23 @@ type Manager struct {
 	wg      sync.WaitGroup
 	// suspended tells the exits whose listeners refuse connections for now.
 	suspended func(api.InterfaceRef) bool
+	// allow is the other devices that may use shared listeners; devices, the
+	// ones that connected; refusing, the ones being told they may not.
+	allow    []netip.Prefix
+	devices  map[netip.Addr]*device
+	refusing map[net.Conn]struct{}
+}
+
+// device is another device that connected to a shared listener. Manager.mu
+// guards all but its byte counters.
+type device struct {
+	addr     netip.Addr
+	allowed  bool
+	seen     time.Time
+	conns    int // its sessions, handshakes included
+	open     int // its established streams
+	sent     atomic.Uint64
+	received atomic.Uint64
 }
 
 type listener struct {
@@ -80,6 +114,13 @@ type listener struct {
 	open     int
 	sent     atomic.Uint64
 	received atomic.Uint64
+	// up tells how the upstream proxy last answered, a connection or a check:
+	// guarded by Manager.mu.
+	up struct {
+		checking bool
+		checked  time.Time
+		err      *api.Error
+	}
 }
 
 type session struct {
@@ -91,6 +132,10 @@ type session struct {
 	out    net.Conn
 	closed bool
 	active bool // protected by Manager.mu
+	// peer is the other device the stream is for, and dev what it moved;
+	// neither is set for this Mac's own.
+	peer netip.Addr
+	dev  *device
 	// last is when the stream last moved data, on clock. writing counts its
 	// writes in progress: a client that stops reading stalls one for long.
 	last    atomic.Int64
@@ -125,17 +170,30 @@ func New(opts Options) (*Manager, error) {
 	if opts.Listen == nil {
 		opts.Listen = (&net.ListenConfig{}).Listen
 	}
-	return &Manager{opts: opts, byPort: make(map[int]*listener)}, nil
+	if opts.Upstream == nil {
+		opts.Upstream = (&net.Dialer{}).DialContext
+	}
+	return &Manager{opts: opts, byPort: make(map[int]*listener), devices: make(map[netip.Addr]*device), refusing: make(map[net.Conn]struct{})}, nil
 }
 
 // Apply keeps unchanged listeners, closes removed/rebound sessions, and retries
 // failed binds. A per-port bind failure is retained in Status, not returned as a
-// configuration failure. Label-only changes do not replace a listener.
-func (m *Manager) Apply(ctx context.Context, proxies []api.Proxy) error {
+// configuration failure. Label-only changes do not replace a listener. A shared
+// listener takes the connections of devices too; a device no longer among
+// them loses its streams.
+func (m *Manager) Apply(ctx context.Context, proxies []api.Proxy, devices []api.Device) error {
 	cfg := api.DefaultConfig()
-	cfg.Proxies = proxies
+	cfg.Proxies, cfg.Devices = proxies, devices
 	if err := cfg.Validate(); err != nil {
 		return err
+	}
+	allow := make([]netip.Prefix, 0, len(devices))
+	for _, d := range devices {
+		prefix, err := d.Prefix()
+		if err != nil {
+			return err
+		}
+		allow = append(allow, prefix)
 	}
 	m.applyMu.Lock()
 	defer m.applyMu.Unlock()
@@ -171,12 +229,22 @@ func (m *Manager) Apply(ctx context.Context, proxies []api.Proxy) error {
 		}
 	}
 	m.entries, m.byPort = next, byPort
+	unlisted := m.allowLocked(allow)
 	m.mu.Unlock()
 	for _, c := range closing {
 		c.close()
 	}
+	for _, s := range unlisted {
+		s.close(true)
+	}
 	for _, e := range start {
-		ln, err := m.opts.Listen(ctx, "tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(e.cfg.Port)))
+		// A shared listener takes every IPv4 address of this Mac: accept tells
+		// which device a connection comes from.
+		host := "127.0.0.1"
+		if e.cfg.Shared {
+			host = "0.0.0.0"
+		}
+		ln, err := m.opts.Listen(ctx, "tcp4", net.JoinHostPort(host, strconv.Itoa(e.cfg.Port)))
 		m.mu.Lock()
 		if err != nil {
 			e.err = listenerError(err)
@@ -204,13 +272,14 @@ var errSuspended = &api.Error{Code: api.ErrInterfaceUnavailable, Detail: "the in
 
 // Suspend has the listeners whose exit match tells refuse connections, as
 // when their interface is down, and closes their streams, until Resume. Other
-// listeners go on; nothing is unbound.
+// listeners go on, as those that go out through an upstream proxy do;
+// nothing is unbound.
 func (m *Manager) Suspend(match func(api.InterfaceRef) bool) {
 	m.mu.Lock()
 	m.suspended = match
 	var closing []*session
 	for _, e := range m.entries {
-		if e.cfg.Enabled && match(e.cfg.Via) {
+		if e.cfg.Enabled && e.cfg.Upstream == "" && match(e.cfg.Via) {
 			for s := range e.conns {
 				closing = append(closing, s)
 			}
@@ -237,7 +306,144 @@ func (m *Manager) isSuspended(via api.InterfaceRef) bool {
 }
 
 func sameProxy(a, b api.Proxy) bool {
-	return a.Port == b.Port && a.Enabled == b.Enabled && a.Via.Name == b.Via.Name && a.Via.HardwareAddr == b.Via.HardwareAddr
+	return a.Port == b.Port && a.Enabled == b.Enabled && a.Via.Name == b.Via.Name && a.Via.HardwareAddr == b.Via.HardwareAddr &&
+		a.Upstream == b.Upstream && a.Shared == b.Shared
+}
+
+// allowLocked makes allow the devices that may use shared listeners. It
+// forgets the devices that may no longer, and every device once nothing is
+// shared, and returns their streams for the caller to close.
+func (m *Manager) allowLocked(allow []netip.Prefix) []*session {
+	m.allow = allow
+	shared := false
+	for _, e := range m.entries {
+		shared = shared || e.cfg.Enabled && e.cfg.Shared
+	}
+	var unlisted []*session
+	for _, e := range m.entries {
+		for s := range e.conns {
+			if s.peer.IsValid() && !(shared && m.allowedLocked(s.peer)) {
+				unlisted = append(unlisted, s)
+			}
+		}
+	}
+	for addr, d := range m.devices {
+		switch {
+		case !shared, d.allowed && !m.allowedLocked(addr):
+			delete(m.devices, addr)
+		default:
+			d.allowed = m.allowedLocked(addr)
+		}
+	}
+	return unlisted
+}
+
+func (m *Manager) allowedLocked(peer netip.Addr) bool {
+	for _, prefix := range m.allow {
+		if prefix.Contains(peer) {
+			return true
+		}
+	}
+	return false
+}
+
+// peerOf tells which other device conn comes from: none, and local, for a
+// connection of this Mac's own, from a loopback address or from the very
+// address it connected to.
+func peerOf(conn net.Conn) (peer netip.Addr, local bool) {
+	remote, ok := conn.RemoteAddr().(*net.TCPAddr)
+	if !ok {
+		return netip.Addr{}, false
+	}
+	peer, ok = netip.AddrFromSlice(remote.IP)
+	if !ok {
+		return netip.Addr{}, false
+	}
+	peer = peer.Unmap()
+	if peer.IsLoopback() {
+		return netip.Addr{}, true
+	}
+	if own, ok := conn.LocalAddr().(*net.TCPAddr); ok && own.IP.Equal(remote.IP) {
+		return netip.Addr{}, true
+	}
+	return peer, false
+}
+
+// deviceLocked notes that peer connected just now, allowed or not. It returns
+// nil when the devices it remembers are all connected and peer isn't one.
+func (m *Manager) deviceLocked(peer netip.Addr, allowed bool) *device {
+	d := m.devices[peer]
+	if d == nil {
+		if len(m.devices) >= api.MaxDevices && !m.forgetDeviceLocked() {
+			return nil
+		}
+		d = &device{addr: peer}
+		m.devices[peer] = d
+	}
+	d.allowed, d.seen = allowed, time.Now().UTC()
+	return d
+}
+
+// forgetDeviceLocked makes room for a device: it forgets the one that
+// connected the longest ago and has no connection now, a refused one first.
+func (m *Manager) forgetDeviceLocked() bool {
+	var oldest *device
+	for _, d := range m.devices {
+		if d.conns != 0 {
+			continue
+		}
+		if oldest == nil || d.allowed != oldest.allowed && !d.allowed || d.allowed == oldest.allowed && d.seen.Before(oldest.seen) {
+			oldest = d
+		}
+	}
+	if oldest == nil {
+		return false
+	}
+	delete(m.devices, oldest.addr)
+	return true
+}
+
+// Devices lists the other devices that connected to shared listeners, the
+// latest first.
+func (m *Manager) Devices() []api.DeviceStatus {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.devices) == 0 {
+		return nil
+	}
+	out := make([]api.DeviceStatus, 0, len(m.devices))
+	for _, d := range m.devices {
+		out = append(out, api.DeviceStatus{Address: d.addr.String(), Allowed: d.allowed, Seen: d.seen, Open: d.open, Sent: d.sent.Load(), Received: d.received.Load()})
+	}
+	slices.SortFunc(out, func(a, b api.DeviceStatus) int {
+		return cmp.Or(b.Seen.Compare(a.Seen), cmp.Compare(a.Address, b.Address))
+	})
+	return out
+}
+
+// refuse tells a device that isn't listed that no way of signing in is
+// accepted, as RFC 1928 has a proxy refuse, so that it can tell a proxy that
+// refuses it from one that is gone.
+func (m *Manager) refuse(conn net.Conn) {
+	defer m.wg.Done()
+	defer func() {
+		m.mu.Lock()
+		delete(m.refusing, conn)
+		m.mu.Unlock()
+		_ = conn.Close()
+	}()
+	if conn.SetDeadline(time.Now().Add(refuseTimeout)) != nil {
+		return
+	}
+	var header [2]byte
+	if _, err := io.ReadFull(conn, header[:]); err != nil || header[0] != 5 {
+		return
+	}
+	var methods [255]byte
+	if _, err := io.ReadFull(conn, methods[:int(header[1])]); err != nil {
+		return
+	}
+	_ = writeAll(conn, []byte{5, 0xff})
 }
 
 type closure struct {
@@ -310,6 +516,35 @@ func (m *Manager) accept(e *listener, ln net.Listener) {
 			_ = conn.Close()
 			continue
 		}
+		// A listener that isn't shared is bound to 127.0.0.1, which only this
+		// Mac reaches. A shared one takes this Mac's connections and those of
+		// the devices listed; any other device is told it may not, and holds
+		// no slot.
+		var peer netip.Addr
+		var dev *device
+		if e.cfg.Shared {
+			var local bool
+			if peer, local = peerOf(conn); !local {
+				allowed := peer.IsValid() && m.allowedLocked(peer)
+				if peer.IsValid() {
+					dev = m.deviceLocked(peer, allowed)
+				}
+				if !allowed {
+					telling := len(m.refusing) < maxRefusing
+					if telling {
+						m.refusing[conn] = struct{}{}
+						m.wg.Add(1)
+					}
+					m.mu.Unlock()
+					if telling {
+						go m.refuse(conn)
+					} else {
+						closeConn(conn, true)
+					}
+					continue
+				}
+			}
+		}
 		// A browser keeps idle streams for reuse and opens one again when it
 		// finds it closed, while a refused connection fails its request. So a
 		// full port, or a full manager, closes its quietest stream for this one.
@@ -322,9 +557,12 @@ func (m *Manager) accept(e *listener, ln net.Listener) {
 			}
 		}
 		life, cancel := context.WithCancel(e.ctx)
-		s := &session{ctx: life, cancel: cancel, in: conn, start: time.Now()}
+		s := &session{ctx: life, cancel: cancel, in: conn, start: time.Now(), peer: peer, dev: dev}
 		e.conns[s] = struct{}{}
 		m.total++
+		if dev != nil {
+			dev.conns++
+		}
 		m.wg.Add(1)
 		m.mu.Unlock()
 		if quietest != nil {
@@ -348,6 +586,18 @@ func (m *Manager) Status(ctx context.Context) []api.ProxyStatus {
 			if e.err != nil {
 				copy := *e.err
 				st.Error = &copy
+			} else if e.cfg.Upstream != "" {
+				if st.Listening {
+					if e.up.err != nil {
+						copy := *e.up.err
+						st.Error = &copy
+					}
+					if !m.closed && !e.up.checking && time.Since(e.up.checked) >= upstreamCheckEvery {
+						e.up.checking = true
+						m.wg.Add(1)
+						go m.checkUpstream(e)
+					}
+				}
 			} else if m.suspended != nil && m.suspended(e.cfg.Via) {
 				copy := *errSuspended
 				st.Error = &copy
@@ -361,7 +611,7 @@ func (m *Manager) Status(ctx context.Context) []api.ProxyStatus {
 		ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 		for i := range states {
-			if states[i].Listening && states[i].Error == nil {
+			if states[i].Listening && states[i].Error == nil && refs[i].Name != "" {
 				if err := m.opts.Health(ctx, refs[i]); err != nil {
 					states[i].Error = healthError(err)
 				}
@@ -386,9 +636,16 @@ func (m *Manager) Close() error {
 	for _, e := range m.entries {
 		closing = append(closing, m.retireLocked(e))
 	}
+	refusing := make([]net.Conn, 0, len(m.refusing))
+	for conn := range m.refusing {
+		refusing = append(refusing, conn)
+	}
 	m.mu.Unlock()
 	for _, c := range closing {
 		c.close()
+	}
+	for _, conn := range refusing {
+		closeConn(conn, true)
 	}
 	m.wg.Wait()
 	return nil
@@ -464,6 +721,12 @@ func (m *Manager) releaseLocked(e *listener, s *session) {
 	if s.active {
 		e.open--
 	}
+	if s.dev != nil {
+		s.dev.conns--
+		if s.active {
+			s.dev.open--
+		}
+	}
 }
 
 // quietestLocked releases and returns the established stream that has moved
@@ -506,6 +769,9 @@ func (m *Manager) activate(e *listener, s *session) bool {
 	s.active = true
 	s.last.Store(clock())
 	e.open++
+	if s.dev != nil {
+		s.dev.open++
+	}
 	return true
 }
 

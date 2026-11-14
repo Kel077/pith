@@ -20,9 +20,18 @@ import (
 
 var testVia = api.InterfaceRef{Name: "example0", HardwareAddr: "02:00:00:00:00:01"}
 
+// listenerFixture binds every port a manager asks for on a free loopback
+// port, remembers which address it was asked for, and has connections come
+// from the devices a test names.
 type listenerFixture struct {
 	mu    sync.Mutex
 	addrs map[int]string
+	hosts map[int]string        // the address each port was to listen on
+	from  map[int][]*deviceConn // what the next connections to a port pretend to be
+}
+
+func newFixture() *listenerFixture {
+	return &listenerFixture{addrs: make(map[int]string), hosts: make(map[int]string), from: make(map[int][]*deviceConn)}
 }
 
 func (f *listenerFixture) listen(ctx context.Context, network, address string) (net.Listener, error) {
@@ -30,20 +39,82 @@ func (f *listenerFixture) listen(ctx context.Context, network, address string) (
 		return nil, errors.New("listener was not IPv4-only")
 	}
 	host, portText, err := net.SplitHostPort(address)
-	if err != nil || host != "127.0.0.1" {
-		return nil, errors.New("listener was not bound to IPv4 loopback")
+	if err != nil || host != "127.0.0.1" && host != "0.0.0.0" {
+		return nil, errors.New("listener was bound to neither IPv4 loopback nor every IPv4 address")
 	}
 	port, err := strconv.Atoi(portText)
 	if err != nil || port < 1024 || port > 65535 {
 		return nil, errors.New("listener used an invalid configured port")
 	}
 	ln, err := (&net.ListenConfig{}).Listen(ctx, network, "127.0.0.1:0")
-	if err == nil {
-		f.mu.Lock()
-		f.addrs[port] = ln.Addr().String()
-		f.mu.Unlock()
+	if err != nil {
+		return nil, err
 	}
-	return ln, err
+	f.mu.Lock()
+	f.addrs[port], f.hosts[port] = ln.Addr().String(), host
+	f.mu.Unlock()
+	return &deviceListener{Listener: ln, fixture: f, port: port}, nil
+}
+
+func (f *listenerFixture) host(port int) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.hosts[port]
+}
+
+// deviceListener gives a connection the addresses the fixture holds for it.
+type deviceListener struct {
+	net.Listener
+	fixture *listenerFixture
+	port    int
+}
+
+func (l *deviceListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	f := l.fixture
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if queue := f.from[l.port]; len(queue) > 0 {
+		as := queue[0]
+		f.from[l.port] = queue[1:]
+		as.TCPConn = conn.(*net.TCPConn)
+		return as, nil
+	}
+	return conn, nil
+}
+
+// deviceConn is a loopback connection that says it comes from another
+// device, and, when local is set, that it reached another address.
+type deviceConn struct {
+	*net.TCPConn
+	remote, local net.Addr
+}
+
+func (c *deviceConn) RemoteAddr() net.Addr { return c.remote }
+
+func (c *deviceConn) LocalAddr() net.Addr {
+	if c.local != nil {
+		return c.local
+	}
+	return c.TCPConn.LocalAddr()
+}
+
+// dialFrom connects to port as the device at address would. Connections a
+// test opens one after the other get the addresses in that order.
+func (f *listenerFixture) dialFrom(t *testing.T, port int, address string) *net.TCPConn {
+	t.Helper()
+	return f.dialAs(t, port, &deviceConn{remote: &net.TCPAddr{IP: net.ParseIP(address), Port: 50000}})
+}
+
+func (f *listenerFixture) dialAs(t *testing.T, port int, as *deviceConn) *net.TCPConn {
+	t.Helper()
+	f.mu.Lock()
+	f.from[port] = append(f.from[port], as)
+	f.mu.Unlock()
+	return f.dial(t, port)
 }
 
 func (f *listenerFixture) dial(t *testing.T, port int) *net.TCPConn {
@@ -64,7 +135,7 @@ func (f *listenerFixture) dial(t *testing.T, port int) *net.TCPConn {
 
 func newTestManager(t *testing.T, opts Options) (*Manager, *listenerFixture) {
 	t.Helper()
-	f := &listenerFixture{addrs: make(map[int]string)}
+	f := newFixture()
 	opts.Listen = f.listen
 	m, err := New(opts)
 	if err != nil {
@@ -80,7 +151,19 @@ func newTestManager(t *testing.T, opts Options) (*Manager, *listenerFixture) {
 
 func applyTest(t *testing.T, m *Manager, proxies ...api.Proxy) {
 	t.Helper()
-	if err := m.Apply(context.Background(), proxies); err != nil {
+	if err := m.Apply(context.Background(), proxies, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// shareTest applies proxies with the devices at addresses allowed.
+func shareTest(t *testing.T, m *Manager, addresses []string, proxies ...api.Proxy) {
+	t.Helper()
+	devices := make([]api.Device, len(addresses))
+	for i, address := range addresses {
+		devices[i].Address = address
+	}
+	if err := m.Apply(context.Background(), proxies, devices); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -672,7 +755,7 @@ func TestCloseCancelsAndJoinsPendingDial(t *testing.T) {
 	if err := m.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if !errors.Is(m.Apply(context.Background(), nil), net.ErrClosed) {
+	if !errors.Is(m.Apply(context.Background(), nil, nil), net.ErrClosed) {
 		t.Fatal("closed manager accepted configuration")
 	}
 }
@@ -705,7 +788,7 @@ func TestBindFailureIsIsolatedAndRetryable(t *testing.T) {
 }
 
 func TestOneFailedBindDoesNotRollbackOtherPorts(t *testing.T) {
-	f := &listenerFixture{addrs: make(map[int]string)}
+	f := newFixture()
 	m, err := New(Options{
 		Dial: func(context.Context, api.InterfaceRef, Target) (net.Conn, error) {
 			return nil, errors.New("not dialed")
@@ -760,7 +843,7 @@ func TestConcurrentApplyStatusAndClose(t *testing.T) {
 			for j := range 100 {
 				p := testProxy(1080)
 				p.Via.Label = strconv.Itoa(i + j)
-				if err := m.Apply(context.Background(), []api.Proxy{p}); err != nil && !errors.Is(err, net.ErrClosed) {
+				if err := m.Apply(context.Background(), []api.Proxy{p}, nil); err != nil && !errors.Is(err, net.ErrClosed) {
 					t.Error(err)
 				}
 				_ = m.Status(context.Background())

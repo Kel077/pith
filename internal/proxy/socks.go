@@ -27,7 +27,7 @@ const (
 )
 
 // The wire layout and reply codes follow RFC 1928 sections 3 through 6.
-// This intentionally implements only no-auth CONNECT on local IPv4 listeners.
+// This intentionally implements only no-auth CONNECT on IPv4 listeners.
 func (m *Manager) serve(e *listener, s *session) {
 	defer m.finish(e, s)
 	connectDeadline := s.start.Add(m.opts.ConnectTimeout)
@@ -50,13 +50,19 @@ func (m *Manager) serve(e *listener, s *session) {
 	if err := s.in.SetDeadline(connectDeadline); err != nil {
 		return
 	}
-	if m.isSuspended(e.cfg.Via) {
+	if e.cfg.Upstream == "" && m.isSuspended(e.cfg.Via) {
 		_ = writeReply(s.in, dialReply(errSuspended), nil)
 		return
 	}
 	ctx, cancel := context.WithDeadline(s.ctx, connectDeadline)
 	defer cancel()
-	out, err := m.opts.Dial(ctx, e.cfg.Via, target)
+	var out net.Conn
+	var bound net.Addr
+	if e.cfg.Upstream != "" {
+		out, bound, err = m.through(ctx, e, target)
+	} else if out, err = m.opts.Dial(ctx, e.cfg.Via, target); out != nil {
+		bound = out.LocalAddr()
+	}
 	if err != nil {
 		if out != nil {
 			closeConn(out, true)
@@ -74,7 +80,7 @@ func (m *Manager) serve(e *listener, s *session) {
 		closeConn(out, true)
 		return
 	}
-	if err := writeReply(s.in, replySuccess, out.LocalAddr()); err != nil {
+	if err := writeReply(s.in, replySuccess, bound); err != nil {
 		return
 	}
 	if s.in.SetDeadline(time.Time{}) != nil || out.SetDeadline(time.Time{}) != nil || !m.activate(e, s) {
@@ -82,7 +88,7 @@ func (m *Manager) serve(e *listener, s *session) {
 	}
 	// The CONNECT deadline ends at establishment, not ten seconds into a stream.
 	cancel()
-	relay(s, out, &e.sent, &e.received)
+	relay(s, out, e)
 }
 
 func negotiate(conn net.Conn) error {
@@ -226,9 +232,19 @@ func writeAll(conn net.Conn, b []byte) error {
 }
 
 func dialReply(err error) byte {
+	// What an upstream proxy answered is what this one answers.
+	var reply ReplyError
+	if errors.As(err, &reply) {
+		if byte(reply) >= replyGeneral && byte(reply) <= replyAddress {
+			return byte(reply)
+		}
+		return replyGeneral
+	}
 	switch api.Code(err) {
-	case api.ErrInterfaceUnavailable:
+	case api.ErrInterfaceUnavailable, api.ErrUpstreamUnreachable:
 		return replyNetwork
+	case api.ErrUpstreamRefused:
+		return replyDenied
 	case api.ErrDNSUnavailable:
 		return replyHost
 	case api.ErrUnsupported:
@@ -255,11 +271,13 @@ func dialReply(err error) byte {
 	return replyGeneral
 }
 
-// countedWriter counts the bytes written and tells the session when it last
-// moved data and whether a write is still in progress.
+// countedWriter counts the bytes written, for the port and for the other
+// device the stream is for, and tells the session when it last moved data
+// and whether a write is still in progress.
 type countedWriter struct {
 	conn    net.Conn
 	count   *atomic.Uint64
+	device  *atomic.Uint64 // nil for a stream of this Mac's own
 	session *session
 }
 
@@ -268,15 +286,18 @@ func (w countedWriter) Write(p []byte) (int, error) {
 	n, err := w.conn.Write(p)
 	if n > 0 {
 		w.count.Add(uint64(n))
+		if w.device != nil {
+			w.device.Add(uint64(n))
+		}
 		w.session.last.Store(clock())
 	}
 	w.session.writing.Add(-1)
 	return n, err
 }
 
-func relay(s *session, out net.Conn, sent, received *atomic.Uint64) {
-	copyTo := func(dst, src net.Conn, count *atomic.Uint64) {
-		_, err := io.Copy(countedWriter{conn: dst, count: count, session: s}, src)
+func relay(s *session, out net.Conn, e *listener) {
+	copyTo := func(dst, src net.Conn, count, device *atomic.Uint64) {
+		_, err := io.Copy(countedWriter{conn: dst, count: count, device: device, session: s}, src)
 		if err != nil {
 			s.close(false)
 			return
@@ -291,12 +312,16 @@ func relay(s *session, out net.Conn, sent, received *atomic.Uint64) {
 			s.close(false)
 		}
 	}
+	var sent, received *atomic.Uint64
+	if s.dev != nil {
+		sent, received = &s.dev.sent, &s.dev.received
+	}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		copyTo(out, s.in, sent)
+		copyTo(out, s.in, &e.sent, sent)
 	}()
-	copyTo(s.in, out, received)
+	copyTo(s.in, out, &e.received, received)
 	<-done
 }
 
