@@ -144,7 +144,7 @@ A local proxy is a port on your Mac for apps and browsers that take a proxy, wit
 
 Another Mac can keep its own ports: in its Pith, a local proxy goes out through **Another proxy…**, your Mac's shared port, and the apps there still connect to `127.0.0.1`.
 
-Sharing asks for no password. Any device that can use a listed address can use the port, and reaches what your Mac reaches through it, its local network included: share on networks you trust.
+Sharing asks for no password. Any device that can use a listed address can use the port, and reaches what your Mac reaches through it, its local network included, though not what listens for your Mac alone: share on networks you trust. A shared proxy can't go out through a proxy on the same Mac.
 
 ### Also
 

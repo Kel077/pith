@@ -195,7 +195,9 @@ host:port` ([RFC 9110, section 9.3.6](https://www.rfc-editor.org/rfc/rfc9110.htm
 opens a tunnel, answered `200`, and what the client sent after its request
 without waiting is the tunnel's first bytes. A request for an `http://` URL
 ([RFC 9112, section 3.2.2](https://www.rfc-editor.org/rfc/rfc9112.html#section-3.2.2))
-goes to its server in origin form, without the `Proxy-` fields, with
+goes to its server in origin form, without the `Proxy-` fields and the other
+fields of the client's hop, those its `Connection` names included
+([RFC 9110, section 7.6.1](https://www.rfc-editor.org/rfc/rfc9110.html#section-7.6.1)), with
 `Connection: close`: one request a connection, whose answer is relayed while
 the request's body is still being sent. Its header fields are written anew,
 in `net/http`'s order and spelling, and none is added but `Connection`; a
@@ -229,16 +231,25 @@ With no shared port enabled, no device is remembered.
 
 An address is all that tells a device: there is no password, and a device that
 is taken reaches what the Mac reaches through the port's exit, the networks it
-is connected to included. Loopback destinations stay refused, by address and
-by name. The listener is IPv4: devices reach it at the Mac's IPv4 addresses on
-its local networks, or at the one a VPN to the user's own devices gives it.
+is connected to included. Not the Mac itself: every port refuses loopback,
+unspecified and multicast destinations, and the names reserved for loopback,
+before it asks its interface, its upstream or its rules, and a port through an
+interface or by a scene's rules refuses a name that resolves to one. A port
+through an upstream can't see what a name resolves to there, so a shared
+port's upstream is on another machine: a loopback one is refused when saved,
+and one that turns out to be on this Mac when it is reached, a loopback
+address or the very address the connection left from, is refused before it is
+told anything, with `upstream_refused`. The listener is IPv4: devices reach it
+at the Mac's IPv4 addresses on its local networks, or at the one a VPN to the
+user's own devices gives it.
 
 ### Upstream proxies
 
 A port with `Proxy.Upstream`, a host and a port, has no interface. For each
 connection the manager opens a TCP connection to the upstream as macOS routes
 and resolves it, offers no authentication, and asks for the very target it was
-asked for: a name stays a name, resolved where the connection leaves. A reply
+asked for: a name stays a name, resolved where the connection leaves, and what
+it reaches there is the upstream's to answer for. A reply
 other than success is repeated to the client, and the address the upstream
 bound becomes the reply's, or the connection's own when the upstream tells
 none, as OpenSSH's dynamic forwarding does. This is how a port another Mac's
@@ -262,10 +273,9 @@ loop ends when the ports it runs through are full of handshakes.
 A port with `Proxy.Scene` asks the client's `Route` for each connection. The
 client compiles the rules of the scenes that ports name, with `internal/rules`
 as `Check` and the engine do, when the configuration is loaded and saved; an
-open stream keeps the exit it has. A destination is matched as TCP by its name,
-as the client asked for it, or by its address; a rule that names apps never
-matches, since nothing tells the app behind a proxy's connection, least of all
-on another device. A block rule's connection is refused as not allowed. A route
+open stream keeps the exit it has. A destination is matched as TCP; a rule
+that names apps never matches, since nothing tells the app behind a proxy's
+connection, least of all on another device. A block rule's connection is refused as not allowed. A route
 rule's interfaces are tried in order through the same interface-bound dialer
 as a port through one interface, names resolved by each interface's own DNS,
 with three seconds each; an interface that is suspended is skipped. When none
@@ -274,11 +284,18 @@ unbound, with macOS's routes and resolver, but never to a loopback address,
 which a name may resolve to: such a port reaches no more of this Mac than a
 port through an interface does. While a scene routes, that
 connection of the App is captured and follows that scene's rules as any app's.
-A name no rule matches is looked up with macOS's resolver, for two seconds at
-most, only when the scene has an enabled rule without apps that names an
-address; if a rule names one of its addresses, the connection goes to that
-address. Such a port has no interface to report on, and takes no part in the
-connection log or the traffic statistics, like the other ports.
+In a scene whose rules name domains alone, a name stays a name: the rules see
+it as the client asked for it, and the interface, or macOS, resolves it. When
+an enabled rule without apps names an address, a name is looked up once with
+macOS's resolver, for two seconds at most, unless a block rule names it. The
+rules then see the name with each of its first eight addresses, as the engine
+sees a connection an app makes, and the connection goes to those addresses
+alone, as literals: first to the ones a rule sends somewhere, then to the ones
+no rule names, never to one a rule blocks. A name is not looked up a second
+time, so no socket connects to an address the rules haven't seen, and a name
+that can't be looked up fails. Such a port has no interface to report on, and
+takes no part in the connection log or the traffic statistics, like the other
+ports.
 
 On hardware at `a343b28`, a second Mac used two shared ports of the first, one
 through its wired interface and one through its cellular one, by the first
@@ -292,7 +309,11 @@ the second Mac used one shared port that goes out by a scene's rules as its
 HTTP proxy: a name a rule sends through the cellular interface left by it, a
 name no rule names left by the wired default, and a name a rule blocks was
 refused; a SOCKS5 CONNECT and a request for an `http://` URL went the same
-way.
+way. At `eb51a5d`, with a rule that names addresses in the scene, the same
+held, and an address a rule blocks was refused. Loopback destinations, by
+address, by `localhost` and by a public name that resolves to a loopback
+address, were refused through a shared port, through a port by rules and
+through two ports in a row.
 
 ## Capturing and forwarding
 
