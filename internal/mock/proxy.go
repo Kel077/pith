@@ -30,8 +30,9 @@ func (s *Service) proxiesLocked() []api.ProxyStatus {
 				s.proxies[p.Port] = live
 			}
 			st = *live
-			if p.Upstream != "" {
-				// The proxy it goes out through answers.
+			if p.Upstream != "" || p.Scene != "" {
+				// The proxy it goes out through answers; the rules of its
+				// scene have somewhere to send each connection.
 			} else if i := p.Via.Resolve(s.ifaces); i == nil || !i.Up {
 				st.Error = &api.Error{Code: api.ErrInterfaceUnavailable}
 			} else if len(i.DNS) == 0 {
@@ -44,8 +45,8 @@ func (s *Service) proxiesLocked() []api.ProxyStatus {
 }
 
 // restartProxiesLocked forgets the counters of the proxies that a new
-// configuration removes, turns off, sends through another interface or
-// proxy, or starts or stops sharing, as the client restarts their
+// configuration removes, turns off, sends through another interface, proxy
+// or scene's rules, or starts or stops sharing, as the client restarts their
 // listeners; the others keep theirs. It forgets the devices the new
 // configuration no longer lists, too.
 func (s *Service) restartProxiesLocked(next api.Config) {
@@ -56,7 +57,7 @@ func (s *Service) restartProxiesLocked(next api.Config) {
 		}
 	}
 	for _, p := range s.cfg.Proxies {
-		if n, ok := on[p.Port]; !ok || n.Via.Name != p.Via.Name || n.Via.HardwareAddr != p.Via.HardwareAddr || n.Upstream != p.Upstream || n.Shared != p.Shared {
+		if n, ok := on[p.Port]; !ok || n.Via.Name != p.Via.Name || n.Via.HardwareAddr != p.Via.HardwareAddr || n.Upstream != p.Upstream || n.Scene != p.Scene || n.Shared != p.Shared {
 			delete(s.proxies, p.Port)
 		}
 	}

@@ -218,6 +218,7 @@ func TestDevices(t *testing.T) {
 
 	cfg.Proxies[0].Shared = false
 	cfg.Proxies[1] = api.Proxy{Port: 1081, Upstream: "studio.example.com:1080", Enabled: true}
+	cfg.Proxies[2] = api.Proxy{Port: 1082, Scene: "office", Enabled: true}
 	if err := s.SaveConfig(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -228,5 +229,12 @@ func TestDevices(t *testing.T) {
 	}
 	if p := st.Proxies[1]; !p.Listening || p.Error != nil || p.Received == 0 {
 		t.Errorf("a proxy through another proxy: %+v", p)
+	}
+	if p := st.Proxies[2]; !p.Listening || p.Error != nil || p.Received == 0 {
+		t.Errorf("a proxy by a scene's rules: %+v", p)
+	}
+	cfg.Proxies[2].Scene = "gone"
+	if err := s.SaveConfig(ctx, cfg); api.Code(err) != api.ErrInvalidConfig {
+		t.Errorf("a proxy by the rules of a scene that doesn't exist: %v", err)
 	}
 }

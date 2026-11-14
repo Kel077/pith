@@ -171,8 +171,8 @@ func (s *Service) SaveConfig(ctx context.Context, cfg api.Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for k, p := range cfg.Proxies {
-		if p.Upstream != "" {
-			continue
+		if p.Via.Name == "" {
+			continue // through another proxy, or by a scene's rules
 		}
 		if i := p.Via.Resolve(s.ifaces); i != nil && !i.CanProxy() {
 			return &api.Error{Code: api.ErrInvalidConfig, Detail: fmt.Sprintf("proxy %d: %s can't carry a proxy", k+1, i.Name)}
