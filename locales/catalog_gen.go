@@ -3383,3 +3383,237 @@ func UseAFreePort() string { return In(i18n.Locale()).UseAFreePort() }
 func (msgs Messages) UseAFreePort() string {
 	return Catalog.Format(msgs.locale, "useAFreePort", nil)
 }
+
+// AnotherProxy says "Another proxy…"
+// in the language the app shows.
+//
+// The last choice in the menu of a local proxy's interface: the proxy goes
+// out through another SOCKS5 proxy, as a port the Pith of another Mac
+// shares. Opens a sheet that asks for its address.
+func AnotherProxy() string { return In(i18n.Locale()).AnotherProxy() }
+
+// AnotherProxy says "Another proxy…"
+// in the language of msgs.
+//
+// The last choice in the menu of a local proxy's interface: the proxy goes
+// out through another SOCKS5 proxy, as a port the Pith of another Mac
+// shares. Opens a sheet that asks for its address.
+func (msgs Messages) AnotherProxy() string {
+	return Catalog.Format(msgs.locale, "anotherProxy", nil)
+}
+
+// GoOutThroughAnotherProxy says "Go out through another proxy"
+// in the language the app shows.
+//
+// Title of the sheet that asks for the address of the SOCKS5 proxy a local
+// proxy goes out through.
+func GoOutThroughAnotherProxy() string { return In(i18n.Locale()).GoOutThroughAnotherProxy() }
+
+// GoOutThroughAnotherProxy says "Go out through another proxy"
+// in the language of msgs.
+//
+// Title of the sheet that asks for the address of the SOCKS5 proxy a local
+// proxy goes out through.
+func (msgs Messages) GoOutThroughAnotherProxy() string {
+	return Catalog.Format(msgs.locale, "goOutThroughAnotherProxy", nil)
+}
+
+// HostPort says "host:port"
+// in the language the app shows.
+//
+// Placeholder of the address of another proxy: a host name or IP address, a
+// colon and a port, as mac.local:1080.
+func HostPort() string { return In(i18n.Locale()).HostPort() }
+
+// HostPort says "host:port"
+// in the language of msgs.
+//
+// Placeholder of the address of another proxy: a host name or IP address, a
+// colon and a port, as mac.local:1080.
+func (msgs Messages) HostPort() string {
+	return Catalog.Format(msgs.locale, "hostPort", nil)
+}
+
+// UseHostAndPort says "Use a host and a port, like mac.local:1080"
+// in the language the app shows.
+//
+// Shown when the address typed for another proxy isn't a host and a port.
+func UseHostAndPort() string { return In(i18n.Locale()).UseHostAndPort() }
+
+// UseHostAndPort says "Use a host and a port, like mac.local:1080"
+// in the language of msgs.
+//
+// Shown when the address typed for another proxy isn't a host and a port.
+func (msgs Messages) UseHostAndPort() string {
+	return Catalog.Format(msgs.locale, "useHostAndPort", nil)
+}
+
+// ShareWithDevices says "Share with devices"
+// in the language the app shows.
+//
+// Tooltip and label of the button of a local proxy that lets the devices
+// listed under Devices use it, over the network.
+func ShareWithDevices() string { return In(i18n.Locale()).ShareWithDevices() }
+
+// ShareWithDevices says "Share with devices"
+// in the language of msgs.
+//
+// Tooltip and label of the button of a local proxy that lets the devices
+// listed under Devices use it, over the network.
+func (msgs Messages) ShareWithDevices() string {
+	return Catalog.Format(msgs.locale, "shareWithDevices", nil)
+}
+
+// NotAllowed says "Not allowed"
+// in the language the app shows.
+//
+// A local proxy whose other proxy refuses this Mac: the other Mac hasn't
+// listed it as a device.
+func NotAllowed() string { return In(i18n.Locale()).NotAllowed() }
+
+// NotAllowed says "Not allowed"
+// in the language of msgs.
+//
+// A local proxy whose other proxy refuses this Mac: the other Mac hasn't
+// listed it as a device.
+func (msgs Messages) NotAllowed() string {
+	return Catalog.Format(msgs.locale, "notAllowed", nil)
+}
+
+// Devices says "Devices"
+// in the language the app shows.
+//
+// The title of the settings' group of the other devices that may use the
+// shared local proxies.
+func Devices() string { return In(i18n.Locale()).Devices() }
+
+// Devices says "Devices"
+// in the language of msgs.
+//
+// The title of the settings' group of the other devices that may use the
+// shared local proxies.
+func (msgs Messages) Devices() string {
+	return Catalog.Format(msgs.locale, "devices", nil)
+}
+
+// AddDevice says "Add Device"
+// in the language the app shows.
+//
+// Button, and title of its sheet: lists another device, by its IP address,
+// among those that may use the shared local proxies.
+func AddDevice() string { return In(i18n.Locale()).AddDevice() }
+
+// AddDevice says "Add Device"
+// in the language of msgs.
+//
+// Button, and title of its sheet: lists another device, by its IP address,
+// among those that may use the shared local proxies.
+func (msgs Messages) AddDevice() string {
+	return Catalog.Format(msgs.locale, "addDevice", nil)
+}
+
+// Allow says "Allow"
+// in the language the app shows.
+//
+// Button on a device that tried a shared local proxy and was refused: lists
+// it among the devices that may use them.
+func Allow() string { return In(i18n.Locale()).Allow() }
+
+// Allow says "Allow"
+// in the language of msgs.
+//
+// Button on a device that tried a shared local proxy and was refused: lists
+// it among the devices that may use them.
+func (msgs Messages) Allow() string {
+	return Catalog.Format(msgs.locale, "allow", nil)
+}
+
+// DeviceRefused says "Refused"
+// in the language the app shows.
+//
+// A device that tried a shared local proxy without being listed.
+func DeviceRefused() string { return In(i18n.Locale()).DeviceRefused() }
+
+// DeviceRefused says "Refused"
+// in the language of msgs.
+//
+// A device that tried a shared local proxy without being listed.
+func (msgs Messages) DeviceRefused() string {
+	return Catalog.Format(msgs.locale, "deviceRefused", nil)
+}
+
+// DeviceIdle says "Not connected"
+// in the language the app shows.
+//
+// A listed device that hasn't used a shared local proxy since Pith opened.
+func DeviceIdle() string { return In(i18n.Locale()).DeviceIdle() }
+
+// DeviceIdle says "Not connected"
+// in the language of msgs.
+//
+// A listed device that hasn't used a shared local proxy since Pith opened.
+func (msgs Messages) DeviceIdle() string {
+	return Catalog.Format(msgs.locale, "deviceIdle", nil)
+}
+
+// ThisMac says "This Mac"
+// in the language the app shows.
+//
+// Label before this Mac's own IP addresses, which other devices type as the
+// proxy's address.
+func ThisMac() string { return In(i18n.Locale()).ThisMac() }
+
+// ThisMac says "This Mac"
+// in the language of msgs.
+//
+// Label before this Mac's own IP addresses, which other devices type as the
+// proxy's address.
+func (msgs Messages) ThisMac() string {
+	return Catalog.Format(msgs.locale, "thisMac", nil)
+}
+
+// IpAddressOrRange says "IP address or range"
+// in the language the app shows.
+//
+// Placeholder of a device's address: one IPv4 address, or a range as
+// 192.168.1.0/24.
+func IpAddressOrRange() string { return In(i18n.Locale()).IpAddressOrRange() }
+
+// IpAddressOrRange says "IP address or range"
+// in the language of msgs.
+//
+// Placeholder of a device's address: one IPv4 address, or a range as
+// 192.168.1.0/24.
+func (msgs Messages) IpAddressOrRange() string {
+	return Catalog.Format(msgs.locale, "ipAddressOrRange", nil)
+}
+
+// DeviceName says "Name"
+// in the language the app shows.
+//
+// Placeholder of the optional name of a device.
+func DeviceName() string { return In(i18n.Locale()).DeviceName() }
+
+// DeviceName says "Name"
+// in the language of msgs.
+//
+// Placeholder of the optional name of a device.
+func (msgs Messages) DeviceName() string {
+	return Catalog.Format(msgs.locale, "deviceName", nil)
+}
+
+// UseAnIpv4AddressOrRange says "Use another device's IPv4 address, or a range"
+// in the language the app shows.
+//
+// Shown when a device's address isn't an IPv4 address or a range of them,
+// is this Mac's own loopback address, or is listed already.
+func UseAnIpv4AddressOrRange() string { return In(i18n.Locale()).UseAnIpv4AddressOrRange() }
+
+// UseAnIpv4AddressOrRange says "Use another device's IPv4 address, or a range"
+// in the language of msgs.
+//
+// Shown when a device's address isn't an IPv4 address or a range of them,
+// is this Mac's own loopback address, or is listed already.
+func (msgs Messages) UseAnIpv4AddressOrRange() string {
+	return Catalog.Format(msgs.locale, "useAnIpv4AddressOrRange", nil)
+}

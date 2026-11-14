@@ -68,6 +68,12 @@ func (a *App) dialogs(c *ui.Context) {
 	if a.hotspot.unlock.open {
 		a.unlockView(c)
 	}
+	if a.settings.upstream.open {
+		a.upstreamView(c)
+	}
+	if a.settings.device.open {
+		a.deviceView(c)
+	}
 	if a.confirm != nil {
 		a.confirmView(c)
 	}

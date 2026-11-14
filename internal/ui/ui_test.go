@@ -233,6 +233,32 @@ func TestSnapshots(t *testing.T) {
 			tt.Frame()
 			save(t, tt.Image(), "router-"+state+"-"+mode)
 		}
+
+		// Local proxies: one shared with a laptop, one through another
+		// proxy, and a device that was refused; then the sheets that ask
+		// for another proxy and for a device.
+		a, _ = testApp(t, mock.Options{Sample: true, HelperInstalled: true, Running: true})
+		a.page = "settings"
+		a.setUpstream(1082, "studio.example.com:1080")
+		a.Sync(context.Background())
+		tt = ui.NewTester(a.WindowView, 1040, 1460)
+		tt.SetDark(dark)
+		tt.SetScale(2)
+		tt.Frame()
+		save(t, tt.Image(), "sharing-"+mode)
+		a.settings.upstream = upstreamDialog{open: true, port: 1081}
+		tt = ui.NewTester(a.WindowView, 1040, 680)
+		tt.SetDark(dark)
+		tt.SetScale(2)
+		tt.Frame()
+		save(t, tt.Image(), "sharing-proxy-"+mode)
+		a.settings.upstream.open = false
+		a.settings.device = deviceDialog{open: true}
+		tt = ui.NewTester(a.WindowView, 1040, 680)
+		tt.SetDark(dark)
+		tt.SetScale(2)
+		tt.Frame()
+		save(t, tt.Image(), "sharing-device-"+mode)
 	}
 	// Warnings: an interface of a rule is down, and a catch-all rule on
 	// top shadows the rules under it.

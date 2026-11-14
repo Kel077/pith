@@ -304,5 +304,20 @@
   "noDns": "没有 DNS",
   "proxyListening": "正在监听",
   "proxyStarting": "正在启动…",
-  "useAFreePort": "请用 1024–65535 间的空闲端口"
+  "useAFreePort": "请用 1024–65535 间的空闲端口",
+  "anotherProxy": "另一个代理…",
+  "goOutThroughAnotherProxy": "经另一个代理出去",
+  "hostPort": "主机:端口",
+  "useHostAndPort": "请填写主机和端口，如 mac.local:1080",
+  "shareWithDevices": "共享给其他设备",
+  "notAllowed": "未获允许",
+  "devices": "设备",
+  "addDevice": "添加设备",
+  "allow": "允许",
+  "deviceRefused": "已拒绝",
+  "deviceIdle": "未连接",
+  "thisMac": "本机",
+  "ipAddressOrRange": "IP 地址或网段",
+  "deviceName": "名称",
+  "useAnIpv4AddressOrRange": "请填写其他设备的 IPv4 地址或网段"
 }

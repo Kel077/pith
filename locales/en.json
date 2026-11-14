@@ -746,5 +746,65 @@
   "useAFreePort": "Use a free port, 1024–65535",
   "@useAFreePort": {
     "description": "Shown when a local proxy's new port is out of range or taken by another proxy."
+  },
+  "anotherProxy": "Another proxy…",
+  "@anotherProxy": {
+    "description": "The last choice in the menu of a local proxy's interface: the proxy goes out through another SOCKS5 proxy, as a port the Pith of another Mac shares. Opens a sheet that asks for its address."
+  },
+  "goOutThroughAnotherProxy": "Go out through another proxy",
+  "@goOutThroughAnotherProxy": {
+    "description": "Title of the sheet that asks for the address of the SOCKS5 proxy a local proxy goes out through."
+  },
+  "hostPort": "host:port",
+  "@hostPort": {
+    "description": "Placeholder of the address of another proxy: a host name or IP address, a colon and a port, as mac.local:1080."
+  },
+  "useHostAndPort": "Use a host and a port, like mac.local:1080",
+  "@useHostAndPort": {
+    "description": "Shown when the address typed for another proxy isn't a host and a port."
+  },
+  "shareWithDevices": "Share with devices",
+  "@shareWithDevices": {
+    "description": "Tooltip and label of the button of a local proxy that lets the devices listed under Devices use it, over the network."
+  },
+  "notAllowed": "Not allowed",
+  "@notAllowed": {
+    "description": "A local proxy whose other proxy refuses this Mac: the other Mac hasn't listed it as a device."
+  },
+  "devices": "Devices",
+  "@devices": {
+    "description": "The title of the settings' group of the other devices that may use the shared local proxies."
+  },
+  "addDevice": "Add Device",
+  "@addDevice": {
+    "description": "Button, and title of its sheet: lists another device, by its IP address, among those that may use the shared local proxies."
+  },
+  "allow": "Allow",
+  "@allow": {
+    "description": "Button on a device that tried a shared local proxy and was refused: lists it among the devices that may use them."
+  },
+  "deviceRefused": "Refused",
+  "@deviceRefused": {
+    "description": "A device that tried a shared local proxy without being listed."
+  },
+  "deviceIdle": "Not connected",
+  "@deviceIdle": {
+    "description": "A listed device that hasn't used a shared local proxy since Pith opened."
+  },
+  "thisMac": "This Mac",
+  "@thisMac": {
+    "description": "Label before this Mac's own IP addresses, which other devices type as the proxy's address."
+  },
+  "ipAddressOrRange": "IP address or range",
+  "@ipAddressOrRange": {
+    "description": "Placeholder of a device's address: one IPv4 address, or a range as 192.168.1.0/24."
+  },
+  "deviceName": "Name",
+  "@deviceName": {
+    "description": "Placeholder of the optional name of a device."
+  },
+  "useAnIpv4AddressOrRange": "Use another device's IPv4 address, or a range",
+  "@useAnIpv4AddressOrRange": {
+    "description": "Shown when a device's address isn't an IPv4 address or a range of them, is this Mac's own loopback address, or is listed already."
   }
 }

@@ -827,6 +827,8 @@ func cloneConfig(c api.Config) api.Config {
 			out.Aliases[k] = v
 		}
 	}
+	out.Proxies = slices.Clone(c.Proxies)
+	out.Devices = slices.Clone(c.Devices)
 	return out
 }
 

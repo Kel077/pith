@@ -16,6 +16,10 @@ import (
 type settingsPage struct {
 	editingPort int    // the local proxy port being changed; 0: none
 	port        string // its new text
+	upstream    upstreamDialog
+	device      deviceDialog
+	renaming    int    // one more than the index of the device being renamed; 0: none
+	deviceName  string // its new name
 }
 
 const repoURL = "https://github.com/Kel077/pith"
@@ -127,6 +131,7 @@ func (a *App) settingsView(c *ui.Context) {
 			})
 
 			a.proxiesGroup(c)
+			a.devicesGroup(c)
 
 			group(c, locales.Helper(), func() {
 				h := a.status.Helper
