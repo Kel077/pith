@@ -36,10 +36,13 @@ type Proxy struct {
 	// the connection. A route rule's interfaces are tried in order, each as
 	// a proxy through it would; when none connects, the connection goes
 	// where macOS sends it if the rule falls back, and fails if not. A
-	// connection no rule matches goes where macOS sends it. A name no rule
-	// matches is looked up as macOS does, for the rules that name addresses.
-	// Changed rules apply to new connections. Exactly one of Via, Upstream
-	// and Scene is set.
+	// connection no rule matches goes where macOS sends it. When a rule
+	// names an address, a name is looked up once, as macOS does: the rules
+	// are matched against the name with each of its addresses, and the
+	// connection goes to an address they were matched against, one a rule
+	// sends somewhere first, never one a rule blocks; a name that can't be
+	// looked up fails. Changed rules apply to new connections. Exactly one
+	// of Via, Upstream and Scene is set.
 	Scene string `json:"scene,omitempty"`
 	// Shared also takes connections from Config.Devices, on every IPv4
 	// address of this Mac rather than on 127.0.0.1 alone. A shared proxy's
