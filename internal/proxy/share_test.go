@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/Kel077/pith/internal/api"
 )
@@ -196,8 +197,19 @@ func TestRefusedDevicesHoldNoSlot(t *testing.T) {
 		silent[i] = f.dialFrom(t, 1080, "192.0.2.99")
 	}
 	waitFor(t, func() bool { m.mu.Lock(); defer m.mu.Unlock(); return len(m.refusing) == maxRefusing })
-	// One more than Pith tells at a time is closed at once.
-	readClosed(t, f.dialFrom(t, 1080, "192.0.2.99"))
+	// One more than Pith tells at a time is reset at once: the reset may
+	// reach it while it still connects, or right after.
+	f.mu.Lock()
+	f.from[1080] = append(f.from[1080], &deviceConn{remote: &net.TCPAddr{IP: net.ParseIP("192.0.2.99"), Port: 50000}})
+	address := f.addrs[1080]
+	f.mu.Unlock()
+	if extra, err := net.DialTimeout("tcp4", address, time.Second); err == nil {
+		defer extra.Close()
+		_ = extra.SetDeadline(time.Now().Add(3 * time.Second))
+		readClosed(t, extra)
+	} else if !errors.Is(err, syscall.ECONNRESET) {
+		t.Fatal(err)
+	}
 	roundTrip(t, own, "kept its slot")
 	m.mu.Lock()
 	total := m.total
