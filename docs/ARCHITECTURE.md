@@ -739,14 +739,18 @@ bounded, with NDJSON events. Status/rates and connection updates are coalesced o
 a one-second tick only while running. Each publication reaches an event subscriber
 as one batch, so a tick's connection updates take one of its 128 slots however
 many connections changed; a subscriber that leaves 128 batches unread is closed.
-A stream also ends when the helper's interface watcher can't read the network
-configuration: its route table read gets 250 ms, and launchd runs the helper as a
-background process, which macOS gives little time on a busy Mac. The client
-reopens a closed stream at once, or, when streams keep closing, three seconds
-after its last attempt. It reports the helper as not responding only when nothing
-listens on its socket, or when no stream opens within five seconds and the
-helper's status doesn't come within five more. See
-[helper protocol](../internal/helper/README.md).
+A read of the network configuration can fail on a busy Mac, as when the route
+table doesn't come within its 250 ms. The helper's interface watcher then keeps
+its last snapshot, and the stream, and reads again at the next change or after a
+second, then twice as long each time up to half a minute; a stream's first read
+is tried three times. launchd runs the helper as an Interactive job, as it would
+an app: a Background job got the lowest CPU priority, and XNU marks a background
+process's sockets, here every connection the helper routes, as background
+traffic, which yields to the Mac's other traffic. The client reopens a closed
+stream at once, or, when streams keep closing, three seconds after its last
+attempt. It reports the helper as not responding only when nothing listens on its
+socket, or when no stream opens within five seconds and the helper's status
+doesn't come within five more. See [helper protocol](../internal/helper/README.md).
 
 For approved development tests the root helper accepts repeated `--capture CIDR`
 flags, `--safe-target IP:443`, `--safe-server-name example.com`, `--data-dir` and
