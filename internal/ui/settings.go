@@ -20,6 +20,10 @@ type settingsPage struct {
 	device      deviceDialog
 	renaming    string // the address of the device being renamed, as it is listed; "": none
 	deviceName  string // its new name
+	// changing are the local proxies whose public IP a button here is
+	// changing, by port; changes, what the last change of each did.
+	changing map[int]bool
+	changes  map[int]api.ProxyIPChange
 }
 
 const repoURL = "https://github.com/Kel077/pith"

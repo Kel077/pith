@@ -183,7 +183,9 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 		}
 		s, tested := a.speeds[i.Name]
 		renewing := a.hotspot.renewing[i.Name] || a.router.renewing[i.Name]
-		busy := renewing || a.speeding[i.Name]
+		// What uses a local proxy through it may have had its IP changed.
+		asked := !renewing && a.exitChanging(i.Name)
+		busy := renewing || asked || a.speeding[i.Name]
 		ui.Column(c).Gap(8).Margin(ui.Auto, 0, 0, 0).Children(func() {
 			switch {
 			case renewal != "":
@@ -211,6 +213,9 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 						ui.Spinner(c)
 						muted(c, locales.ChangingIp())
 					})
+				case asked:
+					ui.Spinner(c)
+					muted(c, locales.ChangingIp())
 				case a.speeding[i.Name]:
 					ui.Spinner(c)
 					muted(c, locales.Testing())
@@ -349,7 +354,7 @@ func speedFigures(c *ui.Context, s api.SpeedTest) {
 func (a *App) testSpeeds(names []string) {
 	var queue []string
 	for _, name := range names {
-		if a.speeding[name] || a.hotspot.renewing[name] || a.router.renewing[name] {
+		if a.speeding[name] || a.hotspot.renewing[name] || a.router.renewing[name] || a.exitChanging(name) {
 			continue
 		}
 		a.speeding[name] = true

@@ -234,13 +234,15 @@ func TestSnapshots(t *testing.T) {
 			save(t, tt.Image(), "router-"+state+"-"+mode)
 		}
 
-		// Local proxies: one shared with a laptop, one by a scene's rules,
-		// one through another proxy, and a device that was refused; then
-		// the sheets that ask for another proxy and for a device.
+		// Local proxies: one shared with a laptop, which may change its IP,
+		// one by a scene's rules, one through a port of another Mac's Pith,
+		// whose IP a button changes, and a device that was refused; then the
+		// sheets that ask for another proxy and for a device.
 		a, _ = testApp(t, mock.Options{Sample: true, HelperInstalled: true, Running: true})
 		a.page = "settings"
 		a.setUpstream(1082, "studio.example.com:1080")
 		a.setProxyScene(1, "home")
+		a.changeProxy(1080, func(p *api.Proxy) { p.ChangeIP = true })
 		a.Sync(context.Background())
 		tt = ui.NewTester(a.WindowView, 1040, 1460)
 		tt.SetDark(dark)

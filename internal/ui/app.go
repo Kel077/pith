@@ -318,6 +318,14 @@ func (a *App) apply(ev api.Event) {
 // setStatus takes the backend's status: the menu bar icon and the traffic
 // poll follow it, and the first one after launch may resume routing.
 func (a *App) setStatus(st api.Status) {
+	// An interface whose public IP was just changed for a local proxy has
+	// another than its last speed test found.
+	now := a.exitsChanging(st)
+	for name := range a.exitsChanging(a.status) {
+		if !now[name] {
+			delete(a.speeds, name)
+		}
+	}
 	a.status = st
 	a.routing.Store(st.State == api.Running)
 	if shown := withoutOwnTunnel(a.allIfaces, st); len(shown) != len(a.ifaces) {
@@ -801,6 +809,10 @@ func errorText(err error) string {
 		msg = locales.TheHotspotRefusedItsPassword()
 	case api.ErrNoStandby:
 		msg = locales.NoOtherNetworkCanCarryThisMac()
+	case api.ErrNotAllowed, api.ErrUpstreamRefused:
+		msg = locales.NotAllowed()
+	case api.ErrUpstreamUnreachable:
+		msg = locales.NotConnected()
 	default:
 		msg = locales.SomethingWentWrong()
 		if detail == "" {

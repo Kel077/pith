@@ -1,11 +1,14 @@
 package ui
 
 import (
+	"cmp"
+	"context"
 	"fmt"
 	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -61,11 +64,14 @@ func (a *App) proxiesGroup(c *ui.Context) {
 }
 
 // proxyRow is a proxy's row: its address, which a double-click changes the
-// port of, and how it is doing; on the right, what it goes out through, a
-// button that shares it with the devices, its switch, and a button that
-// removes it: proxyRow tells when that one is clicked.
+// port of, and how it is doing; on the right, a button that changes its
+// public IP when it goes out through another Pith that lets this Mac, what
+// it goes out through, a button that shares it with the devices, one that
+// lets what uses it change its IP, its switch, and a button that removes
+// it: proxyRow tells when that one is clicked.
 func (a *App) proxyRow(c *ui.Context, k int, p api.Proxy) (remove bool) {
 	s := &a.settings
+	st := a.proxyStatus(p.Port)
 	ui.Row(c.Key(fmt.Sprint("proxy-", k))).Gap(16).Padding(9, settingsInset).MinHeight(52).Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			if s.editingPort == p.Port {
@@ -79,9 +85,16 @@ func (a *App) proxyRow(c *ui.Context, k int, p api.Proxy) (remove bool) {
 					s.editingPort, s.port = p.Port, strconv.Itoa(p.Port)
 				}
 			}
-			a.proxyState(c, p)
+			a.proxyState(c, p, st)
 		})
 		ui.Row(c).Shrink(0).Gap(12).AlignItems(ui.Center).Children(func() {
+			if up := st.Upstream; p.Enabled && up != nil && up.CanChangeIP {
+				busy := s.changing[p.Port] || st.Changing
+				change := glassCapsuleButton(c, "change-proxy-ip", nil, locales.ChangeIp()).Shrink(0).Disabled(busy)
+				if change.Clicked() && !busy {
+					a.changeProxyIP(p.Port)
+				}
+			}
 			choices, at := a.exitChoices(p)
 			options := make([]string, len(choices))
 			for j := range choices {
@@ -93,8 +106,15 @@ func (a *App) proxyRow(c *ui.Context, k int, p api.Proxy) (remove bool) {
 					a.chooseExit(at, choices[j])
 				}
 			}
-			if shareButton(c, p.Shared) {
+			if rowToggle(c, "share-proxy", icShare, locales.ShareWithDevices(), p.Shared) {
 				a.changeProxy(p.Port, func(q *api.Proxy) { q.Shared = !p.Shared })
+			}
+			if p.Scene != "" {
+				// By a scene's rules it has no one IP to change: the space of
+				// the button keeps the rows in line.
+				ui.Box(c).Size(26, 26).Shrink(0)
+			} else if rowToggle(c, "let-change-ip", icSwap, locales.LetAppsAndDevicesChangeItsIp(), p.ChangeIP) {
+				a.changeProxy(p.Port, func(q *api.Proxy) { q.ChangeIP = !p.ChangeIP })
 			}
 			on := p.Enabled
 			if ui.Switch(c, &on).Label("127.0.0.1:" + strconv.Itoa(p.Port)).Changed() {
@@ -186,11 +206,12 @@ func (a *App) chooseExit(k int, choice exitChoice) {
 	}
 }
 
-// shareButton is the small button that shares a proxy with the devices:
-// tinted while it does, without a face until hovered while it doesn't.
-func shareButton(c *ui.Context, on bool) bool {
+// rowToggle is a small button of a proxy's row that turns something of the
+// proxy on and off, as sharing it with the devices: tinted while it is on,
+// without a face until hovered while it is off.
+func rowToggle(c *ui.Context, key string, ic *ui.SVG, label string, on bool) bool {
 	t := c.Theme()
-	b := ui.Box(c.Key("share-proxy")).Size(26, 26).Radius(7).Center().Label(locales.ShareWithDevices()).Tooltip(locales.ShareWithDevices()).Shrink(0).Cursor(ui.CursorPointer)
+	b := ui.Box(c.Key(key)).Size(26, 26).Radius(7).Center().Label(label).Tooltip(label).Shrink(0).Cursor(ui.CursorPointer)
 	col := t.TextMuted
 	switch {
 	case on:
@@ -199,8 +220,74 @@ func shareButton(c *ui.Context, on bool) bool {
 	case b.Hovered():
 		b.Background(subtle(t, 0.08))
 	}
-	b.Children(func() { ui.Icon(c, icShare).FontSize(15).TextColor(col) })
+	b.Children(func() { ui.Icon(c, ic).FontSize(15).TextColor(col) })
 	return b.Clicked()
+}
+
+// exitChanging tells whether the public IP of the interface named name is
+// being changed, as the backend says of a local proxy that goes out
+// through it: by a button of Pith, or because what uses the proxy asked.
+func (a *App) exitChanging(name string) bool {
+	return a.exitsChanging(a.status)[name]
+}
+
+// exitsChanging is the interfaces, by name, whose public IP is being
+// changed as st says of the local proxies that go out through them.
+func (a *App) exitsChanging(st api.Status) map[string]bool {
+	var names map[string]bool
+	for _, ps := range st.Proxies {
+		if !ps.Changing {
+			continue
+		}
+		for _, p := range a.cfg.Proxies {
+			if p.Port != ps.Port || p.Via.Name == "" {
+				continue
+			}
+			if i := p.Via.Resolve(a.ifaces); i != nil {
+				if names == nil {
+					names = map[string]bool{}
+				}
+				names[i.Name] = true
+			}
+		}
+	}
+	return names
+}
+
+// proxyStatus is how the proxy on port is doing, as the backend last said.
+func (a *App) proxyStatus(port int) api.ProxyStatus {
+	for _, st := range a.status.Proxies {
+		if st.Port == port {
+			return st
+		}
+	}
+	return api.ProxyStatus{Port: port}
+}
+
+// changeProxyIP changes the public IP of what the proxy on port goes out
+// through: the Pith of the Mac its upstream is on has its hotspot or its
+// router get another. The proxy's row says what it did.
+func (a *App) changeProxyIP(port int) {
+	s := &a.settings
+	if s.changing[port] {
+		return
+	}
+	if s.changing == nil {
+		s.changing, s.changes = map[int]bool{}, map[int]api.ProxyIPChange{}
+	}
+	s.changing[port] = true
+	delete(s.changes, port)
+	var change api.ProxyIPChange
+	a.async(func(ctx context.Context) (err error) {
+		// As long as a router may take: see renewRouter.
+		ctx, cancel := context.WithTimeout(ctx, 8*time.Minute)
+		defer cancel()
+		change, err = a.Service.ChangeProxyIP(ctx, port)
+		return err
+	}, func() {
+		delete(s.changing, port)
+		s.changes[port] = change
+	}, func(error) { delete(s.changing, port) })
 }
 
 // proxyAddress is where a proxy listens, as the apps of this Mac type it,
@@ -236,16 +323,14 @@ func (a *App) ownAddresses() []string {
 	return append(first, rest...)
 }
 
-// proxyState says how a proxy is doing, under its address: off, listening
-// with what goes through it, or what keeps it from working.
-func (a *App) proxyState(c *ui.Context, p api.Proxy) {
+// proxyState says how a proxy is doing, under its address: off, what keeps
+// it from working, that its IP is being changed, or that it listens, with
+// what goes through it. A proxy that goes out through another Pith says
+// what that one goes out through too, and its public IP, or what the last
+// change here did to it.
+func (a *App) proxyState(c *ui.Context, p api.Proxy, st api.ProxyStatus) {
 	t := c.Theme()
-	var st api.ProxyStatus
-	for _, s := range a.status.Proxies {
-		if s.Port == p.Port {
-			st = s
-		}
-	}
+	up := st.Upstream
 	var code api.ErrorCode
 	if st.Error != nil {
 		code = st.Error.Code
@@ -264,8 +349,27 @@ func (a *App) proxyState(c *ui.Context, p api.Proxy) {
 			stateLine(c, t.Warning, true, locales.NoDns(), t.Warning)
 		case st.Error != nil:
 			stateLine(c, t.Danger, false, errorText(st.Error), t.Danger)
+		case st.Listening && (st.Changing || a.settings.changing[p.Port]):
+			stateLine(c, t.Warning, true, locales.ChangingItsIp(), t.TextMuted)
+		case st.Listening && up != nil && !up.Online:
+			stateLine(c, t.Warning, true, locales.NotConnected(), t.Warning)
 		case st.Listening:
-			stateLine(c, running(t), false, locales.ProxyListening()+" · "+locales.PanelTotals(st.Open, byteSize(st.Received), byteSize(st.Sent)), t.TextMuted)
+			words := []string{locales.ProxyListening()}
+			if up != nil {
+				if up.Interface != "" {
+					words = append(words, up.Interface)
+				}
+				ip := cmp.Or(up.PublicIPv4, up.PublicIPv6)
+				// What the last change did, while its address is the one in use.
+				if ch, ok := a.settings.changes[p.Port]; ok && cmp.Or(ch.PublicIPv4, ch.PublicIPv6) == ip {
+					ip = ipChangeText(ch.BeforeIPv4, ch.BeforeIPv6, ch.PublicIPv4, ch.PublicIPv6)
+				}
+				if ip != "" {
+					words = append(words, ip)
+				}
+			}
+			words = append(words, locales.PanelTotals(st.Open, byteSize(st.Received), byteSize(st.Sent)))
+			stateLine(c, running(t), false, strings.Join(words, " · "), t.TextMuted)
 		default:
 			stateLine(c, t.TextMuted, true, locales.ProxyStarting(), t.TextMuted)
 		}
@@ -308,6 +412,8 @@ func (a *App) proxyExits(current api.InterfaceRef) ([]api.InterfaceRef, []string
 func (a *App) setProxyScene(k int, scene string) {
 	a.change(func(cfg *api.Config) {
 		cfg.Proxies[k].Via, cfg.Proxies[k].Upstream, cfg.Proxies[k].Scene = api.InterfaceRef{}, "", scene
+		// By rules it has no one IP for what uses it to change.
+		cfg.Proxies[k].ChangeIP = false
 	})
 }
 

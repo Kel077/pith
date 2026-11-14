@@ -3480,6 +3480,40 @@ func (msgs Messages) NotAllowed() string {
 	return Catalog.Format(msgs.locale, "notAllowed", nil)
 }
 
+// LetAppsAndDevicesChangeItsIp says "Let apps and devices change its IP"
+// in the language the app shows.
+//
+// Tooltip and label of the button of a local proxy that lets what uses the
+// proxy, apps on this Mac and the devices it is shared with, have Pith
+// change the proxy's public IP by asking the proxy's port.
+func LetAppsAndDevicesChangeItsIp() string { return In(i18n.Locale()).LetAppsAndDevicesChangeItsIp() }
+
+// LetAppsAndDevicesChangeItsIp says "Let apps and devices change its IP"
+// in the language of msgs.
+//
+// Tooltip and label of the button of a local proxy that lets what uses the
+// proxy, apps on this Mac and the devices it is shared with, have Pith
+// change the proxy's public IP by asking the proxy's port.
+func (msgs Messages) LetAppsAndDevicesChangeItsIp() string {
+	return Catalog.Format(msgs.locale, "letAppsAndDevicesChangeItsIp", nil)
+}
+
+// ChangingItsIp says "Changing IP…"
+// in the language the app shows.
+//
+// Under a local proxy's address while the public IP of what it goes out
+// through is being changed, which takes from seconds to a minute or two.
+func ChangingItsIp() string { return In(i18n.Locale()).ChangingItsIp() }
+
+// ChangingItsIp says "Changing IP…"
+// in the language of msgs.
+//
+// Under a local proxy's address while the public IP of what it goes out
+// through is being changed, which takes from seconds to a minute or two.
+func (msgs Messages) ChangingItsIp() string {
+	return Catalog.Format(msgs.locale, "changingItsIp", nil)
+}
+
 // Devices says "Devices"
 // in the language the app shows.
 //
