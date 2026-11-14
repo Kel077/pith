@@ -21,7 +21,8 @@ import (
 const (
 	ruleAttempt   = 3 * time.Second
 	ruleLookup    = 2 * time.Second
-	ruleAddresses = 8 // of a name, at most
+	ruleAddresses = 8                      // of a name, at most
+	ruleStagger   = 250 * time.Millisecond // an address's head start on the next: RFC 8305, section 5
 )
 
 // sceneRules are the rules of a scene a local proxy goes out by.
@@ -133,21 +134,89 @@ func (c *Client) routeByRules(dial proxy.DialFunc) func(context.Context, string,
 				unruled = append(unruled, to)
 			}
 		}
-		var last error
-		for _, to := range append(ruled, unruled...) {
-			conn, err := c.connectByRule(ctx, dial, to.decision, to.target)
-			if err == nil {
-				return conn, nil
-			}
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
-			}
-			last = err
-		}
-		if last == nil {
+		candidates := append(ruled, unruled...)
+		if len(candidates) == 0 {
 			return nil, errBlocked(blockedBy)
 		}
-		return nil, last
+		return connectFirst(ctx, len(candidates), func(ctx context.Context, i int) (net.Conn, error) {
+			return c.connectByRule(ctx, dial, candidates[i].decision, candidates[i].target)
+		})
+	}
+}
+
+// connectFirst connects to the first of n candidates that answers, as RFC
+// 8305 has a client connect to the addresses of a name: in order, the next
+// starting when the one before failed or has had ruleStagger, so that an
+// address that never answers doesn't keep the others from their turn. The
+// connections of the candidates that lose are closed. When none connects,
+// it returns the error of the last to fail.
+func connectFirst(ctx context.Context, n int, connect func(context.Context, int) (net.Conn, error)) (net.Conn, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	type result struct {
+		conn net.Conn
+		err  error
+	}
+	results := make(chan result, n) // no attempt waits to report
+	started, finished := 0, 0
+	start := func() {
+		i := started
+		started++
+		go func() {
+			conn, err := connect(ctx, i)
+			results <- result{conn, err}
+		}()
+	}
+	// giveUp ends the attempts under way, and closes what they still connect.
+	giveUp := func() {
+		cancel()
+		if pending := started - finished; pending > 0 {
+			go func() {
+				for range pending {
+					if r := <-results; r.conn != nil {
+						_ = r.conn.Close()
+					}
+				}
+			}()
+		}
+	}
+	start()
+	stagger := time.NewTimer(ruleStagger)
+	defer stagger.Stop()
+	var last error
+	for {
+		select {
+		case r := <-results:
+			finished++
+			if r.err == nil && r.conn != nil {
+				giveUp()
+				return r.conn, nil
+			}
+			if r.conn != nil {
+				_ = r.conn.Close()
+			}
+			if r.err != nil {
+				last = r.err
+			}
+			switch {
+			case started < n:
+				start()
+				stagger.Reset(ruleStagger)
+			case finished == n:
+				if last == nil {
+					last = errors.New("no candidate connected")
+				}
+				return nil, last
+			}
+		case <-stagger.C:
+			if started < n {
+				start()
+				stagger.Reset(ruleStagger)
+			}
+		case <-ctx.Done():
+			giveUp()
+			return nil, ctx.Err()
+		}
 	}
 }
 

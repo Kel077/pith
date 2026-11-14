@@ -260,6 +260,74 @@ func TestProxyByRulesConnectsOnlyToAddressesItMatched(t *testing.T) {
 	}
 }
 
+// An address of a name that never answers doesn't keep the next from its
+// turn: it gets a head start, then the next is tried beside it, and the
+// one that connects first is the connection. What a loser connects later
+// is closed.
+func TestProxyByRulesTriesTheNextAddressBesideOneThatDoesNotAnswer(t *testing.T) {
+	f := newRouteFixture(t)
+	var mu sync.Mutex
+	var asked []string
+	released := make(chan struct{})
+	late := make(chan net.Conn, 1)
+	f.c.systemDial = func(ctx context.Context, _, address string) (net.Conn, error) {
+		mu.Lock()
+		asked = append(asked, address)
+		mu.Unlock()
+		a, b := net.Pipe()
+		t.Cleanup(func() { a.Close(); b.Close() })
+		if address == "[2001:db8::5]:443" {
+			// It answers only once another address has won, and its
+			// attempt was given up.
+			<-ctx.Done()
+			close(released)
+			late <- b
+			return a, nil
+		}
+		return a, nil
+	}
+	started := time.Now()
+	conn, err := f.route(context.Background(), "home", proxy.Target{Host: "other.example.com", Port: 443, IsDomain: true})
+	if err != nil || conn == nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(started); took < ruleStagger || took > 2*time.Second {
+		t.Fatalf("connected after %v, want the first address's head start of %v and little more", took, ruleStagger)
+	}
+	<-released
+	mu.Lock()
+	got := slices.Clone(asked)
+	mu.Unlock()
+	if !slices.Equal(got, []string{"[2001:db8::5]:443", "203.0.113.5:443"}) {
+		t.Fatalf("asked %q", got)
+	}
+	// The connection the loser made after all is closed.
+	other := <-late
+	_ = other.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := other.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatalf("the losing connection was left open: %v", err)
+	}
+
+	// An address that fails at once gives its turn up at once, and a caller
+	// that gives up ends every attempt.
+	f.c.systemDial = func(ctx context.Context, _, address string) (net.Conn, error) {
+		if address == "[2001:db8::5]:443" {
+			return nil, syscall.ENETUNREACH
+		}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	started = time.Now()
+	if conn, err := f.route(ctx, "home", proxy.Target{Host: "other.example.com", Port: 443, IsDomain: true}); conn != nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("after the caller gave up: %v, %v", conn, err)
+	}
+	if took := time.Since(started); took > time.Second {
+		t.Fatalf("gave up after %v", took)
+	}
+}
+
 func TestProxyByRulesSkipsAnInterfaceThatIsSuspended(t *testing.T) {
 	f := newRouteFixture(t)
 	manager, err := proxy.New(proxy.Options{Dial: func(context.Context, api.InterfaceRef, proxy.Target) (net.Conn, error) {
