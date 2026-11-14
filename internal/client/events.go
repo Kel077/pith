@@ -69,7 +69,7 @@ func (c *Client) openHelperEvents(parent context.Context) helperEvents {
 
 func (c *Client) authenticatedStatus(status api.Status) api.Status {
 	status.Helper = api.HelperStatus{Installed: true, Running: true, Version: c.expectedHelper.Version}
-	status.Proxies = nil
+	status.Proxies, status.Devices = nil, nil
 	return status
 }
 
@@ -146,7 +146,7 @@ func (c *Client) events(ctx context.Context, output chan<- api.Event, stream hel
 	var lastLoss time.Time
 	links := stream.links
 	ticks := 0
-	proxies := latest.Proxies
+	proxies, devices := latest.Proxies, latest.Devices
 	send := func(event api.Event) bool {
 		if ctx.Err() != nil {
 			return false
@@ -159,7 +159,7 @@ func (c *Client) events(ctx context.Context, output chan<- api.Event, stream hel
 		}
 	}
 	publish := func(status api.Status) bool {
-		status.Proxies = proxies
+		status.Proxies, status.Devices = proxies, devices
 		latest = status
 		return send(api.Event{Status: &status})
 	}
@@ -213,7 +213,7 @@ func (c *Client) events(ctx context.Context, output chan<- api.Event, stream hel
 			attempting = false
 			stream.cancel()
 			stream, connected = result, result.events
-			result.status.Proxies = proxies
+			result.status.Proxies, result.status.Devices = proxies, devices
 			if !reflect.DeepEqual(result.status, latest) || connected != nil {
 				if !publish(result.status) {
 					return
@@ -228,10 +228,10 @@ func (c *Client) events(ctx context.Context, output chan<- api.Event, stream hel
 		case now := <-ticker.C:
 			ticks++
 			statusCtx, cancel := context.WithTimeout(ctx, time.Second)
-			next := c.proxyStatus(statusCtx)
+			next, nextDevices := c.proxyStatus(statusCtx), c.deviceStatus()
 			cancel()
-			if !reflect.DeepEqual(proxies, next) {
-				proxies = next
+			if !reflect.DeepEqual(proxies, next) || !reflect.DeepEqual(devices, nextDevices) {
+				proxies, devices = next, nextDevices
 				if !publish(latest) {
 					return
 				}
