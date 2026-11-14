@@ -94,6 +94,10 @@ func (m *Manager) serveHTTP(e *listener, s *session, first byte, connectDeadline
 	}
 	req.Header.Set("Connection", "close")
 	req.Close = true
+	if _, ok := req.Header["User-Agent"]; !ok {
+		// net/http names itself for a request that names no client.
+		req.Header["User-Agent"] = []string{""}
+	}
 	// The answer is relayed while the request is sent: a server may answer
 	// before it has read a request's body, as with 100 Continue.
 	answered := make(chan struct{})

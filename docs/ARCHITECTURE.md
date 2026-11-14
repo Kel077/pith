@@ -197,7 +197,9 @@ without waiting is the tunnel's first bytes. A request for an `http://` URL
 ([RFC 9112, section 3.2.2](https://www.rfc-editor.org/rfc/rfc9112.html#section-3.2.2))
 goes to its server in origin form, without the `Proxy-` fields, with
 `Connection: close`: one request a connection, whose answer is relayed while
-the request's body is still being sent. Anything else is answered `400`: a
+the request's body is still being sent. Its header fields are written anew,
+in `net/http`'s order and spelling, and none is added but `Connection`; a
+tunnel's bytes are relayed as they are. Anything else is answered `400`: a
 request that names no host, an `https://` URL outside CONNECT, a port of zero.
 A connection that can't be opened is answered `403` where SOCKS5 says not
 allowed, `504` where it says host unreachable, else `502`. Names, targets,

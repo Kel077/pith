@@ -122,15 +122,22 @@ func TestHTTPRequestGoesToItsServerOnce(t *testing.T) {
 	if r.Header.Get("Proxy-Connection") != "" || r.Header.Get("Proxy-Authorization") != "" || !r.Close {
 		t.Fatalf("the origin got the proxy's fields, or was not asked to close: %v", r.Header)
 	}
+	// The request named no client, and the proxy names none for it.
+	if agent, ok := r.Header["User-Agent"]; ok {
+		t.Fatalf("the origin got a User-Agent the client didn't send: %q", agent)
+	}
 	readClosed(t, c)
 
 	c = f.dial(t, 1080)
-	fmt.Fprint(c, "GET http://192.0.2.9:8080/ HTTP/1.1\r\nHost: 192.0.2.9:8080\r\n\r\n")
+	fmt.Fprint(c, "GET http://192.0.2.9:8080/ HTTP/1.1\r\nHost: 192.0.2.9:8080\r\nUser-Agent: example/1.0\r\n\r\n")
 	if got := <-targets; got != (Target{Host: "192.0.2.9", Port: 8080}) {
 		t.Fatalf("asked for %+v", got)
 	}
 	if res := httpAnswer(t, c); res.StatusCode != 200 {
 		t.Fatalf("answer %d", res.StatusCode)
+	}
+	if agent := seen.Load().Header.Get("User-Agent"); agent != "example/1.0" {
+		t.Fatalf("the origin got User-Agent %q, want the client's", agent)
 	}
 	waitFor(t, func() bool { m.mu.Lock(); defer m.mu.Unlock(); return m.total == 0 })
 	if st := m.Status(context.Background())[0]; st.Sent == 0 || st.Received == 0 || st.Open != 0 {
