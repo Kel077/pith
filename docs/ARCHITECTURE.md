@@ -202,12 +202,78 @@ fields of the client's hop, those its `Connection` names included
 the request's body is still being sent. Its header fields are written anew,
 in `net/http`'s order and spelling, and none is added but `Connection`; a
 request's trailer fields are not sent on. A tunnel's bytes are relayed as
-they are. Anything else is answered `400`: a
-request that names no host, an `https://` URL outside CONNECT, a port of zero.
+they are. A request whose target is a path asks the port itself, as described
+below. Other invalid targets are answered `400`: an `https://` URL outside
+CONNECT, a CONNECT that names no port, a port of zero.
 A connection that can't be opened is answered `403` where SOCKS5 says not
 allowed, `504` where it says host unreachable, else `502`. Names, targets,
 limits, counters and what a port goes out through are those of SOCKS5; there is
 no password here either.
+
+### Requests to a port
+
+An HTTP request whose target is a path rather than a URL or a CONNECT
+authority asks Pith itself. `GET /` answers with `api.ProxyInfo`: the port,
+the kind of exit, whether it is online, its public addresses and when they
+were found, and whether its address can be changed or is changing. An
+interface's information comes from the client's `Info` hook; without it, or
+when it fails, the port answers with the state it knows. A scene's rules have
+no one address to report. `max-age`, an optional non-negative integer of
+seconds in the query, asks for addresses no older than that; absent, cached
+addresses of any age suffice. A suspended exit is offline even while its
+port still listens.
+
+`POST /change-ip` waits for an address change and answers with
+`api.ProxyIPChange`, the addresses before and after. Its body is ignored up
+to 4 KiB; a larger one is answered `413`. Every caller that may connect may
+GET, but a POST needs the port's `ChangeIP`: `403` and `not_allowed`
+otherwise. An exit whose address cannot be changed gives `501` and
+`unsupported`; a failed change gives `502` and its public error. Unknown
+paths give `404`; another method on a known path gives `405` and `Allow`,
+including OPTIONS. Every answer is JSON, with its content length,
+`Cache-Control: no-store`, `X-Content-Type-Options: nosniff` and
+`Connection: close`: one request per connection.
+
+Before dispatch, a request with any `Origin` field, or with
+`Sec-Fetch-Site` other than `none`, is answered `403`. No CORS fields or
+preflight are provided. A web page's requests carry these browser-controlled
+fields even when its host name rebinds to this Mac. Programs and a person
+opening the port's address directly may ask; a device not listed is still
+refused before dispatch.
+
+An upstream is asked over HTTP directly on its host and port through the
+same dialer that reaches it for SOCKS5, with `max-age` passed on. A shared
+port refuses one reached on this Mac before sending anything. A `200` JSON
+answer with `pith` of at least one is another Pith's: its information is
+nested in `Upstream`, its online state, addresses, timestamp and change state
+are copied, and both ports' `ChangeIP` flags must allow a remote change.
+Otherwise a SOCKS5 greeting tells whether the upstream answers and takes
+this Mac, without addresses or the ability to change them. HTTP answers are
+bounded to 64 KiB and a GET attempt to three seconds, within the port's
+connect timeout; the remaining time permits a SOCKS5 check. A POST is passed
+on only after the upstream answers as Pith. Each forwarded request adds one
+to `Pith-Hops`, initially zero; an upstream request already at
+`api.MaxProxyHops` is answered `508` instead of being forwarded. That status
+returns through the chain.
+
+Requests to ports have 16 slots across the manager, with `503` beyond that.
+They count neither as open streams nor as traffic, and cannot be selected as
+the quietest stream. Suspending an exit leaves them and unclassified HTTP
+handshakes open, so a router renewal can answer the very POST that caused it.
+GET uses the connect timeout, with a little time reserved for the answer;
+POST waits at most ten minutes. A departed caller ends only its wait:
+the client owns an interface's change, and coalesces other callers onto it.
+Configuration replacement and manager close still end these sessions.
+`Manager.ChangeIP` does the same work for this Mac's user, without requiring
+this port's flag; an upstream's flag still applies.
+
+`ProxyStatus.Upstream` is the upstream's last Pith answer, cleared when it
+ceases to answer as Pith or the port is replaced. Status polls it at most
+once every ten seconds, even while connections flow, first by GET without
+`max-age`, then by SOCKS5 when needed. `ProxyStatus.Changing` comes from the
+client's non-blocking `Changing` hook for an interface, or from a change
+being passed upstream or its last answer. A completed upstream change
+refreshes that answer; a canceled wait makes the next status poll due.
 
 ### Sharing a port with other devices
 
@@ -266,8 +332,9 @@ and `ProxyStatus.Error` is `upstream_unreachable`. An upstream that answers
 `upstream_refused`, and the client is told the connection is not allowed. Once
 the upstream agreed, a deadline is the target's, and says nothing against the
 upstream. A target the upstream couldn't reach clears the error, as a
-connection does. A port whose upstream carried nothing for ten seconds asks it
-whether it answers, without asking for a connection, when the status is read.
+connection does. Every ten seconds at most, when status is read, a port asks
+its upstream whether it answers, as described above, without asking for a
+connection.
 Suspending an interface during a router's renewal leaves these ports alone.
 A port whose upstream is its own loopback port is refused when saved; a longer
 loop ends when the ports it runs through are full of handshakes.
