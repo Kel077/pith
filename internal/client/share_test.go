@@ -23,6 +23,7 @@ func sharedProxyClient(t *testing.T, from string) *Client {
 	echo := proxyEchoServer(t)
 	c.newProxies = func() (*proxy.Manager, error) {
 		return proxy.New(proxy.Options{
+			Info: c.exitInfo, ChangeIP: c.changeExitIP, Changing: c.exitChanging,
 			Dial: func(ctx context.Context, _ api.InterfaceRef, _ proxy.Target) (net.Conn, error) {
 				return (&net.Dialer{}).DialContext(ctx, "tcp4", echo)
 			},

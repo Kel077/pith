@@ -372,7 +372,7 @@ func TestLocalProxyByRulesFollowsSavedRules(t *testing.T) {
 		return (&net.Dialer{}).DialContext(ctx, "tcp4", echo)
 	}
 	c.newProxies = func() (*proxy.Manager, error) {
-		return proxy.New(proxy.Options{Dial: dial, Route: c.routeByRules(dial)})
+		return proxy.New(proxy.Options{Dial: dial, Route: c.routeByRules(dial), Info: c.exitInfo, ChangeIP: c.changeExitIP, Changing: c.exitChanging})
 	}
 	cfg := api.DefaultConfig()
 	cfg.Scenes[0].Rules = []api.Rule{{ID: "docs", Enabled: true, Targets: []string{"192.0.2.0/24"}, Protocol: api.AnyProtocol, Action: api.Route, Via: []api.InterfaceRef{ruleRef("example1")}}}
@@ -469,7 +469,8 @@ func TestLocalProxyByRulesOfAnotherSceneSavesReloadsAndRevokes(t *testing.T) {
 		dial := func(ctx context.Context, _ api.InterfaceRef, _ proxy.Target) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "tcp4", echo)
 		}
-		return proxy.New(proxy.Options{Dial: dial, Route: c.routeByRules(dial), Listen: loopbackListen("192.0.2.10")})
+		return proxy.New(proxy.Options{Dial: dial, Route: c.routeByRules(dial), Listen: loopbackListen("192.0.2.10"),
+			Info: c.exitInfo, ChangeIP: c.changeExitIP, Changing: c.exitChanging})
 	}
 	cfg := api.DefaultConfig()
 	cfg.Scenes = append(cfg.Scenes, api.Scene{ID: "office", Name: "Office", Rules: []api.Rule{
@@ -528,7 +529,8 @@ func TestLocalProxyByRulesOfAnotherSceneSavesReloadsAndRevokes(t *testing.T) {
 		dial := func(context.Context, api.InterfaceRef, proxy.Target) (net.Conn, error) {
 			return nil, errors.New("unused")
 		}
-		return proxy.New(proxy.Options{Dial: dial, Route: again.routeByRules(dial), Listen: loopbackListen("192.0.2.10")})
+		return proxy.New(proxy.Options{Dial: dial, Route: again.routeByRules(dial), Listen: loopbackListen("192.0.2.10"),
+			Info: again.exitInfo, ChangeIP: again.changeExitIP, Changing: again.exitChanging})
 	}
 	loaded, err := again.LoadConfig(context.Background())
 	if err != nil || len(loaded.Proxies) != 1 || loaded.Proxies[0].Scene != "office" {
