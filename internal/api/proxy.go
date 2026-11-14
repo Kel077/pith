@@ -14,7 +14,8 @@ const MaxProxies = 32
 // MaxDevices bounds the devices that may use shared proxies.
 const MaxDevices = 64
 
-// Proxy exposes SOCKS5 no-auth CONNECT on 127.0.0.1:Port in the App process.
+// Proxy exposes SOCKS5 no-auth CONNECT on 127.0.0.1:Port in the App process,
+// and HTTP on the same port: CONNECT, and requests for http:// URLs.
 // It supports literal IPv4/IPv6 and names resolved through Via's own DNS.
 // It never uses another interface as fallback and does not depend on TUN.
 type Proxy struct {
