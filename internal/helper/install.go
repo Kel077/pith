@@ -39,11 +39,16 @@ const (
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
 
+// launchPlist makes the helper Interactive, as an app is: every connection it
+// routes passes through it. launchd ran a Background job at the lowest CPU
+// priority, and XNU marks such a process's sockets as background traffic,
+// which yields to the Mac's other traffic (set_tcp_stream_priority in
+// bsd/netinet/in_tclass.c).
 func launchPlist(uid uint32, extraArgs ...string) ([]byte, error) {
 	return plist.MarshalIndent(map[string]any{
 		"Label":            Label,
 		"ProgramArguments": append([]string{BinaryPath, "--owner-uid", strconv.FormatUint(uint64(uid), 10)}, extraArgs...),
-		"RunAtLoad":        true, "KeepAlive": true, "ProcessType": "Background", "ThrottleInterval": 10, "ExitTimeOut": 5,
+		"RunAtLoad":        true, "KeepAlive": true, "ProcessType": "Interactive", "ThrottleInterval": 10, "ExitTimeOut": 5,
 	}, plist.XMLFormat, "  ")
 }
 

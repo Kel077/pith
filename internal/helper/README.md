@@ -2,7 +2,9 @@
 
 The helper is a pure-Go arm64 executable. `pithd --version` is unprivileged;
 normal startup requires root and `--owner-uid <installing user's UID>`. Launchd
-starts it idle. The engine backend is linked into `cmd/pithd`; importing or
+starts it idle, as an Interactive job: it routes the Mac's connections, and a
+Background job gets the lowest CPU priority, with sockets that yield to other
+traffic. The engine backend is linked into `cmd/pithd`; importing or
 constructing it never starts capture. The helper owns its complete shutdown.
 
 HTTP/JSON runs only over a Unix socket, with protocol version 1 in
@@ -20,7 +22,9 @@ Endpoints: `GET /v1/status`, `GET /v1/events` (NDJSON), and POST requests for
 `/v1/connections/clear`, `/v1/traffic` and `/v1/yield`. Requests are size limited and version
 checked. A subscription first emits Status and Interfaces; empty interface
 snapshots remain explicit JSON arrays. Cancellation, EOF and helper exit
-close streams. The process stops its backend and removes its socket on exit.
+close streams; a failed read of the network configuration doesn't: the last
+interface snapshot stays until a read works. The process stops its backend and
+removes its socket on exit.
 
 `/v1/yield` keeps one interface from being macOS's primary while its router
 renews its address, for as long as the client keeps the request open and at

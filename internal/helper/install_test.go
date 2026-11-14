@@ -67,6 +67,11 @@ func TestLaunchPlistIsIdleAndBoundToInstaller(t *testing.T) {
 	if value["Label"] != Label || value["RunAtLoad"] != true || value["KeepAlive"] != true {
 		t.Fatal("incorrect launchd configuration")
 	}
+	// It routes the Mac's connections: not a Background job, which launchd
+	// gives the least CPU and whose sockets yield to other traffic.
+	if value["ProcessType"] != "Interactive" {
+		t.Fatal("process type", value["ProcessType"])
+	}
 	args := value["ProgramArguments"].([]any)
 	if len(args) != 3 || args[0] != BinaryPath || args[1] != "--owner-uid" || args[2] != "501" {
 		t.Fatal(args)
