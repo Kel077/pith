@@ -93,7 +93,7 @@ func (c *Client) SetRouterPassword(ctx context.Context, iface, password string) 
 
 // router finds the router behind an interface, or ErrUnsupported.
 func (c *Client) router(ctx context.Context, name string) (*routerSession, error) {
-	ifaces, err := c.interfaces(ctx)
+	ifaces, err := c.Interfaces(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +199,15 @@ func (c *Client) dropRouter(s *routerSession) {
 // router that asks again at once.
 var routerPauses = []time.Duration{5 * time.Second, 20 * time.Second, 60 * time.Second}
 
-func (c *Client) RenewRouter(ctx context.Context, iface string) (r api.RouterRenewal, err error) {
+func (c *Client) RenewRouter(ctx context.Context, iface string) (api.RouterRenewal, error) {
+	change, err := c.changeAddress(ctx, api.InterfaceRef{Name: iface}, exitRouter, false)
+	if change == nil {
+		return api.RouterRenewal{}, err
+	}
+	return change.router, err
+}
+
+func (c *Client) renewRouter(ctx context.Context, iface string) (r api.RouterRenewal, err error) {
 	s, err := c.router(ctx, iface)
 	if err != nil {
 		return r, err
@@ -208,18 +216,8 @@ func (c *Client) RenewRouter(ctx context.Context, iface string) (r api.RouterRen
 		return r, &api.Error{Code: api.ErrInternal, Detail: "another router is renewing its address"}
 	}
 	defer c.renewing.Unlock()
-	c.proxyMu.Lock()
-	closed := c.closed
-	if !closed {
-		c.renewals.Add(1)
-	}
-	c.proxyMu.Unlock()
-	if closed {
-		return r, errClientClosed
-	}
-	defer c.renewals.Done()
 	started := time.Now()
-	ifaces, err := c.interfaces(ctx)
+	ifaces, err := c.Interfaces(ctx)
 	if err != nil {
 		return r, err
 	}
@@ -316,6 +314,7 @@ func (c *Client) RenewRouter(ctx context.Context, iface string) (r api.RouterRen
 		_ = os.MkdirAll(c.opts.ConfigDir, 0700)
 		_ = os.WriteFile(mark, data, 0600)
 	}
+	c.forgetExitAddresses(iface)
 	for _, pause := range pauses {
 		r.Tries++
 		var w router.WAN
@@ -392,7 +391,7 @@ func (c *Client) recoverRouter() {
 			defer cancel()
 			// The interface may still be coming up as Pith starts.
 			for range 12 {
-				if ifaces, err := c.interfaces(ctx); err == nil {
+				if ifaces, err := c.Interfaces(ctx); err == nil {
 					for _, i := range ifaces {
 						if i.Name == m.Interface && i.HardwareAddr != m.HardwareAddr {
 							_ = os.Remove(mark) // another adapter: not that router

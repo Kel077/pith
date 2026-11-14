@@ -26,7 +26,7 @@ func (c *Client) deviceClient(name string, link api.Interface, index int, tlsCon
 		return nil, nil, err
 	}
 	checkIdentity := func(ctx context.Context) error {
-		current, err := c.interfaces(ctx)
+		current, err := c.Interfaces(ctx)
 		if err != nil {
 			return err
 		}

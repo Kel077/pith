@@ -25,10 +25,20 @@ func (c *Client) Probe(ctx context.Context, iface, target string) (api.Probe, er
 	if iface == "" {
 		return result, fmt.Errorf("probe needs an interface name")
 	}
-	interfaces, err := c.interfaces(ctx)
+	interfaces, err := c.Interfaces(ctx)
 	if err != nil {
 		return result, err
 	}
+	if target == "" {
+		if link := (api.InterfaceRef{Name: iface}).Resolve(interfaces); link != nil {
+			return c.publicProbe(ctx, *link, interfaces, nil)
+		}
+	}
+	return c.probe(ctx, iface, target, interfaces)
+}
+
+func (c *Client) probe(ctx context.Context, iface, target string, interfaces []api.Interface) (api.Probe, error) {
+	result := api.Probe{Interface: iface, Target: target, At: time.Now()}
 	var dns []string
 	for _, link := range interfaces {
 		if link.Name == iface {
