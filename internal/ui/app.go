@@ -350,6 +350,8 @@ func (a *App) setConnections(conns []api.Connection) {
 func (a *App) setConfig(cfg api.Config) {
 	a.cfg = cfg
 	a.loaded, a.loadErr = true, nil
+	// What was being edited in the settings' lists may be gone, or elsewhere.
+	a.settings.editingPort, a.settings.renaming = 0, ""
 	if a.scene(a.sceneID) == nil {
 		a.sceneID = cfg.Selected
 	}

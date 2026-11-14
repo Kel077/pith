@@ -31,17 +31,21 @@ type deviceDialog struct {
 // another proxy, and a last row that adds one.
 func (a *App) proxiesGroup(c *ui.Context) {
 	group(c, locales.LocalProxies(), func() {
-		// A row is removed once all are drawn: the rows after it are still
-		// drawn from the list as it was.
+		// The rows are drawn from the list as it is now: a click in one may
+		// change the list, or have a save that fails put another in its
+		// place, while the rows after it are still to draw. A row is removed
+		// once all are drawn.
+		proxies := slices.Clone(a.cfg.Proxies)
 		remove := -1
-		for k := range a.cfg.Proxies {
-			if a.proxyRow(c, k) {
+		for k, p := range proxies {
+			if a.proxyRow(c, k, p) {
 				remove = k
 			}
 		}
 		if remove >= 0 {
+			port := proxies[remove].Port
 			a.change(func(cfg *api.Config) {
-				cfg.Proxies = append(cfg.Proxies[:remove:remove], cfg.Proxies[remove+1:]...)
+				cfg.Proxies = slices.DeleteFunc(slices.Clone(cfg.Proxies), func(p api.Proxy) bool { return p.Port == port })
 			})
 		}
 		exits, _ := a.proxyExits(api.InterfaceRef{})
@@ -60,15 +64,14 @@ func (a *App) proxiesGroup(c *ui.Context) {
 // port of, and how it is doing; on the right, what it goes out through, a
 // button that shares it with the devices, its switch, and a button that
 // removes it: proxyRow tells when that one is clicked.
-func (a *App) proxyRow(c *ui.Context, k int) (remove bool) {
-	p := a.cfg.Proxies[k]
+func (a *App) proxyRow(c *ui.Context, k int, p api.Proxy) (remove bool) {
 	s := &a.settings
 	ui.Row(c.Key(fmt.Sprint("proxy-", k))).Gap(16).Padding(9, settingsInset).MinHeight(52).Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
 			if s.editingPort == p.Port {
 				in := networkField(c, ui.TextInput(c.Key("proxy-port"), &s.port)).Padding(1, 10).FontWeight(500).Width(120).AutoFocus().Placeholder(strconv.Itoa(p.Port))
-				if in.Submitted() {
-					a.setProxyPort(k, s.port)
+				if at := a.proxyAt(p.Port); in.Submitted() && at >= 0 {
+					a.setProxyPort(at, s.port)
 				}
 			} else {
 				addr := ui.Text(c, a.proxyAddress(p)).FontWeight(500).FontFeatures("tnum").SingleLine().Cursor(ui.CursorText).Tooltip(locales.DoubleClickToChangeThePort())
@@ -86,21 +89,38 @@ func (a *App) proxyRow(c *ui.Context, k int) (remove bool) {
 			}
 			chosen := options[at]
 			if settingsSelect(c, &chosen, options).Label(locales.Interfaces()).Changed() {
-				if j := slices.Index(options, chosen); j >= 0 {
-					a.chooseExit(k, choices[j])
+				if j, at := slices.Index(options, chosen), a.proxyAt(p.Port); j >= 0 && at >= 0 {
+					a.chooseExit(at, choices[j])
 				}
 			}
 			if shareButton(c, p.Shared) {
-				a.change(func(cfg *api.Config) { cfg.Proxies[k].Shared = !p.Shared })
+				a.changeProxy(p.Port, func(q *api.Proxy) { q.Shared = !p.Shared })
 			}
 			on := p.Enabled
 			if ui.Switch(c, &on).Label("127.0.0.1:" + strconv.Itoa(p.Port)).Changed() {
-				a.change(func(cfg *api.Config) { cfg.Proxies[k].Enabled = on })
+				a.changeProxy(p.Port, func(q *api.Proxy) { q.Enabled = on })
 			}
 			remove = quietButton(c, "remove-proxy", icX, locales.Remove(), false)
 		})
 	})
 	return remove
+}
+
+// proxyAt is where the proxy on port is in the configuration as it is now:
+// -1 when it is gone.
+func (a *App) proxyAt(port int) int {
+	return slices.IndexFunc(a.cfg.Proxies, func(p api.Proxy) bool { return p.Port == port })
+}
+
+// changeProxy changes the proxy on port, if it is still there.
+func (a *App) changeProxy(port int, fn func(p *api.Proxy)) {
+	a.change(func(cfg *api.Config) {
+		for k := range cfg.Proxies {
+			if cfg.Proxies[k].Port == port {
+				fn(&cfg.Proxies[k])
+			}
+		}
+	})
 }
 
 // exitChoice is one thing a proxy can go out through, in its menu.
@@ -404,19 +424,22 @@ func (a *App) devicesGroup(c *ui.Context) {
 	}
 	t := c.Theme()
 	group(c, locales.Devices(), func() {
+		// Drawn from the list as it is now, as the proxies are.
+		devices := slices.Clone(a.cfg.Devices)
 		listed := map[string]bool{}
 		remove := -1
-		for k := range a.cfg.Devices {
-			address, removed := a.deviceRow(c, k)
+		for k, d := range devices {
+			address, removed := a.deviceRow(c, k, d)
 			listed[address] = true
 			if removed {
 				remove = k
 			}
 		}
 		if remove >= 0 {
-			a.settings.renaming = 0
+			address := devices[remove].Address
+			a.settings.renaming = ""
 			a.change(func(cfg *api.Config) {
-				cfg.Devices = append(cfg.Devices[:remove:remove], cfg.Devices[remove+1:]...)
+				cfg.Devices = slices.DeleteFunc(slices.Clone(cfg.Devices), func(d api.Device) bool { return d.Address == address })
 			})
 		}
 		full := len(a.cfg.Devices) >= api.MaxDevices
@@ -445,9 +468,8 @@ func (a *App) devicesGroup(c *ui.Context) {
 // what it moves through the shared proxies; on the right, a button that
 // removes it. It returns the device's address, empty for a range, and
 // whether that button was clicked.
-func (a *App) deviceRow(c *ui.Context, k int) (single string, remove bool) {
+func (a *App) deviceRow(c *ui.Context, k int, d api.Device) (single string, remove bool) {
 	t := c.Theme()
-	d := a.cfg.Devices[k]
 	s := &a.settings
 	address := d.Address
 	if prefix, err := d.Prefix(); err == nil {
@@ -459,12 +481,10 @@ func (a *App) deviceRow(c *ui.Context, k int) (single string, remove bool) {
 	}
 	ui.Row(c.Key(fmt.Sprint("device-", k))).Gap(16).Padding(9, settingsInset).MinHeight(52).Children(func() {
 		ui.Column(c).Grow(1).MinWidth(0).Gap(2).Children(func() {
-			if s.renaming == k+1 {
+			if s.renaming == d.Address {
 				in := networkField(c, ui.TextInput(c.Key("device-name"), &s.deviceName)).Padding(1, 10).FontWeight(500).Width(220).AutoFocus().Placeholder(address)
 				if in.Submitted() {
-					name := strings.TrimSpace(s.deviceName)
-					s.renaming = 0
-					a.change(func(cfg *api.Config) { cfg.Devices[k].Name = name })
+					a.renameDevice(d.Address, s.deviceName)
 				}
 			} else {
 				title := d.Name
@@ -473,7 +493,7 @@ func (a *App) deviceRow(c *ui.Context, k int) (single string, remove bool) {
 				}
 				name := ui.Text(c, title).FontWeight(500).FontFeatures("tnum").SingleLine().Cursor(ui.CursorText).Tooltip(locales.DoubleClickToRename())
 				if name.DoubleClicked() {
-					s.renaming, s.deviceName = k+1, d.Name
+					s.renaming, s.deviceName = d.Address, d.Name
 				}
 			}
 			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
@@ -497,6 +517,20 @@ func (a *App) deviceRow(c *ui.Context, k int) (single string, remove bool) {
 		remove = quietButton(c, "remove-device", icX, locales.Remove(), false)
 	})
 	return single, remove
+}
+
+// renameDevice names the device listed by address, wherever it is in the
+// list by now, and ends its renaming.
+func (a *App) renameDevice(address, name string) {
+	a.settings.renaming = ""
+	name = strings.TrimSpace(name)
+	a.change(func(cfg *api.Config) {
+		for k := range cfg.Devices {
+			if cfg.Devices[k].Address == address {
+				cfg.Devices[k].Name = name
+			}
+		}
+	})
 }
 
 // deviceStatus is what the device at address moved through the shared

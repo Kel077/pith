@@ -322,3 +322,58 @@ func TestProxyExitChoicesAreToldApart(t *testing.T) {
 		t.Fatalf("another proxy was not asked for: %+v", a.settings.upstream)
 	}
 }
+
+// refusing is a backend that refuses to save, and has another
+// configuration than the one being edited.
+type refusing struct {
+	api.Service
+	has api.Config
+}
+
+func (r refusing) SaveConfig(context.Context, api.Config) error {
+	return &api.Error{Code: api.ErrInvalidConfig}
+}
+
+func (r refusing) LoadConfig(context.Context) (api.Config, error) { return r.has, nil }
+
+// A change the backend refuses puts its configuration in the place of the
+// one being edited, in the middle of a frame: the rows still to draw are
+// those of the list as it was, and what was being edited is given up
+// rather than left pointing at another row.
+func TestSettingsListsSurviveAConfigurationPutInTheirPlace(t *testing.T) {
+	a, svc := testApp(t, mock.Options{Sample: true, HelperInstalled: true, Running: true})
+	a.page = "settings"
+	if !a.addDevice("198.51.100.9", "Tablet") || !a.addDevice("198.51.100.10", "Phone") {
+		t.Fatal("devices were refused")
+	}
+	// The backend has one proxy and one device left.
+	has := cloneConfig(a.cfg)
+	has.Proxies, has.Devices = has.Proxies[2:], has.Devices[2:]
+	a.settings.renaming, a.settings.deviceName = "198.51.100.9", "Mine"
+	a.settings.editingPort = 1082
+	a.Service = refusing{Service: svc, has: has}
+	tt := ui.NewTester(a.WindowView, 1040, 1700)
+	tt.Frame()
+	if err := tt.Click(locales.ShareWithDevices()); err != nil { // the first proxy's
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if len(a.cfg.Proxies) != 1 || len(a.cfg.Devices) != 1 || a.cfg.Devices[0].Name != "Phone" {
+		t.Fatalf("the backend's configuration did not take the place: %+v, %+v", a.cfg.Proxies, a.cfg.Devices)
+	}
+	if a.settings.renaming != "" || a.settings.editingPort != 0 {
+		t.Fatalf("still editing %q and port %d", a.settings.renaming, a.settings.editingPort)
+	}
+
+	// A device is renamed by its address, wherever it is in the list.
+	a.Service = svc
+	a.Sync(context.Background())
+	a.settings.renaming, a.settings.deviceName = "198.51.100.10", " Guest's phone "
+	a.change(func(cfg *api.Config) { cfg.Devices = cfg.Devices[1:] }) // it moves up
+	a.renameDevice("198.51.100.10", a.settings.deviceName)
+	a.renameDevice("192.0.2.99", "no such device")
+	want := []api.Device{{Address: "198.51.100.9", Name: "Tablet"}, {Address: "198.51.100.10", Name: "Guest's phone"}}
+	if !slices.Equal(a.cfg.Devices, want) || a.settings.renaming != "" {
+		t.Fatalf("devices %+v, renaming %q", a.cfg.Devices, a.settings.renaming)
+	}
+}

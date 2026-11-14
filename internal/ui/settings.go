@@ -18,7 +18,7 @@ type settingsPage struct {
 	port        string // its new text
 	upstream    upstreamDialog
 	device      deviceDialog
-	renaming    int    // one more than the index of the device being renamed; 0: none
+	renaming    string // the address of the device being renamed, as it is listed; "": none
 	deviceName  string // its new name
 }
 
