@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -25,9 +26,9 @@ type deviceDialog struct {
 	address, name string
 }
 
-// proxiesGroup is the settings' group of local SOCKS5 proxies: a row a port,
-// each with the one interface, or the other proxy, it goes out through, and
-// a last row that adds one.
+// proxiesGroup is the settings' group of local proxies: a row a port, each
+// with what it goes out through, one interface, the rules of a scene or
+// another proxy, and a last row that adds one.
 func (a *App) proxiesGroup(c *ui.Context) {
 	group(c, locales.LocalProxies(), func() {
 		for k := range a.cfg.Proxies {
@@ -75,22 +76,31 @@ func (a *App) proxyRow(c *ui.Context, k int) {
 					chosen = labels[j]
 				}
 			}
-			// After the interfaces: the proxy it goes out through, when it
-			// does, and a choice that asks for one.
-			options, other := labels, locales.AnotherProxy()
+			// After the interfaces: the rules of each scene, the proxy it
+			// goes out through, when it does, and a choice that asks for one.
+			options, other := slices.Clone(labels), locales.AnotherProxy()
+			scenes := make([]string, len(a.cfg.Scenes))
+			for j := range a.cfg.Scenes {
+				scenes[j] = locales.RulesOfScene(sceneName(&a.cfg.Scenes[j]))
+				if a.cfg.Scenes[j].ID == p.Scene {
+					chosen = scenes[j]
+				}
+			}
+			options = append(options, scenes...)
 			if p.Upstream != "" {
 				options, chosen = append(options, p.Upstream), p.Upstream
 			}
 			options = append(options, other)
 			if settingsSelect(c, &chosen, options).Label(locales.Interfaces()).Changed() {
-				if chosen == other {
+				switch j, by := slices.Index(labels, chosen), slices.Index(scenes, chosen); {
+				case chosen == other:
 					s.upstream = upstreamDialog{open: true, port: p.Port, address: p.Upstream}
-				}
-				for j, l := range labels {
-					if l == chosen {
-						via := refs[j]
-						a.change(func(cfg *api.Config) { cfg.Proxies[k].Via, cfg.Proxies[k].Upstream = via, "" })
-					}
+				case j >= 0:
+					a.change(func(cfg *api.Config) {
+						cfg.Proxies[k].Via, cfg.Proxies[k].Upstream, cfg.Proxies[k].Scene = refs[j], "", ""
+					})
+				case by >= 0:
+					a.setProxyScene(k, a.cfg.Scenes[by].ID)
 				}
 			}
 			if shareButton(c, p.Shared) {
@@ -225,13 +235,20 @@ func (a *App) proxyExits(current api.InterfaceRef) ([]api.InterfaceRef, []string
 	return refs, labels
 }
 
+// setProxyScene sends the proxy at k out by the rules of a scene.
+func (a *App) setProxyScene(k int, scene string) {
+	a.change(func(cfg *api.Config) {
+		cfg.Proxies[k].Via, cfg.Proxies[k].Upstream, cfg.Proxies[k].Scene = api.InterfaceRef{}, "", scene
+	})
+}
+
 // addProxy adds a proxy on the first free port from 1080, through the first
 // connected interface no proxy goes out through yet.
 func (a *App) addProxy(exits []api.InterfaceRef) {
 	used, taken := map[int]bool{}, map[string]bool{}
 	for _, p := range a.cfg.Proxies {
 		used[p.Port] = true
-		if p.Upstream == "" {
+		if p.Via.Name != "" {
 			taken[p.Via.Key()] = true
 		}
 	}
@@ -290,7 +307,7 @@ func (a *App) setUpstream(port int, address string) bool {
 			continue
 		}
 		next := cloneConfig(a.cfg)
-		next.Proxies[k].Via, next.Proxies[k].Upstream = api.InterfaceRef{}, address
+		next.Proxies[k].Via, next.Proxies[k].Upstream, next.Proxies[k].Scene = api.InterfaceRef{}, address, ""
 		if address == "" || next.Validate() != nil {
 			a.toast(locales.UseHostAndPort())
 			return false

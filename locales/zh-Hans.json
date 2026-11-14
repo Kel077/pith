@@ -319,5 +319,6 @@
   "thisMac": "本机",
   "ipAddressOrRange": "IP 地址或网段",
   "deviceName": "名称",
-  "useAnIpv4AddressOrRange": "请填写其他设备的 IPv4 地址或网段"
+  "useAnIpv4AddressOrRange": "请填写其他设备的 IPv4 地址或网段",
+  "rulesOfScene": "规则：{scene}"
 }

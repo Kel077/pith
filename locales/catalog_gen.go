@@ -3617,3 +3617,19 @@ func UseAnIpv4AddressOrRange() string { return In(i18n.Locale()).UseAnIpv4Addres
 func (msgs Messages) UseAnIpv4AddressOrRange() string {
 	return Catalog.Format(msgs.locale, "useAnIpv4AddressOrRange", nil)
 }
+
+// RulesOfScene says "Rules: {scene}"
+// in the language the app shows.
+//
+// A choice in the menu of what a local proxy goes out through: the rules of
+// a scene choose the interface of each connection.
+func RulesOfScene(scene string) string { return In(i18n.Locale()).RulesOfScene(scene) }
+
+// RulesOfScene says "Rules: {scene}"
+// in the language of msgs.
+//
+// A choice in the menu of what a local proxy goes out through: the rules of
+// a scene choose the interface of each connection.
+func (msgs Messages) RulesOfScene(scene string) string {
+	return Catalog.Format(msgs.locale, "rulesOfScene", map[string]any{"scene": scene})
+}

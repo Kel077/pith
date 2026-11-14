@@ -806,5 +806,14 @@
   "useAnIpv4AddressOrRange": "Use another device's IPv4 address, or a range",
   "@useAnIpv4AddressOrRange": {
     "description": "Shown when a device's address isn't an IPv4 address or a range of them, is this Mac's own loopback address, or is listed already."
+  },
+  "rulesOfScene": "Rules: {scene}",
+  "@rulesOfScene": {
+    "description": "A choice in the menu of what a local proxy goes out through: the rules of a scene choose the interface of each connection.",
+    "placeholders": {
+      "scene": {
+        "type": "String"
+      }
+    }
   }
 }

@@ -250,6 +250,13 @@ func (a *App) deleteScene(id string) {
 		if cfg.Selected == id {
 			cfg.Selected = cfg.Scenes[0].ID
 		}
+		// A local proxy that went out by its rules goes out by those of the
+		// scene now selected.
+		for k := range cfg.Proxies {
+			if cfg.Proxies[k].Scene == id {
+				cfg.Proxies[k].Scene = cfg.Selected
+			}
+		}
 	})
 	a.sceneID = a.cfg.Selected
 }

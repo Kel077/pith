@@ -71,6 +71,43 @@ func TestProxyUpstream(t *testing.T) {
 	}
 }
 
+// A proxy goes out by the rules of a scene; when the scene is deleted, by
+// those of the scene then selected. Another exit takes the scene's place.
+func TestProxyByRules(t *testing.T) {
+	a, svc := testApp(t, mock.Options{Sample: true, HelperInstalled: true})
+	a.page = "settings"
+	a.setProxyScene(1, "office")
+	if p := a.cfg.Proxies[1]; p.Scene != "office" || p.Via != (api.InterfaceRef{}) || p.Upstream != "" {
+		t.Fatalf("by rules: %+v", p)
+	}
+	saved, _ := svc.LoadConfig(context.Background())
+	if saved.Proxies[1].Scene != "office" {
+		t.Fatalf("saved %+v", saved.Proxies[1])
+	}
+	tt := ui.NewTester(a.WindowView, 1040, 1500)
+	tt.Frame()
+	if want := locales.RulesOfScene("Office"); !tt.HasText(want) {
+		t.Errorf("no %q among %q", want, tt.Texts())
+	}
+	// Its interface is free for the next proxy.
+	exits, _ := a.proxyExits(api.InterfaceRef{})
+	a.addProxy(exits)
+	if p := a.cfg.Proxies[3]; p.Via.Name != "en7" {
+		t.Errorf("added %+v, want through the iPhone", p)
+	}
+	a.deleteScene("office")
+	if p := a.cfg.Proxies[1]; p.Scene != "home" || len(a.cfg.Scenes) != 1 {
+		t.Fatalf("after its scene was deleted: %+v", p)
+	}
+	saved, _ = svc.LoadConfig(context.Background())
+	if len(saved.Scenes) != 1 || saved.Proxies[1].Scene != "home" {
+		t.Fatalf("the deletion was not saved: %+v", saved.Proxies[1])
+	}
+	if !a.setUpstream(1081, "studio.example.com:1080") || a.cfg.Proxies[1].Scene != "" {
+		t.Fatalf("another proxy kept the scene: %+v", a.cfg.Proxies[1])
+	}
+}
+
 // A device is listed by its IPv4 address or a range of them, as Pith
 // compares them; anything else, or one listed already, is refused.
 func TestDeviceAdd(t *testing.T) {
