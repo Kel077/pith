@@ -156,6 +156,39 @@ func TestHTTPRequestGoesToItsServerOnce(t *testing.T) {
 	}
 }
 
+// A request's trailer fields end at the proxy: they would carry on the
+// fields of the client's hop that its header may not.
+func TestHTTPRequestTrailersAreNotSentOn(t *testing.T) {
+	type got struct {
+		body    string
+		trailer http.Header
+		header  http.Header
+	}
+	seen := make(chan got, 1)
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		seen <- got{string(data), r.Trailer.Clone(), r.Header.Clone()}
+	}))
+	t.Cleanup(origin.Close)
+	m, f := newTestManager(t, Options{Dial: func(ctx context.Context, _ api.InterfaceRef, _ Target) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp4", origin.Listener.Addr().String())
+	}})
+	applyTest(t, m, testProxy(1080))
+	c := f.dial(t, 1080)
+	fmt.Fprint(c, "POST http://example.com/upload HTTP/1.1\r\nHost: example.com\r\nTransfer-Encoding: chunked\r\nConnection: X-Hop\r\nTrailer: X-Checksum\r\n\r\n"+
+		"4\r\nbody\r\n0\r\nX-Hop: of this hop\r\nProxy-Authorization: Basic eDp5\r\nX-Checksum: abc\r\n\r\n")
+	if res := httpAnswer(t, c); res.StatusCode != 200 {
+		t.Fatalf("answer %d", res.StatusCode)
+	}
+	r := <-seen
+	if r.body != "body" {
+		t.Fatalf("the origin got the body %q", r.body)
+	}
+	if len(r.trailer) != 0 || r.header.Get("Trailer") != "" || r.header.Get("X-Hop") != "" || r.header.Get("Proxy-Authorization") != "" {
+		t.Fatalf("the origin got trailer fields %v, announced as %q, header %v", r.trailer, r.header.Get("Trailer"), r.header)
+	}
+}
+
 func TestHTTPRefusesWhatIsNotAProxyRequest(t *testing.T) {
 	var dials atomic.Int64
 	m, f := newTestManager(t, Options{Dial: func(context.Context, api.InterfaceRef, Target) (net.Conn, error) {

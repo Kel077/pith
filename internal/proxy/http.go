@@ -102,6 +102,10 @@ func (m *Manager) serveHTTP(e *listener, s *session, first byte, connectDeadline
 	}
 	req.Header.Set("Connection", "close")
 	req.Close = true
+	// A request's trailer fields are not sent on: they come after a body
+	// that is already on its way, too late to tell which are of this hop.
+	req.Header.Del("Trailer")
+	req.Trailer = nil
 	if _, ok := req.Header["User-Agent"]; !ok {
 		// net/http names itself for a request that names no client.
 		req.Header["User-Agent"] = []string{""}
