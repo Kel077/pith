@@ -31,6 +31,7 @@ A Mac can be on Ethernet, Wi-Fi and a phone's hotspot at the same time, but macO
 - **Keep the intranet on the wire**: company hosts or a NAS over Ethernet, the rest over Wi-Fi.
 - **Switch lines when one fails**: a rule tries its interfaces in order, moving to the next when one can't connect; if none can, it hands the connection back to macOS, or drops it if you'd rather keep the rule strict.
 - **See where everything went**: each connection with its app, its destination, the rule that matched and the interface it actually used.
+- **Lend a line to your other devices**: a laptop, a phone or a tablet goes out through one of this Mac's networks, or by its rules.
 
 If your Mac is often on more than one network and you want certain apps to stick to one of them, Pith is for you. If you only ever use one network, you won't need it.
 
@@ -127,9 +128,26 @@ A router can change its public IP too, when Pith has its admin password. Only th
 
 **Change IP** has the router give its public IPv4 address up and ask Verizon for another, waiting longer each time Verizon gives the same one back, three times at most; it took 34 seconds in a test. Meanwhile your Mac goes through another connected network, which macOS makes the default; rules skip the router's interface, and local proxies through that interface refuse connections rather than use another. Everything else on the router's network is offline for a few seconds each time, and connections through the old address end. The public IPv6 address doesn't change. Pith needs another network with internet to do it, and its helper, which makes that network the default meanwhile.
 
+### Local proxies
+
+A local proxy is a port on your Mac for apps and browsers that take a proxy, with routing on or off. It speaks SOCKS5 and HTTP, TCP only, and goes out one of three ways:
+
+| | |
+| :-- | :-- |
+| **Through one interface** | Everything through that network. When it is down, connections fail instead of using another |
+| **By a scene's rules** | Each connection where that scene's rules send it: a block rule refuses it, a rule's interfaces are tried in order, and what no rule matches goes where macOS sends it. Rules that name apps are left out: a proxy can't tell which app a connection is for |
+| **Through another proxy** | Through a port another Mac's Pith shares, or any SOCKS5 proxy without a password, by its host and port |
+
+### Other devices
+
+**Share** a local proxy, and the devices listed under **Devices** can use it at your Mac's address: another computer, or a phone or tablet whose Wi-Fi settings take an HTTP proxy. A device is listed by its IPv4 address, or a range of them. One that isn't listed is refused, and appears under **Devices** with **Allow** beside it. Each device shows its open connections and what it has moved.
+
+Another Mac can keep its own ports: in its Pith, a local proxy goes out through **Another proxy…**, your Mac's shared port, and the apps there still connect to `127.0.0.1`.
+
+Sharing asks for no password. Any device that can use a listed address can use the port, and reaches what your Mac reaches through it, its local network included: share on networks you trust.
+
 ### Also
 
-- **Local proxies**: SOCKS5 ports on 127.0.0.1, TCP only, each going out through one interface. When that interface is down, connections through its port fail instead of using another. For apps and browsers that take a proxy, with routing on or off.
 - **Safe start**, on by default: if the Mac loses the internet right after routing starts, Pith undoes it.
 - **Resume routing on launch**, **Keep routing after quitting**, **Open at login**, and the download speed in the menu bar.
 - **Import and export** a scene's rules, or back up everything.

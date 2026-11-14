@@ -83,7 +83,12 @@ page has a large title and its actions on the right.
   admin password; then the card says it is changing, and the old and the
   new IP. Meanwhile the "System default" chip moves to the network that
   carries the Mac.
-- **Settings.** Groups of rows, as System Settings has them.
+- **Settings.** Groups of rows, as System Settings has them. A local
+  proxy's row ends with what it goes out through, a small button that
+  shares it, tinted while it does, its switch and a button that removes it.
+  The devices that may use the shared proxies have a group of their own,
+  there once a proxy is shared: what each moves, **Allow** beside one that
+  was refused, and this Mac's addresses, which the devices type.
 
 ## The menu bar
 

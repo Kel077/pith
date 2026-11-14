@@ -91,17 +91,20 @@ about 1.5 seconds after Renew, so its network was offline for the pause and
 some 3 seconds more. After a 5-second pause it got the same address back,
 after a 20-second one another; the whole renewal took 34 seconds.
 
-## Local SOCKS5 listeners
+## Local proxy listeners
 
 `internal/proxy` runs inside the unprivileged App process. Each configured port
-binds TCP on `127.0.0.1` and selects one physical interface; it needs neither an
-installed/trusted helper nor active TUN capture. `Config.Proxies` is independent
-of scenes. Empty configuration opens no ports. The service implements the
+binds TCP on `127.0.0.1`, or on every IPv4 address when it is shared, and goes
+out through one physical interface, through an upstream proxy or by a scene's
+rules; it needs neither an installed/trusted helper nor active TUN capture.
+`Config.Proxies` is independent of the scene that routes, if any. Empty
+configuration opens no ports. The service implements the
 no-auth CONNECT subset of [RFC 1928](https://www.rfc-editor.org/rfc/rfc1928.html),
 with IPv4, IPv6 and ASCII/punycode domain requests; BIND and UDP ASSOCIATE return
 `0x07`. A successful reply contains the real outbound socket's local address and
 port. The parser bounds every field, validates versions/reserved bytes and closes
-malformed requests. There is no LAN listener or authentication credential store.
+malformed requests. There is no authentication credential store: a shared port
+tells devices by their addresses, as described [below](#sharing-a-port-with-other-devices).
 
 At most 32 unique configured ports, each in 1024--65535, are accepted, including
 disabled entries. `Interface.CanProxy` is shared by the interface and backend:
@@ -155,7 +158,7 @@ bytes, excluding SOCKS negotiation and DNS. `Status.Proxies` includes disabled
 entries in configuration order; its `Since` and counters belong to one listener
 instance and reset on replacement. Listening means the local bind succeeded, not
 that the internet is reachable. Target-specific errors do not become listener
-errors.
+errors. A device that isn't listed takes none of these sessions.
 
 `client.New` is idle. The first successful `LoadConfig` activates enabled local
 listeners; a canceled first activation retracts partial listeners. Valid saved
@@ -181,6 +184,110 @@ an open stream were not covered by that run. A later pre-release check at
 captured connection attributed to the App; Stop restored the prior default
 route and tunnel count. Remapping an open proxy stream remains unverified; see the
 [recorded scope](ROOT-TEST.md#recorded-local-socks5-result).
+
+### HTTP on the same port
+
+The first byte of a connection tells its protocol: SOCKS5's version, or a
+capital letter, the start of an HTTP method. Such a connection is served as an
+HTTP proxy serves it, with `net/http`'s request parser over at most 32 KiB of
+request line and header fields, within the handshake's five seconds. `CONNECT
+host:port` ([RFC 9110, section 9.3.6](https://www.rfc-editor.org/rfc/rfc9110.html#section-9.3.6))
+opens a tunnel, answered `200`, and what the client sent after its request
+without waiting is the tunnel's first bytes. A request for an `http://` URL
+([RFC 9112, section 3.2.2](https://www.rfc-editor.org/rfc/rfc9112.html#section-3.2.2))
+goes to its server in origin form, without the `Proxy-` fields, with
+`Connection: close`: one request a connection, whose answer is relayed while
+the request's body is still being sent. Anything else is answered `400`: a
+request that names no host, an `https://` URL outside CONNECT, a port of zero.
+A connection that can't be opened is answered `403` where SOCKS5 says not
+allowed, `504` where it says host unreachable, else `502`. Names, targets,
+limits, counters and what a port goes out through are those of SOCKS5; there is
+no password here either.
+
+### Sharing a port with other devices
+
+A port with `Proxy.Shared` listens on `0.0.0.0` rather than `127.0.0.1`, still
+IPv4 only; changing it replaces the listener, which closes its streams. Every
+accepted connection is then told apart by its source address. One from a
+loopback address, or from the very address it reached, as an app of this Mac
+makes to the Mac's own address, is this Mac's. Any other is a device, taken only
+when a `Config.Devices` entry, an IPv4 address or a range of at least 8 bits,
+covers its address. A device that isn't covered holds no session slot and can't
+close anyone's stream: at most eight at a time, for two seconds each, are read
+far enough to be answered, SOCKS5's method `0xFF` or HTTP's `403`, so that the
+other end can tell a refusal from a proxy that is gone; more are reset at once.
+
+The manager remembers at most 64 devices that connected since the app opened,
+with when each last did, its established streams and the bytes relayed for it;
+`Status.Devices` lists them, the latest first, refused ones included, for the
+interface to offer to allow. A full table forgets the device that connected
+longest ago and has no connection, a refused one first. Saving a configuration
+without a device resets its streams and forgets it; listing one closes nothing.
+With no shared port enabled, no device is remembered.
+
+An address is all that tells a device: there is no password, and a device that
+is taken reaches what the Mac reaches through the port's exit, the networks it
+is connected to included. Loopback destinations stay refused, by address and
+by name. The listener is IPv4: devices reach it at the Mac's IPv4 addresses on
+its local networks, or at the one a VPN to the user's own devices gives it.
+
+### Upstream proxies
+
+A port with `Proxy.Upstream`, a host and a port, has no interface. For each
+connection the manager opens a TCP connection to the upstream as macOS routes
+and resolves it, offers no authentication, and asks for the very target it was
+asked for: a name stays a name, resolved where the connection leaves. A reply
+other than success is repeated to the client, and the address the upstream
+bound becomes the reply's, or the connection's own when the upstream tells
+none, as OpenSSH's dynamic forwarding does. This is how a port another Mac's
+Pith shares becomes a port of this Mac.
+
+An upstream has three seconds, of the ten a CONNECT has, to take the
+connection and agree: if not, the client is told the network is unreachable,
+and `ProxyStatus.Error` is `upstream_unreachable`. An upstream that answers
+`0xFF`, as a shared port that doesn't list this Mac does, gives
+`upstream_refused`, and the client is told the connection is not allowed. Once
+the upstream agreed, a deadline is the target's, and says nothing against the
+upstream. A target the upstream couldn't reach clears the error, as a
+connection does. A port whose upstream carried nothing for ten seconds asks it
+whether it answers, without asking for a connection, when the status is read.
+Suspending an interface during a router's renewal leaves these ports alone.
+A port whose upstream is its own loopback port is refused when saved; a longer
+loop ends when the ports it runs through are full of handshakes.
+
+### Ports by a scene's rules
+
+A port with `Proxy.Scene` asks the client's `Route` for each connection. The
+client compiles the rules of the scenes that ports name, with `internal/rules`
+as `Check` and the engine do, when the configuration is loaded and saved; an
+open stream keeps the exit it has. A destination is matched as TCP by its name,
+as the client asked for it, or by its address; a rule that names apps never
+matches, since nothing tells the app behind a proxy's connection, least of all
+on another device. A block rule's connection is refused as not allowed. A route
+rule's interfaces are tried in order through the same interface-bound dialer
+as a port through one interface, names resolved by each interface's own DNS,
+with three seconds each; an interface that is suspended is skipped. When none
+connects, a rule that falls back, like a connection no rule matches, is dialed
+unbound, with macOS's routes and resolver, but never to a loopback address,
+which a name may resolve to: such a port reaches no more of this Mac than a
+port through an interface does. While a scene routes, that
+connection of the App is captured and follows that scene's rules as any app's.
+A name no rule matches is looked up with macOS's resolver, for two seconds at
+most, only when the scene has an enabled rule without apps that names an
+address; if a rule names one of its addresses, the connection goes to that
+address. Such a port has no interface to report on, and takes no part in the
+connection log or the traffic statistics, like the other ports.
+
+On hardware at `a343b28`, a second Mac used two shared ports of the first, one
+through its wired interface and one through its cellular one, by the first
+Mac's address on the local network and by the one a VPN gave it: each left
+through the right public address. A device that wasn't listed was answered
+`0xFF` and listed as refused, and a port of the second Mac that went out
+through a shared one reported `upstream_refused` until the first Mac listed
+it. A 25 MB download through the two ports in a row ran at about 490 Mbit/s,
+as it did through an SSH port forward between the same Macs. HTTP, CONNECT
+and plain, at `5069804`, and a port by a scene's rules, at `c9a3027`, were
+tried on one Mac only.
 
 ## Capturing and forwarding
 

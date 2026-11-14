@@ -6,6 +6,10 @@ All notable changes to Pith are listed here. The format follows [Keep a Changelo
 
 ### Added
 
+- **Share** on a local proxy lets the devices listed under **Devices** use it at the Mac's address: another computer, or a phone or tablet whose Wi-Fi settings take an HTTP proxy. A device is listed by its IPv4 address or a range of them; one that isn't listed is refused, and appears under **Devices** with **Allow** beside it. Each device shows its open connections and what it has moved. Sharing asks for no password: share on networks you trust.
+- A local proxy can go out through **Another proxy…**, a port another Mac's Pith shares or any SOCKS5 proxy without a password, so that a second Mac keeps the same ports on 127.0.0.1 and leaves through the first Mac's networks.
+- A local proxy can go out by a scene's rules rather than through one interface: a block rule refuses a connection, a rule's interfaces are tried in order, and what no rule matches goes where macOS sends it. Rules that name apps are left out, since a proxy can't tell the app.
+- Local proxies speak HTTP as well as SOCKS5 on the same port, for apps and devices that take an HTTP proxy alone.
 - **Change IP** on the card of an Ethernet or Wi-Fi interface whose router is a Verizon Router CHR30A-R, with its admin password: the router gives its public IPv4 address up and asks Verizon for another, waiting longer each time Verizon gives the same one back, three times at most. Meanwhile another connected network carries the Mac as macOS's default, rules skip the interface, and local proxies through it refuse connections rather than use another network. Everything else on the router's network is offline for a few seconds each time. It updates the helper, which makes the other network the default meanwhile, so macOS asks for your password once.
 
 ### Changed
