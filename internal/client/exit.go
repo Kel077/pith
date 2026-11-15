@@ -433,6 +433,13 @@ func (c *Client) changeAddress(ctx context.Context, via api.InterfaceRef, device
 		c.proxyMu.Unlock()
 		return nil, &api.Error{Code: api.ErrInterfaceUnavailable, Detail: "the interface changed during an address renewal"}
 	}
+	if pending == nil && len(c.exitChanges) > 0 {
+		// A router's renewal needs another interface to carry the Mac. Its
+		// address must stay put until the first interface works again.
+		c.exitMu.Unlock()
+		c.proxyMu.Unlock()
+		return nil, &api.Error{Code: api.ErrBusy, Detail: "another interface is changing its address"}
+	}
 	if pending == nil {
 		pending = &exitChange{link: *link, done: make(chan struct{})}
 		if c.exitChanges == nil {

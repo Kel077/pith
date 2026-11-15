@@ -213,7 +213,7 @@ func (c *Client) renewRouter(ctx context.Context, iface string) (r api.RouterRen
 		return r, err
 	}
 	if !c.renewing.TryLock() {
-		return r, &api.Error{Code: api.ErrInternal, Detail: "another router is renewing its address"}
+		return r, &api.Error{Code: api.ErrBusy, Detail: "another router is renewing its address"}
 	}
 	defer c.renewing.Unlock()
 	started := time.Now()
