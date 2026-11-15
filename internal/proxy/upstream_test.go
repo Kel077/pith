@@ -310,6 +310,24 @@ func TestUpstreamThatIsNotSOCKS(t *testing.T) {
 
 // An upstream that doesn't greet in time doesn't answer; once it greeted, a
 // CONNECT that runs out of time is the target's failure, not the upstream's.
+// readFailedOrClosed reads what a client sees when its CONNECT runs out of
+// time: the stream closed, or a failure reply and then the close. The reply
+// gets out only when the upstream's deadline fires before the client socket's,
+// set for the same instant, which a busy machine may order either way.
+func readFailedOrClosed(t *testing.T, c net.Conn) {
+	t.Helper()
+	if err := c.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(c)
+	if err != nil && !errors.Is(err, syscall.ECONNRESET) {
+		t.Fatalf("read %v, want the stream closed", err)
+	}
+	if len(data) > 0 && (len(data) != 10 || data[0] != 5 || data[1] == replySuccess) {
+		t.Fatalf("read % x, want the stream closed or a failure reply", data)
+	}
+}
+
 func TestUpstreamDeadlines(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -325,7 +343,7 @@ func TestUpstreamDeadlines(t *testing.T) {
 				t.Fatal(err)
 			}
 			readMethod(t, c, 0)
-			readClosed(t, c)
+			readFailedOrClosed(t, c)
 			waitFor(t, func() bool { m.mu.Lock(); defer m.mu.Unlock(); return m.total == 0 })
 			m.mu.Lock()
 			m.byPort[1080].up.checked = time.Now() // no check of its own meanwhile
