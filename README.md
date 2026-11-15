@@ -126,7 +126,7 @@ A router can change its public IP too, when Pith has its admin password. Only th
 | :-- | :-- |
 | Verizon Router CHR30A-R (Fios) | Its model beside its address, and **Change IP** on the card of the Ethernet or Wi-Fi it serves |
 
-**Change IP** has the router give its public IPv4 address up and ask Verizon for another, waiting longer each time Verizon gives the same one back, three times at most; it took 34 seconds in a test. Meanwhile your Mac goes through another connected network, which macOS makes the default; rules skip the router's interface, and local proxies through that interface refuse connections rather than use another. Everything else on the router's network is offline for a few seconds each time, and connections through the old address end. The public IPv6 address doesn't change. Pith needs another network with internet to do it, and its helper, which makes that network the default meanwhile.
+**Change IP** has the router give its public IPv4 address up and ask Verizon for another, waiting longer each time Verizon gives the same one back, three times at most; it took 34 seconds in a test. Meanwhile your Mac goes through another connected network, which macOS makes the default; rules skip the router's interface, and local proxies through that interface refuse connections rather than use another. Everything else on the router's network is offline meanwhile, for 5 seconds on the first try, 20 on the second and a minute on the third, plus the time the router takes to connect again, and connections through the old address end. The public IPv6 address doesn't change. Pith needs another network with internet to do it, and its helper, which makes that network the default meanwhile.
 
 ### Local proxies
 
@@ -160,13 +160,15 @@ curl http://127.0.0.1:1081/
 curl -X POST http://127.0.0.1:1081/change-ip
 ```
 
-Whatever can use the port can ask `GET /`. Pith looks the addresses up once and keeps them until the network changes; `GET /?max-age=60` has them looked up again when they are older than a minute.
+Whatever can use the port can ask `GET /`. Pith looks the addresses up once and keeps them until the network changes; `GET /?max-age=60` has them looked up again when they are older than a minute. When a lookup fails, a plain `GET /` waits 30 seconds before Pith tries again, then longer each time.
 
-`POST /change-ip` is refused until you turn on **Let apps and devices change its IP**, the button with two arrows on the proxy's row. Then every app on your Mac, and every device the proxy is shared with, can change that IP. A router that changes its IP takes everything on its network offline for a few seconds: think of who else is on it.
+`POST /change-ip` is refused until you turn on **Let apps and devices change its IP**, the button with two arrows on the proxy's row. Then every app on your Mac, and every device the proxy is shared with, can change that IP. A router that changes its IP takes everything on its network offline, from seconds to over a minute: think of who else is on it.
+
+Pith changes one network's IP at a time, so that the network carrying your Mac while a router renews stays up: while another network's IP is being changed, `POST /change-ip` is answered `503`. Try again once that is done.
 
 A proxy that goes out through another Mac's Pith passes both requests on to it; a change needs the button on in both. Its row names the network the other Mac uses and its public IP, with **Change IP** beside them when the other Mac allows it.
 
-A web page can't ask a port either: Pith refuses requests that a page in a browser makes.
+Pith answers only requests that name the port by an IP address, `localhost`, a name without dots or a `.local` name, and refuses those a page in a browser makes, even a page whose own name was pointed at your Mac. A device that asks by a full domain name, such as `mac.example.com`, is refused too: use your Mac's address, or its name on the local network.
 
 ### Also
 
@@ -226,7 +228,7 @@ If it reports an error, or you're still offline once the helper is removed, stop
 
 Pith reads where connections go: addresses, ports, and host names from TLS SNI, the HTTP Host or DNS. It never reads what they carry, decrypts nothing and installs no certificate. Rules, the connection log and traffic totals stay on your Mac, and the log keeps as many days as Settings says.
 
-Pith connects to the internet on its own in one case: with Safe start on, each time routing starts, the helper opens one TLS connection to api.ipify.org to check the Mac is still online, and sends no request over it. Everything else is something you start: a speed test on the Network page downloads 25 MB from and uploads 8 MB to [Cloudflare's speed test](https://speed.cloudflare.com), which also tells the public address it saw; changing a hotspot's or a router's IP asks [ipify](https://www.ipify.org) for its public addresses before and after, as it does once when a script or another Mac's Pith asks a local proxy's port for them; and reaching a server connects to the one you enter. With a hotspot's or a router's admin password, Pith reads the device's own admin page, on your local network, while the Network page is open; and when a local proxy's port is first asked about itself, Pith looks at its network's router once, to tell whether it is one whose IP it can change.
+Pith connects to the internet on its own in one case: with Safe start on, each time routing starts, the helper opens one TLS connection to api.ipify.org to check the Mac is still online, and sends no request over it. Everything else is something you start: a speed test on the Network page downloads 25 MB from and uploads 8 MB to [Cloudflare's speed test](https://speed.cloudflare.com), which also tells the public address it saw; changing a hotspot's or a router's IP asks [ipify](https://www.ipify.org) for its public addresses before and after, as it does when a script or another Mac's Pith asks a local proxy's port for them and Pith knows none, or `max-age` finds them too old; and reaching a server connects to the one you enter. With a hotspot's or a router's admin password, Pith reads the device's own admin page, on your local network, while the Network page is open; and when a local proxy's port is first asked about itself, Pith looks at its network's router once, to tell whether it is one whose IP it can change.
 
 ## Documentation
 
