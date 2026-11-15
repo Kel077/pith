@@ -20,6 +20,15 @@ func waitPortRequests(t *testing.T, m *Manager, requests, changes int) {
 	})
 }
 
+func waitPortRequestStarted(t *testing.T, entered <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the request did not reach its hook")
+	}
+}
+
 func TestPortChangeRequestsLeaveRoomForInfo(t *testing.T) {
 	changeEntered := make(chan struct{}, maxChangeRequests)
 	infoEntered := make(chan struct{}, maxPortRequests-maxChangeRequests)
@@ -54,7 +63,7 @@ func TestPortChangeRequestsLeaveRoomForInfo(t *testing.T) {
 	var changes []net.Conn
 	for i := range maxChangeRequests {
 		changes = append(changes, portRequest(t, f, a.Port+i%2, "POST", "/change-ip", "", ""))
-		<-changeEntered
+		waitPortRequestStarted(t, changeEntered)
 	}
 	portError(t, portRequest(t, f, a.Port, "POST", "/change-ip", "", ""), 503, api.ErrInternal)
 	waitPortRequests(t, m, maxChangeRequests, maxChangeRequests)
@@ -89,7 +98,7 @@ func TestPortChangeRequestsLeaveRoomForInfo(t *testing.T) {
 	var reads []net.Conn
 	for i := range maxPortRequests - maxChangeRequests {
 		reads = append(reads, portRequest(t, f, a.Port+i%2, "GET", "/", "", ""))
-		<-infoEntered
+		waitPortRequestStarted(t, infoEntered)
 	}
 	waitPortRequests(t, m, maxPortRequests, maxChangeRequests)
 	portError(t, portRequest(t, f, a.Port, "GET", "/", "", ""), 503, api.ErrInternal)
@@ -132,7 +141,7 @@ func TestPortChangeRequestSlotsReturnOnDeparture(t *testing.T) {
 	var waiting []net.Conn
 	for range maxChangeRequests {
 		waiting = append(waiting, portRequest(t, f, p.Port, "POST", "/change-ip", "", ""))
-		<-entered
+		waitPortRequestStarted(t, entered)
 	}
 	leaving := maxChangeRequests / 2
 	for _, c := range waiting[:leaving] {
@@ -142,7 +151,7 @@ func TestPortChangeRequestSlotsReturnOnDeparture(t *testing.T) {
 	waiting = waiting[leaving:]
 	for range leaving {
 		waiting = append(waiting, portRequest(t, f, p.Port, "POST", "/change-ip", "", ""))
-		<-entered
+		waitPortRequestStarted(t, entered)
 	}
 	waitPortRequests(t, m, maxChangeRequests, maxChangeRequests)
 	portError(t, portRequest(t, f, p.Port, "POST", "/change-ip", "", ""), 503, api.ErrInternal)

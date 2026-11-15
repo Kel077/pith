@@ -19,7 +19,7 @@ import (
 func portRequest(t *testing.T, f *listenerFixture, port int, method, path, fields, body string) *net.TCPConn {
 	t.Helper()
 	c := f.dial(t, port)
-	wire := fmt.Sprintf("%s %s HTTP/1.1\r\nHost: example.com\r\n%sContent-Length: %d\r\n\r\n%s", method, path, fields, len(body), body)
+	wire := fmt.Sprintf("%s %s HTTP/1.1\r\nHost: 127.0.0.1\r\n%sContent-Length: %d\r\n\r\n%s", method, path, fields, len(body), body)
 	if _, err := io.WriteString(c, wire); err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestPortMethodsPathsAndOneRequest(t *testing.T) {
 	}
 	portError(t, portRequest(t, f, 18080, "GET", "/unknown", "", ""), 404, api.ErrUnsupported)
 	c := f.dial(t, 18080)
-	fmt.Fprint(c, "GET / HTTP/1.1\r\nHost: example.com\r\n\r\nPOST /change-ip HTTP/1.1\r\nHost: example.com\r\n\r\n")
+	fmt.Fprint(c, "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\nPOST /change-ip HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
 	portAnswer(t, c, 200, nil)
 	readClosed(t, c)
 }
@@ -171,14 +171,18 @@ func TestPortInterfaceAndSceneFallbacks(t *testing.T) {
 		opts := Options{Dial: noDial(t)}
 		if hook {
 			opts.Info = func(context.Context, api.InterfaceRef, time.Duration) (api.ProxyInfo, error) {
-				return api.ProxyInfo{PublicIPv4: "192.0.2.7", CanChangeIP: true}, errors.New("not available")
+				return api.ProxyInfo{Interface: "Known adapter", Online: false, Changing: true, PublicIPv4: "192.0.2.7", CanChangeIP: true}, errors.New("not available")
 			}
 		}
 		m, f := newTestManager(t, opts)
 		applyTest(t, m, testProxy(18080), sceneProxy(18081, "example"))
 		var info api.ProxyInfo
 		portAnswer(t, portRequest(t, f, 18080, "GET", "/", "", ""), 200, &info)
-		if info.Interface != testVia.Name || !info.Online || info.CanChangeIP || info.PublicIPv4 != "" {
+		name := testVia.Name
+		if hook {
+			name = "Known adapter"
+		}
+		if info.Interface != name || info.Online != !hook || info.Changing != hook || info.CanChangeIP || info.PublicIPv4 != "" {
 			t.Fatalf("interface fallback = %+v", info)
 		}
 		info = api.ProxyInfo{}
@@ -223,7 +227,7 @@ func TestPortChangeIPResultsErrorsAndBodies(t *testing.T) {
 	portError(t, portRequest(t, f, p.Port, "POST", "/change-ip", "", strings.Repeat("a", maxChangeBody+1)), 413, api.ErrInvalidConfig)
 	for _, body := range []string{"4\r\nbody\r\n0\r\n\r\n", fmt.Sprintf("%x\r\n%s\r\n0\r\n\r\n", maxChangeBody+1, strings.Repeat("b", maxChangeBody+1))} {
 		c := f.dial(t, p.Port)
-		fmt.Fprint(c, "POST /change-ip HTTP/1.1\r\nHost: example.com\r\nTransfer-Encoding: chunked\r\n\r\n"+body)
+		fmt.Fprint(c, "POST /change-ip HTTP/1.1\r\nHost: 127.0.0.1\r\nTransfer-Encoding: chunked\r\n\r\n"+body)
 		if strings.HasPrefix(body, "4\r\n") {
 			portAnswer(t, c, 200, nil)
 		} else {
@@ -239,6 +243,7 @@ func TestPortChangeIPResultsErrorsAndBodies(t *testing.T) {
 		code   api.ErrorCode
 	}{
 		{&api.Error{Code: api.ErrUnsupported}, 501, api.ErrUnsupported},
+		{&api.Error{Code: api.ErrBusy}, 503, api.ErrBusy},
 		{fmt.Errorf("wrapped: %w", &api.Error{Code: api.ErrNoStandby, Detail: "no standby exit"}), 502, api.ErrNoStandby},
 		{errors.New("private internal failure"), 502, api.ErrInternal},
 	} {
@@ -477,13 +482,13 @@ func TestPortRefusesUnlistedDevice(t *testing.T) {
 	m, f := newTestManager(t, Options{Dial: noDial(t)})
 	shareTest(t, m, []string{"192.0.2.10"}, sharedProxy(18080))
 	c := f.dialFrom(t, 18080, "192.0.2.11")
-	fmt.Fprint(c, "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
+	fmt.Fprint(c, "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
 	if res := httpAnswer(t, c); res.StatusCode != 403 {
 		t.Fatalf("an unlisted device got %d", res.StatusCode)
 	}
 	readClosed(t, c)
 	c = f.dialFrom(t, 18080, "192.0.2.10")
-	fmt.Fprint(c, "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
+	fmt.Fprint(c, "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
 	portAnswer(t, c, 200, nil)
 	if device, ok := deviceOf(m, "192.0.2.10"); !ok || device.Open != 0 || device.Sent != 0 || device.Received != 0 {
 		t.Fatalf("device's control request counted as a stream: %+v, %v", device, ok)
