@@ -48,6 +48,10 @@ func (s *Service) RenewRouter(ctx context.Context, iface string) (api.RouterRene
 	case locked:
 		return r, &api.Error{Code: api.ErrWrongPassword, Detail: "no admin password"}
 	}
+	if err := s.beginRenewal(iface); err != nil {
+		return r, err
+	}
+	defer s.endRenewal(iface)
 	var err error
 	if r.Before, err = s.Probe(ctx, iface, ""); err != nil {
 		return r, err

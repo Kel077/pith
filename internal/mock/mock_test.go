@@ -292,3 +292,59 @@ func TestChangeProxyIP(t *testing.T) {
 		t.Fatal("a proxy by a scene's rules may have its address changed", err)
 	}
 }
+
+// One change of a public address runs at a time, as the client has it: a
+// router's renewal leaves the Mac to the hotspot, which mustn't renew then.
+func TestChangeProxyIPOneInterfaceAtATime(t *testing.T) {
+	ctx := context.Background()
+	s := New(Options{})
+	cfg := SampleConfig()
+	cfg.Proxies = append(cfg.Proxies, api.Proxy{Port: 1083, Upstream: "studio.example.com:1081", Enabled: true})
+	if err := s.SaveConfig(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	changing := func() map[int]bool {
+		st, _ := s.Status(ctx)
+		out := map[int]bool{}
+		for _, p := range st.Proxies {
+			if p.Changing {
+				out[p.Port] = true
+			}
+		}
+		return out
+	}
+	if err := s.beginRenewal(routerIface); err != nil {
+		t.Fatal(err)
+	}
+	if got := changing(); len(got) != 1 || !got[1080] {
+		t.Fatalf("while the router renews, changing: %v", got)
+	}
+	if _, err := s.RenewHotspot(ctx, hotspotIface); api.Code(err) != api.ErrBusy {
+		t.Fatalf("the hotspot renewed while the router did: %v", err)
+	}
+	if _, err := s.ChangeProxyIP(ctx, 1081); api.Code(err) != api.ErrBusy {
+		t.Fatalf("the hotspot's proxy changed its IP while the router renewed: %v", err)
+	}
+	// Another Mac's address is that Mac's to change.
+	if _, err := s.ChangeProxyIP(ctx, 1083); err != nil {
+		t.Fatal(err)
+	}
+	s.endRenewal(routerIface)
+	if got := changing(); len(got) != 0 {
+		t.Fatalf("after the renewal, changing: %v", got)
+	}
+	if _, err := s.ChangeProxyIP(ctx, 1081); err != nil {
+		t.Fatal(err)
+	}
+
+	s.ForbidUpstreamChanges()
+	st, _ := s.Status(ctx)
+	for _, p := range st.Proxies {
+		if p.Port == 1083 && (p.Upstream == nil || p.Upstream.CanChangeIP) {
+			t.Fatalf("an upstream that forbids changes says %+v", p.Upstream)
+		}
+	}
+	if _, err := s.ChangeProxyIP(ctx, 1083); api.Code(err) != api.ErrNotAllowed {
+		t.Fatalf("through an upstream that forbids changes: %v", err)
+	}
+}

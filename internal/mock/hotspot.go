@@ -47,6 +47,10 @@ func (s *Service) RenewHotspot(ctx context.Context, iface string) (api.HotspotRe
 	case locked:
 		return r, &api.Error{Code: api.ErrWrongPassword, Detail: "no admin password"}
 	}
+	if err := s.beginRenewal(iface); err != nil {
+		return r, err
+	}
+	defer s.endRenewal(iface)
 	var err error
 	if r.Before, err = s.Probe(ctx, iface, ""); err != nil {
 		return r, err
@@ -64,6 +68,30 @@ func (s *Service) RenewHotspot(ctx context.Context, iface string) (api.HotspotRe
 	s.mu.Unlock()
 	r.After, err = s.Probe(ctx, iface, "")
 	return r, err
+}
+
+// beginRenewal counts a change of iface's public address in: ErrBusy while
+// another interface's is being changed, as the client has one change at a
+// time, so that the interface carrying the Mac while a router renews keeps
+// working. endRenewal counts it out.
+func (s *Service) beginRenewal(iface string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for other := range s.renewing {
+		if other != iface {
+			return &api.Error{Code: api.ErrBusy, Detail: "the address of " + other + " is being changed"}
+		}
+	}
+	s.renewing[iface]++
+	return nil
+}
+
+func (s *Service) endRenewal(iface string) {
+	s.mu.Lock()
+	if s.renewing[iface]--; s.renewing[iface] <= 0 {
+		delete(s.renewing, iface)
+	}
+	s.mu.Unlock()
 }
 
 // LockHotspot forgets the hotspot's admin password, for the views of a

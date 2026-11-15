@@ -32,7 +32,7 @@ func (s *Service) proxiesLocked() []api.ProxyStatus {
 				s.proxies[p.Port] = live
 			}
 			st = *live
-			st.Changing = s.changing[p.Port]
+			st.Changing = s.changes[p.Port] != nil || p.Upstream == "" && p.Scene == "" && s.renewing[p.Via.Name] > 0
 			if p.Upstream != "" {
 				// The proxy it goes out through answers, as a port of another
 				// Mac's Pith does.
@@ -62,7 +62,25 @@ func (s *Service) upstreamLocked(p api.Proxy) *api.ProxyInfo {
 	}
 	return &api.ProxyInfo{Pith: api.ProxyInfoVersion, Port: port, Exit: api.ExitInterface, Interface: upstreamInterface, Online: true,
 		PublicIPv4: fmt.Sprintf("198.51.100.%d", 140+s.upstream%100), PublicIPv6: fmt.Sprintf("2001:db8:%x::1", 0x140+s.upstream),
-		At: s.born, CanChangeIP: true, Changing: s.changing[p.Port]}
+		At: s.born, CanChangeIP: !s.fixed, Changing: s.changes[p.Port] != nil}
+}
+
+// ForbidUpstreamChanges has the Pith behind every upstream refuse to change
+// its address for this Mac, as its port does with ChangeIP off: for the
+// views of a proxy whose IP can't be changed from here.
+func (s *Service) ForbidUpstreamChanges() {
+	s.mu.Lock()
+	s.fixed = true
+	s.mu.Unlock()
+}
+
+// proxyChange is a change of a proxy's public address under way. Like the
+// client's, it goes on when the caller who asked for it leaves, and another
+// call for the port waits for it and gets what it did.
+type proxyChange struct {
+	done   chan struct{}
+	change api.ProxyIPChange
+	err    error
 }
 
 func (s *Service) ChangeProxyIP(ctx context.Context, port int) (api.ProxyIPChange, error) {
@@ -74,17 +92,37 @@ func (s *Service) ChangeProxyIP(ctx context.Context, port int) (api.ProxyIPChang
 			p = q
 		}
 	}
-	if p.Port == 0 || p.Scene != "" || s.changing[port] {
+	if p.Port == 0 || p.Scene != "" {
 		s.mu.Unlock()
 		return change, &api.Error{Code: api.ErrUnsupported, Detail: "no address of this proxy to change"}
 	}
-	s.changing[port] = true
-	s.mu.Unlock()
-	defer func() {
-		s.mu.Lock()
-		delete(s.changing, port)
+	if p.Upstream != "" && s.fixed {
 		s.mu.Unlock()
-	}()
+		return change, &api.Error{Code: api.ErrNotAllowed, Detail: "the upstream port does not allow address changes"}
+	}
+	c := s.changes[port]
+	if c == nil {
+		c = &proxyChange{done: make(chan struct{})}
+		s.changes[port] = c
+		go func() {
+			c.change, c.err = s.changeProxyIP(context.WithoutCancel(ctx), p)
+			s.mu.Lock()
+			delete(s.changes, port)
+			s.mu.Unlock()
+			close(c.done)
+		}()
+	}
+	s.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return change, ctx.Err()
+	case <-c.done:
+		return c.change, c.err
+	}
+}
+
+func (s *Service) changeProxyIP(ctx context.Context, p api.Proxy) (api.ProxyIPChange, error) {
+	change := api.ProxyIPChange{Port: p.Port}
 	var before, after api.Probe
 	var took time.Duration
 	switch {
