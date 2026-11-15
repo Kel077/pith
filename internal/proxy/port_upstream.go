@@ -58,7 +58,7 @@ func (m *Manager) upstreamHTTP(ctx context.Context, e *listener, method string, 
 		path += "?max-age=" + strconv.FormatInt(int64(maxAge/time.Second), 10)
 	}
 	req := &http.Request{
-		Method: method, URL: &url.URL{Path: "/"}, Host: e.cfg.Upstream,
+		Method: method, URL: &url.URL{Path: "/"}, Host: conn.RemoteAddr().String(),
 		Header: make(http.Header), Close: true,
 	}
 	req.URL, _ = url.Parse(path)

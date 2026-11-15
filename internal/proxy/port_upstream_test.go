@@ -298,7 +298,7 @@ func TestPortUpstreamHeadersAndBounds(t *testing.T) {
 	var info api.ProxyInfo
 	portAnswer(t, portRequest(t, f, 18080, "GET", "/?max-age=12", "Pith-Hops: 2\r\nX-Private: keep here\r\n", ""), 200, &info)
 	req := <-seen
-	if req.RequestURI != "/?max-age=12" || req.Host != "example.com:18081" || req.Header.Get("Pith-Hops") != "3" ||
+	if req.RequestURI != "/?max-age=12" || req.Host != peer.ln.Addr().String() || req.Header.Get("Pith-Hops") != "3" ||
 		req.Header.Get("X-Private") != "" || req.Header.Get("User-Agent") != "" || !req.Close || info.Upstream == nil || info.Upstream.Pith != 2 {
 		t.Fatalf("forwarded request = %+v, response %+v", req, info)
 	}
