@@ -313,8 +313,8 @@ func (m *Manager) portInfo(ctx context.Context, e *listener, maxAge time.Duratio
 
 func (m *Manager) changeIP(ctx context.Context, e *listener, hops int) (api.ProxyIPChange, *portFailure) {
 	result := api.ProxyIPChange{Port: e.cfg.Port}
-	if err := ctx.Err(); err != nil {
-		return result, portProblem(http.StatusBadGateway, api.ErrInternal, "the wait for an address change ended")
+	if changeWaitOver(ctx) {
+		return result, changeWaitEnded()
 	}
 	switch {
 	case e.cfg.Upstream != "":
@@ -324,6 +324,9 @@ func (m *Manager) changeIP(ctx context.Context, e *listener, hops int) (api.Prox
 	default:
 		changed, err := m.opts.ChangeIP(ctx, e.cfg.Via)
 		if err != nil {
+			if changeWaitOver(ctx) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return result, changeWaitEnded()
+			}
 			problem := changeError(err)
 			status := http.StatusBadGateway
 			if problem.Code == api.ErrUnsupported {
@@ -336,6 +339,19 @@ func (m *Manager) changeIP(ctx context.Context, e *listener, hops int) (api.Prox
 		changed.Port, changed.At = e.cfg.Port, changed.At.UTC()
 		return changed, nil
 	}
+}
+
+func changeWaitEnded() *portFailure {
+	return portProblem(http.StatusBadGateway, api.ErrInternal, "the wait for an address change ended; the change may still be in progress")
+}
+
+func changeWaitOver(ctx context.Context) bool {
+	if ctx.Err() != nil {
+		return true
+	}
+	// A socket's deadline may fire before context cancellation has propagated.
+	deadline, ok := ctx.Deadline()
+	return ok && !time.Now().Before(deadline)
 }
 
 func changeError(err error) *api.Error {

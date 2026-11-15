@@ -185,6 +185,9 @@ func (m *Manager) recordUpstreamInfo(e *listener, info *api.ProxyInfo, err error
 func (m *Manager) changeUpstreamIP(ctx context.Context, e *listener, hops int) (api.ProxyIPChange, *portFailure) {
 	result := api.ProxyIPChange{Port: e.cfg.Port}
 	up, err := m.readUpstreamInfo(ctx, e, -1, hops, true)
+	if changeWaitOver(ctx) {
+		return result, changeWaitEnded()
+	}
 	var failure *portFailure
 	if errors.As(err, &failure) {
 		return result, failure
@@ -199,11 +202,11 @@ func (m *Manager) changeUpstreamIP(ctx context.Context, e *listener, hops int) (
 	e.up.changing++
 	m.mu.Unlock()
 	defer func() {
-		if ctx.Err() == nil {
+		if !changeWaitOver(ctx) {
 			_, _ = m.readUpstreamInfo(ctx, e, -1, hops, true)
 		}
 		m.mu.Lock()
-		if ctx.Err() != nil {
+		if changeWaitOver(ctx) {
 			// The change may continue upstream after this wait ends. Let
 			// the next Status poll learn that without extending the wait.
 			e.up.checked = time.Time{}
@@ -212,6 +215,9 @@ func (m *Manager) changeUpstreamIP(ctx context.Context, e *listener, hops int) (
 		m.mu.Unlock()
 	}()
 	response, err := m.upstreamHTTP(ctx, e, http.MethodPost, -1, hops)
+	if err != nil && changeWaitOver(ctx) {
+		return result, changeWaitEnded()
+	}
 	if errors.As(err, &failure) {
 		return result, failure
 	}

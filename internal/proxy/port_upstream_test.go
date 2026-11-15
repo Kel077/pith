@@ -450,8 +450,13 @@ func TestPortUpstreamCanceledCaller(t *testing.T) {
 	applyTest(t, m, upstreamProxy(18080, "192.0.2.7:18081"))
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
-	if _, err := m.ChangeIP(ctx, 18080); api.Code(err) != api.ErrUpstreamUnreachable {
-		t.Fatalf("canceled upstream change = %v", err)
+	_, err := m.ChangeIP(ctx, 18080)
+	assertChangeWaitEnded(t, err)
+	m.mu.Lock()
+	up := m.byPort[18080].up
+	m.mu.Unlock()
+	if up.info == nil || up.err != nil || !up.checked.IsZero() || up.changing != 0 {
+		t.Fatalf("an ended wait invalidated upstream state: %+v", up)
 	}
 	if err := m.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 		t.Fatal(err)
