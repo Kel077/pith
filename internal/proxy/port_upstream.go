@@ -134,14 +134,14 @@ func (m *Manager) readUpstreamInfo(ctx context.Context, e *listener, maxAge time
 		if response.status == http.StatusServiceUnavailable || response.status == http.StatusLoopDetected {
 			status = response.status
 		}
-		return m.recordUpstreamInfo(e, nil, body.Error, true), &portFailure{status, body.Error}
+		return m.recordUpstreamInfo(e, nil, nil, true), &portFailure{status, body.Error}
 	}
 	if err == errUpstreamSlow {
 		m.mu.Lock()
 		known := e.up.info != nil
 		m.mu.Unlock()
 		if known || forChange {
-			return m.recordUpstreamInfo(e, nil, err, true), &portFailure{http.StatusBadGateway, errUpstreamSlow}
+			return m.recordUpstreamInfo(e, nil, nil, true), &portFailure{http.StatusBadGateway, errUpstreamSlow}
 		}
 		// With no Pith information, a GET can still report a SOCKS proxy's
 		// availability. A future change must not mistake silence for 501.

@@ -27,8 +27,9 @@ func TestPortUpstreamErrorsKeepLastAnswer(t *testing.T) {
 		code         api.ErrorCode
 	}{
 		{503, 503, api.ErrBusy}, {508, 508, api.ErrInternal}, {500, 502, api.ErrNoStandby}, {501, 502, api.ErrUnsupported},
+		{502, 502, api.ErrUpstreamUnreachable}, {502, 502, api.ErrUpstreamRefused},
 	} {
-		t.Run(fmt.Sprint(tc.status), func(t *testing.T) {
+		t.Run(fmt.Sprintf("%d/%s", tc.status, tc.code), func(t *testing.T) {
 			var failing atomic.Bool
 			peer := portUpstream(t, func(c net.Conn, req *http.Request) {
 				if req.Method != "GET" {
@@ -55,8 +56,8 @@ func TestPortUpstreamErrorsKeepLastAnswer(t *testing.T) {
 			if _, err := m.ChangeIP(context.Background(), p.Port); api.Code(err) != tc.code {
 				t.Fatalf("local change = %v, want %s", err, tc.code)
 			}
-			if st := m.Status(context.Background())[0]; !reflect.DeepEqual(st.Upstream, info.Upstream) {
-				t.Fatalf("the upstream's error erased its last answer: %+v", st.Upstream)
+			if st := m.Status(context.Background())[0]; st.Error != nil || !reflect.DeepEqual(st.Upstream, info.Upstream) {
+				t.Fatalf("the upstream's own error changed this port's availability: %+v", st)
 			}
 		})
 	}
@@ -83,8 +84,8 @@ func TestPortSilentKnownUpstreamKeepsLastAnswer(t *testing.T) {
 	if _, err := m.ChangeIP(context.Background(), p.Port); api.Code(err) != api.ErrUpstreamUnreachable {
 		t.Fatal(err)
 	}
-	if st := m.Status(context.Background())[0]; !reflect.DeepEqual(st.Upstream, info.Upstream) {
-		t.Fatalf("a silent lookup erased the upstream: %+v", st.Upstream)
+	if st := m.Status(context.Background())[0]; st.Error != nil || !reflect.DeepEqual(st.Upstream, info.Upstream) {
+		t.Fatalf("a silent lookup changed this port's availability: %+v", st)
 	}
 }
 
