@@ -206,3 +206,89 @@ func TestExitCloseCancelsDetachedLookup(t *testing.T) {
 		t.Fatal("Close left a lookup running or remembered its cancellation", state)
 	}
 }
+
+func TestExitProbeJoinerRetriesAfterTheOwnerCancels(t *testing.T) {
+	c, n := exitClient(t)
+	gate := make(chan struct{})
+	open := sync.OnceFunc(func() { close(gate) })
+	defer open()
+	n.gate = gate
+	owner, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ownerDone := make(chan error, 1)
+	go func() { _, err := c.Probe(owner, "example0", ""); ownerDone <- err }()
+	awaitExit(t, n.started)
+	awaitExit(t, n.started)
+	waiting := &observedWait{Context: context.Background(), waiting: make(chan struct{})}
+	joined := make(chan struct{})
+	var result api.Probe
+	var err error
+	go func() { defer close(joined); result, err = c.Probe(waiting, "example0", "") }()
+	awaitExit(t, waiting.waiting)
+	n.mu.Lock()
+	n.gate = nil
+	n.mu.Unlock()
+	cancel()
+	if ownerErr := <-ownerDone; !errors.Is(ownerErr, context.Canceled) {
+		t.Fatal("the owner didn't stop waiting", ownerErr)
+	}
+	awaitExit(t, joined)
+	if err != nil || !result.OK || result.PublicIPv4 != "198.51.100.9" || result.PublicIPv6 != "2001:db8::9" || n.tests() != [2]int{2, 2} {
+		t.Fatal("a healthy probe inherited the owner's cancellation", result, err, n.tests())
+	}
+}
+
+func TestExitProbesTolerateAnotherReadersInventory(t *testing.T) {
+	for _, operation := range []string{"probe", "retest"} {
+		t.Run(operation, func(t *testing.T) {
+			c, n := exitClient(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			// Hold registration until Probe has recorded what it read, then
+			// have a second reader publish a different interface snapshot.
+			c.proxyMu.Lock()
+			unlock := sync.OnceFunc(c.proxyMu.Unlock)
+			defer unlock()
+			done := make(chan struct{})
+			var result api.Probe
+			var err error
+			go func() {
+				defer close(done)
+				if operation == "probe" {
+					result, err = c.Probe(ctx, "example0", "")
+				} else {
+					result, err = c.retest(ctx, "example0", api.Probe{PublicIPv4: "198.51.100.8"})
+				}
+			}()
+			ticks := time.NewTicker(time.Millisecond)
+			defer ticks.Stop()
+			for {
+				c.exitMu.Lock()
+				observed := c.exits["example0"] != nil
+				c.exitMu.Unlock()
+				if observed {
+					break
+				}
+				select {
+				case <-ticks.C:
+				case <-ctx.Done():
+					t.Fatal("the probe didn't read the interface inventory")
+				}
+			}
+			other := exampleExit
+			other.IPv6 = []string{"2001:db8::2", "2001:db8::3"}
+			c.observeExits([]api.Interface{other})
+			unlock()
+			awaitExit(t, done)
+			if err != nil || !result.OK || result.PublicIPv4 != "198.51.100.9" || n.tests() != [2]int{1, 1} {
+				t.Fatal("another reader's snapshot failed a working test", result, err, n.tests())
+			}
+			c.exitMu.Lock()
+			cached := c.exits["example0"].public
+			c.exitMu.Unlock()
+			if publicIPs(cached) != 0 {
+				t.Fatal("the unshared test filled another snapshot's cache", cached)
+			}
+		})
+	}
+}

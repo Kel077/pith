@@ -224,6 +224,10 @@ func TestExitPortSharesHotspotChanges(t *testing.T) {
 	if !exitPortStatus(t, c, port).Changing {
 		t.Fatal("Status didn't report the hotspot change")
 	}
+	changing := readExitPort(t, port, "/")
+	if !changing.Changing || changing.PublicIPv4 != "" || changing.PublicIPv6 != "" || !changing.At.IsZero() {
+		t.Fatal("the hotspot kept reporting its old addresses while renewing", changing)
+	}
 	go func() { answers <- askExitPort(port, http.MethodPost, "/change-ip", nil) }()
 	awaitExit(t, hooks.entered)
 	open()
@@ -269,6 +273,9 @@ func TestExitPortRouterSuspendsStreamsAndAnswersItsRequest(t *testing.T) {
 	info := readExitPort(t, port, "/")
 	if info.Online || !info.Changing || !exitPortStatus(t, c, port).Changing {
 		t.Fatal("a suspended router wasn't reported offline and changing", info)
+	}
+	if info.PublicIPv4 != "" || info.PublicIPv6 != "" || !info.At.IsZero() {
+		t.Fatal("the router kept reporting its old addresses while renewing", info)
 	}
 	_, err := stream.Read(make([]byte, 1))
 	if err == nil {

@@ -126,6 +126,11 @@ func (c *Client) publicProbe(ctx context.Context, link api.Interface, links []ap
 		if state == nil || !sameExitLink(state.link, link) {
 			c.exitMu.Unlock()
 			c.proxyMu.Unlock()
+			if maxAge == nil {
+				// Another reader observed a different snapshot. Test the
+				// supplied interface without publishing into its new record.
+				return c.probe(ctx, link.Name, "", links)
+			}
 			return api.Probe{}, &api.Error{Code: api.ErrInterfaceUnavailable, Detail: "the interface changed before its public-address test"}
 		}
 		if maxAge != nil {
@@ -159,11 +164,11 @@ func (c *Client) publicProbe(ctx context.Context, link api.Interface, links []ap
 			return api.Probe{}, ctx.Err()
 		case <-pending.done:
 		}
-		if maxAge == nil || !pending.ownerCanceled {
+		if !pending.ownerCanceled || ctx.Err() != nil {
 			return pending.result, pending.err
 		}
-		// A poll doesn't inherit cancellation from the Test button it joined.
-		// Read the inventory again before starting its own independent test.
+		// A reader doesn't inherit cancellation from a test it joined. Read
+		// the inventory again before starting a test under its own context.
 		var err error
 		links, err = c.Interfaces(ctx)
 		if err != nil {
@@ -192,9 +197,7 @@ func (c *Client) runExitLookup(parent context.Context, state *exitState, pending
 		state.lookup = nil
 		if c.lifetime.Err() == nil && !pending.ownerCanceled && state.link.Up {
 			if pending.err == nil && inventoryErr == nil && publicIPs(pending.result) > 0 {
-				if !pending.result.At.Before(state.public.At) {
-					state.public = pending.result
-				}
+				state.public = pending.result
 				state.failed, state.backoff = time.Time{}, 0
 			} else {
 				if pending.forPoll {
@@ -319,13 +322,21 @@ func (c *Client) exitInfo(ctx context.Context, via api.InterfaceRef, maxAge time
 		info.CanChangeIP = info.Changing
 		return info, ctx.Err()
 	}
-	info.CanChangeIP = info.Changing || c.exitCanChange(ctx, *link)
-	if info.Online && !info.Changing {
-		_, _ = c.publicProbe(ctx, *link, links, &maxAge)
+	if info.Changing {
+		info.CanChangeIP = true
+	} else {
+		// Start identification and the public-address test together, so the
+		// first GET waits for the slower one rather than both bounds in turn.
+		identified := make(chan bool, 1)
+		go func() { identified <- c.exitCanChange(ctx, *link) }()
+		if info.Online {
+			_, _ = c.publicProbe(ctx, *link, links, &maxAge)
+		}
+		info.CanChangeIP = <-identified
 	}
-	if ctx.Err() != nil {
-		return info, ctx.Err()
-	}
+	// Even a canceled reader gets the state known so far. A port can still
+	// describe an offline interface when its work deadline has passed.
+	info.Changing = c.exitChanging(via)
 	suspended := c.proxySuspended(via)
 	c.exitMu.Lock()
 	current := make([]api.Interface, 0, len(c.exits))
@@ -346,7 +357,7 @@ func (c *Client) exitInfo(ctx context.Context, via api.InterfaceRef, maxAge time
 	}
 	c.exitMu.Unlock()
 	// Failure to find a public address isn't a failure to describe the port.
-	return info, nil
+	return info, ctx.Err()
 }
 
 // changeExitIP changes the public address of the interface a local proxy
@@ -432,6 +443,13 @@ func (c *Client) changeAddress(ctx context.Context, via api.InterfaceRef, device
 		c.exitMu.Unlock()
 		c.proxyMu.Unlock()
 		return nil, &api.Error{Code: api.ErrInterfaceUnavailable, Detail: "the interface changed during an address renewal"}
+	}
+	if pending == nil && len(c.exitChanges) > 0 {
+		// A router's renewal needs another interface to carry the Mac. Its
+		// address must stay put until the first interface works again.
+		c.exitMu.Unlock()
+		c.proxyMu.Unlock()
+		return nil, &api.Error{Code: api.ErrBusy, Detail: "another interface is changing its address"}
 	}
 	if pending == nil {
 		pending = &exitChange{link: *link, done: make(chan struct{})}

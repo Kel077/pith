@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -18,7 +19,10 @@ import (
 // maxUpstreamInfo bounds the whole answer, including its HTTP header.
 const maxUpstreamInfo = 64 << 10
 
-var errUpstreamHTTP = &api.Error{Code: api.ErrUpstreamUnreachable, Detail: "the upstream left its HTTP request unanswered"}
+var (
+	errUpstreamHTTP = &api.Error{Code: api.ErrUpstreamUnreachable, Detail: "the upstream left its HTTP request unanswered"}
+	errUpstreamSlow = &api.Error{Code: api.ErrUpstreamUnreachable, Detail: "the upstream didn't answer in time"}
+)
 
 type upstreamResponse struct {
 	status int
@@ -58,7 +62,7 @@ func (m *Manager) upstreamHTTP(ctx context.Context, e *listener, method string, 
 		path += "?max-age=" + strconv.FormatInt(int64(maxAge/time.Second), 10)
 	}
 	req := &http.Request{
-		Method: method, URL: &url.URL{Path: "/"}, Host: e.cfg.Upstream,
+		Method: method, URL: &url.URL{Path: "/"}, Host: conn.RemoteAddr().String(),
 		Header: make(http.Header), Close: true,
 	}
 	req.URL, _ = url.Parse(path)
@@ -68,8 +72,22 @@ func (m *Manager) upstreamHTTP(ctx context.Context, e *listener, method string, 
 		return upstreamResponse{}, errUpstreamHTTP
 	}
 	reader := &io.LimitedReader{R: conn, N: maxUpstreamInfo + 1}
-	res, err := http.ReadResponse(bufio.NewReader(reader), req)
+	br := bufio.NewReader(reader)
+	// A SOCKS greeting is already an answer, even without a line ending.
+	// Do not spend the HTTP wait on bytes that cannot start an HTTP reply.
+	first, err := br.Peek(1)
+	if err == nil && first[0] != 'H' {
+		return upstreamResponse{}, errUpstreamHTTP
+	}
+	var res *http.Response
+	if err == nil {
+		res, err = http.ReadResponse(br, req)
+	}
 	if err != nil {
+		var timeout net.Error
+		if reader.N == maxUpstreamInfo+1 && (errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.As(err, &timeout) && timeout.Timeout()) {
+			return upstreamResponse{}, errUpstreamSlow
+		}
 		return upstreamResponse{}, errUpstreamHTTP
 	}
 	defer res.Body.Close()
@@ -85,21 +103,54 @@ func (m *Manager) upstreamHTTP(ctx context.Context, e *listener, method string, 
 }
 
 // upstreamInfo tries Pith's answer first, then the greeting an ordinary SOCKS5
-// proxy knows. A poll and a caller both replace the last answer, including nil
-// when an upstream no longer speaks as Pith does.
+// proxy knows. Busy or undecided answers keep the last Pith information.
 func (m *Manager) upstreamInfo(ctx context.Context, e *listener, maxAge time.Duration, hops int) (*api.ProxyInfo, error) {
+	return m.readUpstreamInfo(ctx, e, maxAge, hops, false)
+}
+
+// A change's preflight and refresh may use the whole connect timeout: a
+// Pith upstream's first address lookup need not finish within a poll's wait.
+func (m *Manager) readUpstreamInfo(ctx context.Context, e *listener, maxAge time.Duration, hops int, forChange bool) (*api.ProxyInfo, error) {
+	if hops >= api.MaxProxyHops {
+		// The caller's hop count says nothing about the upstream's state.
+		return nil, portProblem(http.StatusLoopDetected, api.ErrInternal, "too many Pith proxy hops")
+	}
 	ctx, cancel := context.WithTimeout(ctx, m.opts.ConnectTimeout)
 	defer cancel()
-	answer, answered := context.WithTimeout(ctx, min(upstreamAnswer, m.opts.ConnectTimeout/2))
+	budget := min(upstreamAnswer, m.opts.ConnectTimeout/2)
+	if forChange {
+		budget = m.opts.ConnectTimeout
+	}
+	answer, answered := context.WithTimeout(ctx, budget)
 	response, err := m.upstreamHTTP(answer, e, http.MethodGet, maxAge, hops)
 	answered()
-	if response.status == http.StatusLoopDetected {
-		err = portProblem(http.StatusLoopDetected, api.ErrInternal, "too many Pith proxy hops")
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return nil, ctx.Err()
+	}
+	var body errorBody
+	if err == nil && response.status != http.StatusOK && response.status != http.StatusForbidden &&
+		json.Unmarshal(response.json, &body) == nil && body.Error != nil && body.Error.Code != "" {
+		status := http.StatusBadGateway
+		if response.status == http.StatusServiceUnavailable || response.status == http.StatusLoopDetected {
+			status = response.status
+		}
+		return m.recordUpstreamInfo(e, nil, nil, true), &portFailure{status, body.Error}
+	}
+	if err == errUpstreamSlow {
+		m.mu.Lock()
+		known := e.up.info != nil
+		m.mu.Unlock()
+		if known || forChange {
+			return m.recordUpstreamInfo(e, nil, nil, true), &portFailure{http.StatusBadGateway, errUpstreamSlow}
+		}
+		// With no Pith information, a GET can still report a SOCKS proxy's
+		// availability. A future change must not mistake silence for 501.
+		err = errUpstreamHTTP
 	}
 	var info *api.ProxyInfo
 	if err == nil && response.status == http.StatusOK {
 		var found api.ProxyInfo
-		if json.Unmarshal(response.json, &found) == nil && found.Pith >= api.ProxyInfoVersion {
+		if json.Unmarshal(response.json, &found) == nil && validateUpstreamInfo(&found, 0) {
 			info = &found
 		}
 	}
@@ -116,16 +167,27 @@ func (m *Manager) upstreamInfo(ctx context.Context, e *listener, maxAge time.Dur
 	if errors.Is(ctx.Err(), context.Canceled) {
 		return cloneInfo(info), ctx.Err()
 	}
+	return m.recordUpstreamInfo(e, info, err, false), err
+}
+
+func (m *Manager) recordUpstreamInfo(e *listener, info *api.ProxyInfo, err error, keep bool) *api.ProxyInfo {
 	m.mu.Lock()
-	e.up.info, e.up.checked = info, time.Now()
+	if !keep {
+		e.up.info = info
+	}
+	e.up.checked = time.Now()
+	copy := cloneInfo(e.up.info)
 	m.mu.Unlock()
 	m.noteUpstream(e, err)
-	return cloneInfo(info), err
+	return copy
 }
 
 func (m *Manager) changeUpstreamIP(ctx context.Context, e *listener, hops int) (api.ProxyIPChange, *portFailure) {
 	result := api.ProxyIPChange{Port: e.cfg.Port}
-	up, err := m.upstreamInfo(ctx, e, -1, hops)
+	up, err := m.readUpstreamInfo(ctx, e, -1, hops, true)
+	if changeWaitOver(ctx) {
+		return result, changeWaitEnded()
+	}
 	var failure *portFailure
 	if errors.As(err, &failure) {
 		return result, failure
@@ -140,11 +202,11 @@ func (m *Manager) changeUpstreamIP(ctx context.Context, e *listener, hops int) (
 	e.up.changing++
 	m.mu.Unlock()
 	defer func() {
-		if ctx.Err() == nil {
-			_, _ = m.upstreamInfo(ctx, e, -1, hops)
+		if !changeWaitOver(ctx) {
+			_, _ = m.readUpstreamInfo(ctx, e, -1, hops, true)
 		}
 		m.mu.Lock()
-		if ctx.Err() != nil {
+		if changeWaitOver(ctx) {
 			// The change may continue upstream after this wait ends. Let
 			// the next Status poll learn that without extending the wait.
 			e.up.checked = time.Time{}
@@ -153,6 +215,9 @@ func (m *Manager) changeUpstreamIP(ctx context.Context, e *listener, hops int) (
 		m.mu.Unlock()
 	}()
 	response, err := m.upstreamHTTP(ctx, e, http.MethodPost, -1, hops)
+	if err != nil && changeWaitOver(ctx) {
+		return result, changeWaitEnded()
+	}
 	if errors.As(err, &failure) {
 		return result, failure
 	}
@@ -167,7 +232,7 @@ func (m *Manager) changeUpstreamIP(ctx context.Context, e *listener, hops int) (
 	switch response.status {
 	case http.StatusOK:
 		var changed api.ProxyIPChange
-		if json.Unmarshal(response.json, &changed) == nil && changed.Port > 0 {
+		if json.Unmarshal(response.json, &changed) == nil && validateUpstreamChange(&changed) {
 			changed.Port = e.cfg.Port
 			return changed, nil
 		}
@@ -186,6 +251,9 @@ func (m *Manager) changeUpstreamIP(ctx context.Context, e *listener, hops int) (
 	case http.StatusLoopDetected:
 		return result, portProblem(http.StatusLoopDetected, api.ErrInternal, "too many Pith proxy hops")
 	case http.StatusServiceUnavailable:
+		if body.Error != nil && body.Error.Code != "" {
+			return result, &portFailure{http.StatusServiceUnavailable, body.Error}
+		}
 		return result, portProblem(http.StatusServiceUnavailable, api.ErrInternal, "the upstream has too many requests in progress")
 	default:
 		return result, &portFailure{http.StatusNotImplemented, unsupportedChange}

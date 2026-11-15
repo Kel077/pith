@@ -216,9 +216,11 @@ An HTTP request whose target is a path rather than a URL or a CONNECT
 authority asks Pith itself. `GET /` answers with `api.ProxyInfo`: the port,
 the kind of exit, whether it is online, its public addresses and when they
 were found, and whether its address can be changed or is changing. An
-interface's information comes from the client's `Info` hook; without it, or
-when it fails, the port answers with the state it knows. A scene's rules have
-no one address to report. `max-age`, an optional non-negative integer of
+interface's information comes from the client's `Info` hook; without it, the
+port answers with the state it knows, and when the hook fails, as when the
+request's time runs out first, with the name, connection and change state the
+hook returned, and no addresses. A scene's rules have no one address to
+report. `max-age`, an optional non-negative integer of
 seconds in the query, asks for addresses no older than that; absent, cached
 addresses of any age suffice. A suspended exit is offline even while its
 port still listens.
@@ -228,39 +230,63 @@ port still listens.
 to 4 KiB; a larger one is answered `413`. Every caller that may connect may
 GET, but a POST needs the port's `ChangeIP`: `403` and `not_allowed`
 otherwise. An exit whose address cannot be changed gives `501` and
-`unsupported`; a failed change gives `502` and its public error. Unknown
-paths give `404`; another method on a known path gives `405` and `Allow`,
+`unsupported`; a failed change gives `502` and its public error, and a change
+while another interface's is under way `503` and `busy`. When the wait ends
+first, because the caller left or the ten minutes passed, the answer is `502`
+and `internal`, saying the change may still be in progress. Unknown paths
+give `404`; another method on a known path gives `405` and `Allow`,
 including OPTIONS. Every answer is JSON, with its content length,
 `Cache-Control: no-store`, `X-Content-Type-Options: nosniff` and
 `Connection: close`: one request per connection.
 
-Before dispatch, a request with any `Origin` field, or with
-`Sec-Fetch-Site` other than `none`, is answered `403`. No CORS fields or
-preflight are provided. A web page's requests carry these browser-controlled
-fields even when its host name rebinds to this Mac. Programs and a person
-opening the port's address directly may ask; a device not listed is still
-refused before dispatch.
+Before dispatch, a request is answered `403` and `not_allowed` when it has
+any `Origin` field or a `Sec-Fetch-Site` other than `none`, or when its
+`Host` is not an IP address, `localhost`, a name of one label or one under
+`.local`; an empty Host passes, as an HTTP/1.0 program sends. No CORS fields
+or preflight are provided. A page whose host name rebinds to this Mac makes
+same-origin GETs with neither `Origin` nor `Sec-Fetch-*`, which browsers send
+only to trustworthy origins, but with its own name as the Host, and that is
+what refuses it. Names of one label and `.local` names can still be rebound
+by whoever controls the local network's names. Programs and a person opening
+the port's address directly may ask; a device not listed is still refused
+before dispatch.
 
 An upstream is asked over HTTP directly on its host and port through the
-same dialer that reaches it for SOCKS5, with `max-age` passed on. A shared
-port refuses one reached on this Mac before sending anything. A `200` JSON
-answer with `pith` of at least one is another Pith's: its information is
-nested in `Upstream`, its online state, addresses, timestamp and change state
-are copied, and both ports' `ChangeIP` flags must allow a remote change.
-Otherwise a SOCKS5 greeting tells whether the upstream answers and takes
+same dialer that reaches it for SOCKS5, with `max-age` passed on and the
+address dialed as the Host, which the upstream takes whatever name it was
+configured by. A shared port refuses one reached on this Mac before sending
+anything. A `200` JSON answer with `pith` of at least one is another Pith's,
+once checked: a port in range, a known exit, an interface name of 256 bytes
+at most and nesting no deeper than `api.MaxProxyHops`, or it isn't Pith's;
+addresses that don't parse are dropped. Its information is nested in
+`Upstream`, its online state, addresses, timestamp and change state are
+copied, and both ports' `ChangeIP` flags must allow a remote change. An error
+answer in Pith's form, other than `403`, is a Pith that can't answer now: its
+last answer stays, and the request is answered `503` or `508` as the
+upstream was, else `502` with its error. Silence until the time is up leaves
+it undecided: a last answer stays, and the request is answered `502` and
+`upstream_unreachable`; without one, a GET tries SOCKS5 as below, and a POST
+is answered the same `502` rather than `501`. Anything else, bytes that can't
+begin an HTTP answer, an answer without JSON or a closed connection, is
+another kind of proxy: a SOCKS5 greeting tells whether it answers and takes
 this Mac, without addresses or the ability to change them. HTTP answers are
-bounded to 64 KiB and a GET attempt to three seconds, within the port's
-connect timeout; the remaining time permits a SOCKS5 check. A POST is passed
-on only after the upstream answers as Pith. Each forwarded request adds one
+bounded to 64 KiB. A poll's GET has three seconds within the port's connect
+timeout, which leaves time for the SOCKS5 check; a change's check before and
+its refresh after may take the whole connect timeout, as an upstream's first
+lookup may. A POST is passed on only after the upstream answers as Pith, and
+the change it answers with is checked too. Each forwarded request adds one
 to `Pith-Hops`, initially zero; an upstream request already at
-`api.MaxProxyHops` is answered `508` instead of being forwarded. That status
-returns through the chain.
+`api.MaxProxyHops` is answered `508` instead of being forwarded, and leaves
+what the port knows of its upstream alone. That status returns through the
+chain.
 
 Requests to ports have 64 slots across the manager, with `503` beyond that.
 At most 48 may wait for an address change, leaving 16 for status reads and
-requests answered immediately; a 49th waiting POST is answered `503`.
-Immediate method, path, parameter, permission and body refusals do not count
-against the 48. Requests count neither as open streams nor as traffic, and
+requests answered immediately; a 49th waiting POST is answered `503`. A
+POST's body is read within the connect timeout, and only then does it count
+against the 48 and its wait extend to ten minutes: one that never sends its
+body holds a slot no longer than a GET. Immediate method, path, parameter,
+permission and body refusals do not count against the 48. Requests count neither as open streams nor as traffic, and
 cannot be selected as the quietest stream. Suspending an exit leaves them
 and unclassified HTTP handshakes open, so a router renewal can answer the
 very POST that caused it.
@@ -275,7 +301,10 @@ progress; counters and the listening time are preserved.
 this port's flag; an upstream's flag still applies.
 
 `ProxyStatus.Upstream` is the upstream's last Pith answer, cleared when it
-ceases to answer as Pith or the port is replaced. Status polls it at most
+ceases to answer as Pith or the port is replaced; an error answer or silence
+keeps it. `ProxyStatus.Error` for an upstream tells only that this Mac can't
+reach it or that it refuses this Mac: one that answered records none,
+whatever it said of its own upstream. Status polls it at most
 once every ten seconds, even while connections flow, first by GET without
 `max-age`, then by SOCKS5 when needed. `ProxyStatus.Changing` comes from the
 client's non-blocking `Changing` hook for an interface, or from a change
@@ -296,7 +325,13 @@ succeeds or the interface changes. With `max-age`, addresses older than
 that are looked up again, and a lookup that fails leaves none. A lookup for
 a port belongs to no caller: it runs to its own end while callers wait for
 it, each for as long as it cares to, so another Mac's poll that gives up
-after three seconds finds the addresses the next time. Whether an
+after three seconds finds the addresses the next time. A caller that joins a
+test another started doesn't inherit its cancellation: when the one who
+started it gives up, a caller still waiting starts its own. When the record
+has changed since a caller read the interfaces, because another reader saw
+them otherwise meanwhile, the Network page's test and a renewal's tests run
+as read, without filling the record. For a port, whether its address can be
+changed and what its addresses are are found at once, not in turn. Whether an
 interface's address can be changed is found once for an interface as it is:
 a hotspot by the interface's label, a router by asking its admin which model
 it is. A device Pith doesn't know stays unknown until the interface changes;
@@ -304,7 +339,12 @@ one that didn't answer is asked again after a minute.
 
 One change of an interface's address runs at a time, whoever asked: a
 port's request, `RenewHotspot` or `RenewRouter`. The others wait for it and
-get what it did, each in its own form. A change a port asked for runs under
+get what it did, each in its own form. One runs at a time across interfaces
+too: while one is under way, a change of another interface is refused with
+`busy`, which a port answers `503`. A router's renewal leaves the Mac to
+another interface, which macOS picks only once the router yields, so no one
+interface can be set aside beforehand; and a renewal must not yield to a
+hotspot about to reconnect. A change a port asked for runs under
 the client's lifetime, three minutes at most for a hotspot and eight for a
 router, and the request's end ends only its wait; one the Network page asked
 for ends with its caller, as before. `Close` waits for either, and a router

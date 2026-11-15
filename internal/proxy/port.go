@@ -9,8 +9,10 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Kel077/pith/internal/api"
@@ -93,6 +95,10 @@ func (m *Manager) servePort(e *listener, s *session, req *http.Request, br *bufi
 		writePortError(s.in, portProblem(http.StatusForbidden, api.ErrNotAllowed, "web pages cannot ask a proxy's port"))
 		return
 	}
+	if !portHost(req.Host) {
+		writePortError(s.in, portProblem(http.StatusForbidden, api.ErrNotAllowed, "the Host must name an address, localhost or a local network name"))
+		return
+	}
 	if !m.takeRequest(e, s) {
 		writePortError(s.in, portProblem(http.StatusServiceUnavailable, api.ErrInternal, "too many requests to proxy ports"))
 		return
@@ -123,7 +129,6 @@ func (m *Manager) servePort(e *listener, s *session, req *http.Request, br *bufi
 			writePortError(s.in, portProblem(http.StatusForbidden, api.ErrNotAllowed, "this proxy port does not allow address changes"))
 			return
 		}
-		deadline = time.Now().Add(changeIPTimeout)
 	}
 	if s.in.SetDeadline(deadline) != nil {
 		return
@@ -144,6 +149,10 @@ func (m *Manager) servePort(e *listener, s *session, req *http.Request, br *bufi
 		}
 		if !m.takeChangeRequest(e, s) {
 			writePortError(s.in, portProblem(http.StatusServiceUnavailable, api.ErrInternal, "too many address change requests"))
+			return
+		}
+		deadline = time.Now().Add(changeIPTimeout)
+		if s.in.SetDeadline(deadline) != nil {
 			return
 		}
 	}
@@ -182,6 +191,26 @@ func (m *Manager) servePort(e *listener, s *session, req *http.Request, br *bufi
 	} else {
 		writePortJSON(s.in, http.StatusOK, result, "")
 	}
+}
+
+// portHost excludes public DNS names, which a web page can rebind to this
+// Mac. Empty is an HTTP/1.0 caller; local names need no public DNS authority.
+func portHost(host string) bool {
+	if host == "" {
+		return true
+	}
+	if name, _, err := net.SplitHostPort(host); err == nil {
+		host = name
+	}
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = host[1 : len(host)-1]
+	}
+	if _, err := netip.ParseAddr(host); err == nil {
+		return true
+	}
+	return host != "" && !strings.ContainsAny(host, ":[]") &&
+		(host == "localhost" || strings.HasSuffix(host, ".local") || !strings.Contains(host, "."))
 }
 
 func requestMaxAge(req *http.Request) (time.Duration, bool) {
@@ -261,6 +290,11 @@ func (m *Manager) portInfo(ctx context.Context, e *listener, maxAge time.Duratio
 				// In UTC: an answer doesn't tell this Mac's time zone.
 				info.PublicIPv4, info.PublicIPv6, info.At = found.PublicIPv4, found.PublicIPv6, found.At.UTC()
 				info.CanChangeIP, info.Changing = e.allowChangeIP.Load() && found.CanChangeIP, found.Changing
+			} else {
+				if found.Interface != "" {
+					info.Interface = found.Interface
+				}
+				info.Online, info.Changing = found.Online, found.Changing
 			}
 		}
 		if m.opts.Changing != nil {
@@ -282,8 +316,8 @@ func (m *Manager) portInfo(ctx context.Context, e *listener, maxAge time.Duratio
 
 func (m *Manager) changeIP(ctx context.Context, e *listener, hops int) (api.ProxyIPChange, *portFailure) {
 	result := api.ProxyIPChange{Port: e.cfg.Port}
-	if err := ctx.Err(); err != nil {
-		return result, portProblem(http.StatusBadGateway, api.ErrInternal, "the wait for an address change ended")
+	if changeWaitOver(ctx) {
+		return result, changeWaitEnded()
 	}
 	switch {
 	case e.cfg.Upstream != "":
@@ -293,16 +327,34 @@ func (m *Manager) changeIP(ctx context.Context, e *listener, hops int) (api.Prox
 	default:
 		changed, err := m.opts.ChangeIP(ctx, e.cfg.Via)
 		if err != nil {
+			if changeWaitOver(ctx) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return result, changeWaitEnded()
+			}
 			problem := changeError(err)
 			status := http.StatusBadGateway
 			if problem.Code == api.ErrUnsupported {
 				status = http.StatusNotImplemented
+			} else if problem.Code == api.ErrBusy {
+				status = http.StatusServiceUnavailable
 			}
 			return result, &portFailure{status, problem}
 		}
 		changed.Port, changed.At = e.cfg.Port, changed.At.UTC()
 		return changed, nil
 	}
+}
+
+func changeWaitEnded() *portFailure {
+	return portProblem(http.StatusBadGateway, api.ErrInternal, "the wait for an address change ended; the change may still be in progress")
+}
+
+func changeWaitOver(ctx context.Context) bool {
+	if ctx.Err() != nil {
+		return true
+	}
+	// A socket's deadline may fire before context cancellation has propagated.
+	deadline, ok := ctx.Deadline()
+	return ok && !time.Now().Before(deadline)
 }
 
 func changeError(err error) *api.Error {

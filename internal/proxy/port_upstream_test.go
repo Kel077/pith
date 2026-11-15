@@ -223,13 +223,14 @@ func TestPortUpstreamRelaysChangeFailures(t *testing.T) {
 		{"invalid success", "{}", 200, 502, api.ErrInternal},
 		{"loop", "", 508, 508, api.ErrInternal},
 		{"full", "", 503, 503, api.ErrInternal},
+		{"busy change", "{\"error\":{\"code\":\"busy\",\"detail\":\"another interface is changing\"}}", 503, 503, api.ErrBusy},
 		{"not Pith anymore", "", 404, 501, api.ErrUnsupported},
 		{"left unanswered", "", 0, 502, api.ErrUpstreamUnreachable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			up := portUpstream(t, func(c net.Conn, req *http.Request) {
 				if req.Method == "GET" {
-					writePortJSON(c, 200, api.ProxyInfo{Pith: 1, Port: 18081, Online: true, CanChangeIP: true}, "")
+					writePortJSON(c, 200, api.ProxyInfo{Pith: 1, Port: 18081, Exit: api.ExitInterface, Online: true, CanChangeIP: true}, "")
 					return
 				}
 				if tc.status == 0 {
@@ -291,14 +292,14 @@ func TestPortUpstreamHeadersAndBounds(t *testing.T) {
 	seen := make(chan *http.Request, 1)
 	peer := portUpstream(t, func(c net.Conn, req *http.Request) {
 		seen <- req
-		writePortJSON(c, 200, api.ProxyInfo{Pith: 2, Port: 18081, Online: true}, "")
+		writePortJSON(c, 200, api.ProxyInfo{Pith: 2, Port: 18081, Exit: api.ExitInterface, Online: true}, "")
 	})
 	m, f := newTestManager(t, Options{Dial: noDial(t), Upstream: peer.reach})
 	applyTest(t, m, upstreamProxy(18080, "example.com:18081"))
 	var info api.ProxyInfo
 	portAnswer(t, portRequest(t, f, 18080, "GET", "/?max-age=12", "Pith-Hops: 2\r\nX-Private: keep here\r\n", ""), 200, &info)
 	req := <-seen
-	if req.RequestURI != "/?max-age=12" || req.Host != "example.com:18081" || req.Header.Get("Pith-Hops") != "3" ||
+	if req.RequestURI != "/?max-age=12" || req.Host != peer.ln.Addr().String() || req.Header.Get("Pith-Hops") != "3" ||
 		req.Header.Get("X-Private") != "" || req.Header.Get("User-Agent") != "" || !req.Close || info.Upstream == nil || info.Upstream.Pith != 2 {
 		t.Fatalf("forwarded request = %+v, response %+v", req, info)
 	}
@@ -440,7 +441,7 @@ func TestPortUpstreamStatusRefreshesDuringTraffic(t *testing.T) {
 func TestPortUpstreamCanceledCaller(t *testing.T) {
 	peer := portUpstream(t, func(c net.Conn, req *http.Request) {
 		if req.Method == "GET" {
-			writePortJSON(c, 200, api.ProxyInfo{Pith: 1, Port: 18081, Online: true, CanChangeIP: true}, "")
+			writePortJSON(c, 200, api.ProxyInfo{Pith: 1, Port: 18081, Exit: api.ExitInterface, Online: true, CanChangeIP: true}, "")
 			return
 		}
 		_, _ = io.Copy(io.Discard, c)
@@ -449,8 +450,13 @@ func TestPortUpstreamCanceledCaller(t *testing.T) {
 	applyTest(t, m, upstreamProxy(18080, "192.0.2.7:18081"))
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
-	if _, err := m.ChangeIP(ctx, 18080); api.Code(err) != api.ErrUpstreamUnreachable {
-		t.Fatalf("canceled upstream change = %v", err)
+	_, err := m.ChangeIP(ctx, 18080)
+	assertChangeWaitEnded(t, err)
+	m.mu.Lock()
+	up := m.byPort[18080].up
+	m.mu.Unlock()
+	if up.info == nil || up.err != nil || !up.checked.IsZero() || up.changing != 0 {
+		t.Fatalf("an ended wait invalidated upstream state: %+v", up)
 	}
 	if err := m.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 		t.Fatal(err)
