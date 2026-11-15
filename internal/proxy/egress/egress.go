@@ -236,16 +236,23 @@ func (n *Native) Dial(ctx context.Context, via api.InterfaceRef, target proxy.Ta
 		if parseErr != nil {
 			return nil, errors.New("invalid proxy destination address")
 		}
-		addr, err = destination(addr, b.iface.Name)
-		if err != nil {
-			return nil, err
-		}
 		addresses = []netip.Addr{addr}
 	}
 	var last error
 	for i, address := range addresses {
 		if err := ctx.Err(); err != nil {
 			return nil, err
+		}
+		// Check the exact resolved candidate, including this Mac's addresses
+		// on other interfaces. DNS transport is deliberately not a client target.
+		if err := proxy.CheckDestination(ctx, address); err != nil {
+			last = err
+			continue
+		}
+		address, err = destination(address, b.iface.Name)
+		if err != nil {
+			last = err
+			continue
 		}
 		// One unreachable answer cannot consume the complete CONNECT budget.
 		deadline, _ := ctx.Deadline()
@@ -268,7 +275,7 @@ func (n *Native) Dial(ctx context.Context, via api.InterfaceRef, target proxy.Ta
 
 func destination(addr netip.Addr, name string) (netip.Addr, error) {
 	addr = addr.Unmap()
-	if !addr.IsValid() || addr.IsUnspecified() || addr.IsLoopback() || addr.IsMulticast() ||
+	if !addr.IsValid() || addr.IsUnspecified() || addr.IsLoopback() || addr.IsMulticast() || (addr.Is4() && addr.As4()[0] == 0) ||
 		(addr.Is4() && addr == netip.AddrFrom4([4]byte{255, 255, 255, 255})) {
 		return netip.Addr{}, errors.New("destination cannot be sent through a physical interface")
 	}

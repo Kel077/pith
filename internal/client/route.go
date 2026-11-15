@@ -264,14 +264,14 @@ func (c *Client) connectByRule(ctx context.Context, dial proxy.DialFunc, d rules
 }
 
 // systemDialer connects where macOS sends a connection, but never to this
-// Mac over loopback, by address or by a name that resolves to one: a port
+// Mac over any of its addresses, by address or by a name that resolves to one: a port
 // through an interface can't reach what listens for this Mac alone, and a
 // port by rules, which other devices may use, must not either.
-var systemDialer = &net.Dialer{Control: notLoopback}
+var systemDialer = &net.Dialer{ControlContext: notOwnTarget}
 
-// notLoopback refuses the addresses a proxy never connects to: loopback,
-// unspecified and multicast ones.
-func notLoopback(_, address string, _ syscall.RawConn) error {
+// notOwnTarget checks each address after the system resolver has chosen it,
+// including every attempt of net.Dialer's parallel IPv4/IPv6 connection setup.
+func notOwnTarget(ctx context.Context, _, address string, _ syscall.RawConn) error {
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
 		return err
@@ -280,10 +280,7 @@ func notLoopback(_, address string, _ syscall.RawConn) error {
 	if err != nil {
 		return err
 	}
-	if addr = addr.Unmap(); addr.IsLoopback() || addr.IsUnspecified() || addr.IsMulticast() {
-		return fmt.Errorf("a proxy doesn't connect to %s: %w", addr, syscall.EACCES)
-	}
-	return nil
+	return proxy.CheckDestination(ctx, addr)
 }
 
 // proxySuspended tells whether local proxies refuse connections through

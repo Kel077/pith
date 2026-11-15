@@ -49,6 +49,10 @@ type Options struct {
 	// scene's ID: it matches the rules, and dials. Nil refuses such ports'
 	// connections.
 	Route func(ctx context.Context, scene string, target Target) (net.Conn, error)
+	// InterfaceAddrs reads every address configured on this Mac. Nil uses
+	// net.InterfaceAddrs. Dial and Route share this source through their context
+	// when they check resolved destinations with CheckDestination.
+	InterfaceAddrs func() ([]net.Addr, error)
 	// Info tells a port of the interface it goes out through, for what the
 	// port says of itself (api.ProxyInfo): the interface's name, whether it
 	// is connected, its public addresses and when they were found, whether

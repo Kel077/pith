@@ -220,7 +220,7 @@ func newPeer(t *testing.T, handle func(*net.TCPConn)) *loopbackPeer {
 }
 
 func (p *loopbackPeer) dial(ctx context.Context, _ api.InterfaceRef, _ Target) (net.Conn, error) {
-	return (&net.Dialer{}).DialContext(ctx, "tcp4", p.ln.Addr().String())
+	return dialRemotePeer(ctx, p.ln.Addr().String())
 }
 
 func echoPeer(t *testing.T) *loopbackPeer {
@@ -685,7 +685,7 @@ func TestApplyCancelsLateDialWithoutPublishing(t *testing.T) {
 		if err != nil {
 			return nil, err
 		}
-		return &closeObservedConn{TCPConn: out.(*net.TCPConn), closed: outClosed}, nil
+		return &closeObservedConn{TCPConn: out.(*deviceConn).TCPConn, closed: outClosed}, nil
 	}})
 	t.Cleanup(func() {
 		select {

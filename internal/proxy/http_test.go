@@ -102,7 +102,7 @@ func TestHTTPRequestGoesToItsServerOnce(t *testing.T) {
 	targets := make(chan Target, 1)
 	m, f := newTestManager(t, Options{Dial: func(ctx context.Context, _ api.InterfaceRef, target Target) (net.Conn, error) {
 		targets <- target
-		return (&net.Dialer{}).DialContext(ctx, "tcp4", origin.Listener.Addr().String())
+		return dialRemotePeer(ctx, origin.Listener.Addr().String())
 	}})
 	applyTest(t, m, testProxy(1080))
 
@@ -171,7 +171,7 @@ func TestHTTPRequestTrailersAreNotSentOn(t *testing.T) {
 	}))
 	t.Cleanup(origin.Close)
 	m, f := newTestManager(t, Options{Dial: func(ctx context.Context, _ api.InterfaceRef, _ Target) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "tcp4", origin.Listener.Addr().String())
+		return dialRemotePeer(ctx, origin.Listener.Addr().String())
 	}})
 	applyTest(t, m, testProxy(1080))
 	c := f.dial(t, 1080)

@@ -86,7 +86,7 @@ func (m *Manager) serve(e *listener, s *session) {
 
 // errOwnTarget is a destination no port connects to, whatever it goes out
 // through: not allowed, as a client reads it.
-var errOwnTarget = fmt.Errorf("proxy: a loopback, unspecified or multicast destination: %w", syscall.EACCES)
+var errOwnTarget = fmt.Errorf("proxy: a destination on this Mac, in 0.0.0.0/8, or unspecified or multicast: %w", syscall.EACCES)
 
 // canonical gives a destination the form every check reads, and every exit
 // is asked in: an address spelled where a name goes, as SOCKS5 lets a client
@@ -113,8 +113,8 @@ func canonical(target Target) (Target, bool) {
 }
 
 // ownTarget tells the destinations that would reach the Mac a connection
-// leaves from rather than the network: loopback, unspecified and multicast
-// addresses, and the names reserved for loopback (RFC 6761, section 6.3). A
+// leaves from rather than the network: loopback, zero-network, unspecified and
+// multicast addresses, and names reserved for loopback (RFC 6761, section 6.3). A
 // port through an interface or by a scene's rules also checks the addresses
 // a name resolves to. A port through an upstream proxy can't: the upstream
 // resolves names, and answers for what they reach there.
@@ -127,8 +127,7 @@ func ownTarget(target Target) bool {
 	if err != nil {
 		return true
 	}
-	addr = addr.Unmap()
-	return addr.IsLoopback() || addr.IsUnspecified() || addr.IsMulticast()
+	return ownAddress(addr)
 }
 
 var (
@@ -144,9 +143,16 @@ var (
 // connection the outbound one of s. It returns it with the address it went
 // out from. Its error is what the client is told, in its protocol.
 func (m *Manager) open(ctx context.Context, e *listener, s *session, target Target) (net.Conn, net.Addr, error) {
+	ctx = WithInterfaceAddrs(ctx, m.opts.InterfaceAddrs)
 	target, ok := canonical(target)
 	if !ok || ownTarget(target) {
 		return nil, nil, errOwnTarget
+	}
+	if !target.IsDomain {
+		addr, _ := netip.ParseAddr(target.Host) // ownTarget rejected invalid addresses.
+		if err := CheckDestination(ctx, addr); err != nil {
+			return nil, nil, err
+		}
 	}
 	var out net.Conn
 	var bound net.Addr
@@ -176,6 +182,14 @@ func (m *Manager) open(ctx context.Context, e *listener, s *session, target Targ
 	}
 	if out == nil {
 		return nil, nil, errNoConnection
+	}
+	// An upstream socket reaches Pith's configured proxy, not the client's
+	// target. A local upstream remains valid for a port that isn't shared.
+	if e.cfg.Upstream == "" {
+		if err := checkRemote(ctx, out); err != nil {
+			closeConn(out, true)
+			return nil, nil, err
+		}
 	}
 	if ctx.Err() != nil || !s.setOutbound(out) {
 		closeConn(out, true)

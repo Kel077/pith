@@ -100,7 +100,7 @@ func localProxyClient(t *testing.T) (*Client, *[]string, *sync.Mutex) {
 				mu.Lock()
 				calls = append(calls, via.Name)
 				mu.Unlock()
-				return (&net.Dialer{}).DialContext(ctx, "tcp4", echo)
+				return dialProxyPeer(ctx, echo)
 			}, Health: func(_ context.Context, via api.InterfaceRef) error {
 				if via.Name == "missing0" {
 					return &api.Error{Code: api.ErrInterfaceUnavailable}
@@ -372,7 +372,7 @@ func TestHelperStreamLossDoesNotEndLocalProxySubscription(t *testing.T) {
 	c.newProxies = func() (*proxy.Manager, error) {
 		return proxy.New(proxy.Options{Info: c.exitInfo, ChangeIP: c.changeExitIP, Changing: c.exitChanging,
 			Dial: func(ctx context.Context, _ api.InterfaceRef, _ proxy.Target) (net.Conn, error) {
-				return (&net.Dialer{}).DialContext(ctx, "tcp4", echo)
+				return dialProxyPeer(ctx, echo)
 			}})
 	}
 	cfg := proxyConfig(proxyPort(t), "example0")

@@ -369,7 +369,7 @@ func TestLocalProxyByRulesFollowsSavedRules(t *testing.T) {
 		mu.Lock()
 		went = append(went, via.Name)
 		mu.Unlock()
-		return (&net.Dialer{}).DialContext(ctx, "tcp4", echo)
+		return dialProxyPeer(ctx, echo)
 	}
 	c.newProxies = func() (*proxy.Manager, error) {
 		return proxy.New(proxy.Options{Dial: dial, Route: c.routeByRules(dial), Info: c.exitInfo, ChangeIP: c.changeExitIP, Changing: c.exitChanging})
@@ -419,16 +419,17 @@ func TestLocalProxyByRulesFollowsSavedRules(t *testing.T) {
 // What macOS would send to this Mac itself is refused: a port by rules
 // reaches no more of this Mac than a port through an interface does.
 func TestProxyByRulesNeverConnectsToLoopback(t *testing.T) {
+	ctx := proxy.WithInterfaceAddrs(context.Background(), func() ([]net.Addr, error) { return nil, nil })
 	for address, refused := range map[string]bool{
 		"127.0.0.1:8080": true, "127.9.9.9:80": true, "[::1]:8080": true, "[::ffff:127.0.0.1]:80": true,
 		"0.0.0.0:80": true, "[::]:80": true, "224.0.0.251:5353": true, "[ff02::fb]:5353": true,
 		"192.0.2.9:443": false, "[2001:db8::9]:443": false, "[fe80::1%lo0]:80": false,
 	} {
-		if err := notLoopback("tcp", address, nil); errors.Is(err, syscall.EACCES) != refused || !refused && err != nil {
-			t.Errorf("notLoopback(%s) = %v, refused %v", address, err, refused)
+		if err := notOwnTarget(ctx, "tcp", address, nil); errors.Is(err, syscall.EACCES) != refused || !refused && err != nil {
+			t.Errorf("notOwnTarget(%s) = %v, refused %v", address, err, refused)
 		}
 	}
-	if notLoopback("tcp", "example.com:80", nil) == nil || notLoopback("tcp", "192.0.2.9", nil) == nil {
+	if notOwnTarget(ctx, "tcp", "example.com:80", nil) == nil || notOwnTarget(ctx, "tcp", "192.0.2.9", nil) == nil {
 		t.Error("what isn't a literal address and a port was let through")
 	}
 	// A listener of this Mac alone, asked for by address and by name.
@@ -467,7 +468,7 @@ func TestLocalProxyByRulesOfAnotherSceneSavesReloadsAndRevokes(t *testing.T) {
 	echo := proxyEchoServer(t)
 	c.newProxies = func() (*proxy.Manager, error) {
 		dial := func(ctx context.Context, _ api.InterfaceRef, _ proxy.Target) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, "tcp4", echo)
+			return dialProxyPeer(ctx, echo)
 		}
 		return proxy.New(proxy.Options{Dial: dial, Route: c.routeByRules(dial), Listen: loopbackListen("192.0.2.10"),
 			Info: c.exitInfo, ChangeIP: c.changeExitIP, Changing: c.exitChanging})
