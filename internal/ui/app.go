@@ -809,6 +809,8 @@ func errorText(err error) string {
 		msg = locales.TheHotspotRefusedItsPassword()
 	case api.ErrNoStandby:
 		msg = locales.NoOtherNetworkCanCarryThisMac()
+	case api.ErrBusy:
+		msg = locales.AnotherNetworkSIpIsBeingChanged()
 	case api.ErrNotAllowed, api.ErrUpstreamRefused:
 		msg = locales.NotAllowed()
 	case api.ErrUpstreamUnreachable:

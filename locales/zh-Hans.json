@@ -313,6 +313,7 @@
   "notAllowed": "未获允许",
   "letAppsAndDevicesChangeItsIp": "允许应用和设备更换它的 IP",
   "changingItsIp": "正在更换 IP…",
+  "anotherNetworkSIpIsBeingChanged": "另一个网络正在更换 IP，等它换完再试。",
   "devices": "设备",
   "addDevice": "添加设备",
   "allow": "允许",

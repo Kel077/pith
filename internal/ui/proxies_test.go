@@ -430,6 +430,13 @@ func TestProxyChangesItsIP(t *testing.T) {
 	if now := a.proxyStatus(1081).Upstream.PublicIPv4; now == change.PublicIPv4 || has(changed) || !has(locales.ProxyListening()+" · "+up.Interface+" · "+now+" · ") {
 		t.Fatalf("after another change to %s: %q", now, tt.Texts())
 	}
+	// An upstream that doesn't let this Mac change its IP offers no button.
+	svc.ForbidUpstreamChanges()
+	a.Sync(ctx)
+	tt.Frame()
+	if a.proxyStatus(1081).Upstream.CanChangeIP || tt.HasText(locales.ChangeIp()) {
+		t.Fatalf("through an upstream that forbids changes: %q", tt.Texts())
+	}
 
 	// The button of a row that lets what uses the proxy change its IP: the
 	// first is the first proxy's.
@@ -491,5 +498,20 @@ func TestNetworkSaysAProxyChangesItsIP(t *testing.T) {
 	a.setStatus(st)
 	if _, ok := a.speeds["en9"]; ok || a.exitChanging("en9") {
 		t.Fatal("the old public IP stayed after the change")
+	}
+}
+
+// What fails when a proxy's IP is changed says why, in the user's words.
+func TestProxyIPChangeErrors(t *testing.T) {
+	for code, want := range map[api.ErrorCode]string{
+		api.ErrBusy:                locales.AnotherNetworkSIpIsBeingChanged(),
+		api.ErrNotAllowed:          locales.NotAllowed(),
+		api.ErrUpstreamRefused:     locales.NotAllowed(),
+		api.ErrUpstreamUnreachable: locales.NotConnected(),
+		api.ErrUnsupported:         locales.PithCanTControlThisDevice(),
+	} {
+		if got := errorText(&api.Error{Code: code}); got != want {
+			t.Errorf("%s: %q, want %q", code, got, want)
+		}
 	}
 }

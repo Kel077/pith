@@ -689,7 +689,7 @@
   "theHotspotRefusedItsPassword": "The hotspot refused its admin password.",
   "changeIp": "Change IP",
   "@changeIp": {
-    "description": "Button on an Ethernet or Wi-Fi interface's card when Pith can talk to its router: the router gives its public IPv4 address up and asks its provider for another. Locked, it asks for the router's admin password first."
+    "description": "Button on an Ethernet or Wi-Fi interface's card when Pith can talk to its router: the router gives its public IPv4 address up and asks its provider for another. Locked, it asks for the router's admin password first. Also on a local proxy's row when the proxy it goes out through, another Mac's Pith, lets this Mac change that Mac's public IP."
   },
   "getsTheRouterANewPublicIpv4": "Gets the router a new public IPv4. Everything on its network is offline for a minute or two; this Mac goes through another network meanwhile.",
   "@getsTheRouterANewPublicIpv4": {
@@ -697,7 +697,7 @@
   },
   "changingIp": "Changing…",
   "@changingIp": {
-    "description": "Beside a spinner on an interface's card while its router changes its public IP, which takes a minute or two."
+    "description": "Beside a spinner on an interface's card while its public IP is being changed, from its button or by a request to a local proxy's port. A router's takes a minute or two."
   },
   "anotherNetworkCarriesThisMacMeanwhile": "Another network carries this Mac meanwhile. This interface's local proxies refuse connections until it's back.",
   "@anotherNetworkCarriesThisMacMeanwhile": {
@@ -769,7 +769,7 @@
   },
   "notAllowed": "Not allowed",
   "@notAllowed": {
-    "description": "A local proxy whose other proxy refuses this Mac: the other Mac hasn't listed it as a device."
+    "description": "A local proxy whose other proxy refuses this Mac: the other Mac hasn't listed it as a device. Also the error when changing a local proxy's IP that the other Mac's proxy doesn't let this Mac change."
   },
   "letAppsAndDevicesChangeItsIp": "Let apps and devices change its IP",
   "@letAppsAndDevicesChangeItsIp": {
@@ -778,6 +778,10 @@
   "changingItsIp": "Changing IP…",
   "@changingItsIp": {
     "description": "Under a local proxy's address while the public IP of what it goes out through is being changed, which takes from seconds to a minute or two."
+  },
+  "anotherNetworkSIpIsBeingChanged": "Another network’s IP is being changed. Try again once it’s done.",
+  "@anotherNetworkSIpIsBeingChanged": {
+    "description": "Error when changing a public IP, from an interface's card or a local proxy's row, while another interface's IP is being changed. One change runs at a time, so the network that carries this Mac while a router renews keeps working."
   },
   "devices": "Devices",
   "@devices": {

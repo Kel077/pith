@@ -3149,7 +3149,9 @@ func (msgs Messages) TheHotspotRefusedItsPassword() string {
 //
 // Button on an Ethernet or Wi-Fi interface's card when Pith can talk to its
 // router: the router gives its public IPv4 address up and asks its provider
-// for another. Locked, it asks for the router's admin password first.
+// for another. Locked, it asks for the router's admin password first. Also
+// on a local proxy's row when the proxy it goes out through, another Mac's
+// Pith, lets this Mac change that Mac's public IP.
 func ChangeIp() string { return In(i18n.Locale()).ChangeIp() }
 
 // ChangeIp says "Change IP"
@@ -3157,7 +3159,9 @@ func ChangeIp() string { return In(i18n.Locale()).ChangeIp() }
 //
 // Button on an Ethernet or Wi-Fi interface's card when Pith can talk to its
 // router: the router gives its public IPv4 address up and asks its provider
-// for another. Locked, it asks for the router's admin password first.
+// for another. Locked, it asks for the router's admin password first. Also
+// on a local proxy's row when the proxy it goes out through, another Mac's
+// Pith, lets this Mac change that Mac's public IP.
 func (msgs Messages) ChangeIp() string {
 	return Catalog.Format(msgs.locale, "changeIp", nil)
 }
@@ -3183,15 +3187,17 @@ func (msgs Messages) GetsTheRouterANewPublicIpv4() string {
 // ChangingIp says "Changing…"
 // in the language the app shows.
 //
-// Beside a spinner on an interface's card while its router changes its
-// public IP, which takes a minute or two.
+// Beside a spinner on an interface's card while its public IP is being
+// changed, from its button or by a request to a local proxy's port. A
+// router's takes a minute or two.
 func ChangingIp() string { return In(i18n.Locale()).ChangingIp() }
 
 // ChangingIp says "Changing…"
 // in the language of msgs.
 //
-// Beside a spinner on an interface's card while its router changes its
-// public IP, which takes a minute or two.
+// Beside a spinner on an interface's card while its public IP is being
+// changed, from its button or by a request to a local proxy's port. A
+// router's takes a minute or two.
 func (msgs Messages) ChangingIp() string {
 	return Catalog.Format(msgs.locale, "changingIp", nil)
 }
@@ -3468,14 +3474,16 @@ func (msgs Messages) ShareWithDevices() string {
 // in the language the app shows.
 //
 // A local proxy whose other proxy refuses this Mac: the other Mac hasn't
-// listed it as a device.
+// listed it as a device. Also the error when changing a local proxy's IP
+// that the other Mac's proxy doesn't let this Mac change.
 func NotAllowed() string { return In(i18n.Locale()).NotAllowed() }
 
 // NotAllowed says "Not allowed"
 // in the language of msgs.
 //
 // A local proxy whose other proxy refuses this Mac: the other Mac hasn't
-// listed it as a device.
+// listed it as a device. Also the error when changing a local proxy's IP
+// that the other Mac's proxy doesn't let this Mac change.
 func (msgs Messages) NotAllowed() string {
 	return Catalog.Format(msgs.locale, "notAllowed", nil)
 }
@@ -3512,6 +3520,28 @@ func ChangingItsIp() string { return In(i18n.Locale()).ChangingItsIp() }
 // through is being changed, which takes from seconds to a minute or two.
 func (msgs Messages) ChangingItsIp() string {
 	return Catalog.Format(msgs.locale, "changingItsIp", nil)
+}
+
+// AnotherNetworkSIpIsBeingChanged says "Another network’s IP is being changed. Try again once it’s done."
+// in the language the app shows.
+//
+// Error when changing a public IP, from an interface's card or a local
+// proxy's row, while another interface's IP is being changed. One change
+// runs at a time, so the network that carries this Mac while a router
+// renews keeps working.
+func AnotherNetworkSIpIsBeingChanged() string {
+	return In(i18n.Locale()).AnotherNetworkSIpIsBeingChanged()
+}
+
+// AnotherNetworkSIpIsBeingChanged says "Another network’s IP is being changed. Try again once it’s done."
+// in the language of msgs.
+//
+// Error when changing a public IP, from an interface's card or a local
+// proxy's row, while another interface's IP is being changed. One change
+// runs at a time, so the network that carries this Mac while a router
+// renews keeps working.
+func (msgs Messages) AnotherNetworkSIpIsBeingChanged() string {
+	return Catalog.Format(msgs.locale, "anotherNetworkSIpIsBeingChanged", nil)
 }
 
 // Devices says "Devices"
