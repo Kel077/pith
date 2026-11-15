@@ -235,7 +235,8 @@ func (m *Manager) portInfo(ctx context.Context, e *listener, maxAge time.Duratio
 		if m.opts.Info != nil {
 			if found, err := m.opts.Info(ctx, e.cfg.Via, maxAge); err == nil {
 				info.Interface, info.Online = found.Interface, found.Online
-				info.PublicIPv4, info.PublicIPv6, info.At = found.PublicIPv4, found.PublicIPv6, found.At
+				// In UTC: an answer doesn't tell this Mac's time zone.
+				info.PublicIPv4, info.PublicIPv6, info.At = found.PublicIPv4, found.PublicIPv6, found.At.UTC()
 				info.CanChangeIP, info.Changing = e.allowChangeIP.Load() && found.CanChangeIP, found.Changing
 			}
 		}
@@ -276,7 +277,7 @@ func (m *Manager) changeIP(ctx context.Context, e *listener, hops int) (api.Prox
 			}
 			return result, &portFailure{status, problem}
 		}
-		changed.Port = e.cfg.Port
+		changed.Port, changed.At = e.cfg.Port, changed.At.UTC()
 		return changed, nil
 	}
 }
