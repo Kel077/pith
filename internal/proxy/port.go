@@ -291,7 +291,10 @@ func (m *Manager) portInfo(ctx context.Context, e *listener, maxAge time.Duratio
 				info.PublicIPv4, info.PublicIPv6, info.At = found.PublicIPv4, found.PublicIPv6, found.At.UTC()
 				info.CanChangeIP, info.Changing = e.allowChangeIP.Load() && found.CanChangeIP, found.Changing
 			} else {
-				info.Interface, info.Online, info.Changing = found.Interface, found.Online, found.Changing
+				if found.Interface != "" {
+					info.Interface = found.Interface
+				}
+				info.Online, info.Changing = found.Online, found.Changing
 			}
 		}
 		if m.opts.Changing != nil {

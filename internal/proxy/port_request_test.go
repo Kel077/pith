@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -94,6 +95,28 @@ func TestPortLocalAddressCannotBypassHostRule(t *testing.T) {
 	}
 	if len(m.Devices()) != 0 {
 		t.Fatal("this Mac's own connection was treated as a device")
+	}
+}
+
+func TestPortFailedInfoKeepsConfiguredInterface(t *testing.T) {
+	for _, tc := range []struct{ label, want string }{
+		{"", testVia.Name}, {"Saved adapter", "Saved adapter"},
+	} {
+		t.Run(tc.want, func(t *testing.T) {
+			m, f := newTestManager(t, Options{Dial: noDial(t),
+				Info: func(context.Context, api.InterfaceRef, time.Duration) (api.ProxyInfo, error) {
+					return api.ProxyInfo{Online: false, Changing: true}, errors.New("not available")
+				},
+			})
+			p := testProxy(18080)
+			p.Via.Label = tc.label
+			applyTest(t, m, p)
+			var info api.ProxyInfo
+			portAnswer(t, portRequest(t, f, p.Port, "GET", "/", "", ""), 200, &info)
+			if info.Interface != tc.want || info.Online || !info.Changing {
+				t.Fatalf("a partial failure erased the configured interface: %+v", info)
+			}
+		})
 	}
 }
 
