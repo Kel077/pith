@@ -27,6 +27,7 @@ const (
 	ErrInterfaceUnavailable ErrorCode = "interface_unavailable" // the selected local proxy exit cannot be resolved or used
 	ErrDNSUnavailable       ErrorCode = "dns_unavailable"       // the selected local proxy exit has no usable DNS servers
 	ErrNoStandby            ErrorCode = "no_standby"            // no other connected interface has internet to carry the Mac while a router renews its address
+	ErrBusy                 ErrorCode = "busy"                  // another interface's public address is being changed: one change runs at a time, so the one carrying the Mac while a router renews keeps working
 	ErrUpstreamUnreachable  ErrorCode = "upstream_unreachable"  // the proxy a local proxy goes out through doesn't answer
 	ErrUpstreamRefused      ErrorCode = "upstream_refused"      // it answers and refuses this Mac: a shared proxy that doesn't list it as a device, or one that wants a password
 	ErrNotAllowed           ErrorCode = "not_allowed"           // a proxy's port doesn't let what connects to it change its address: Proxy.ChangeIP is off there

@@ -206,13 +206,21 @@ const (
 // ChangeIP. What fails answers with its HTTP status and {"error": Error}:
 // 403 and ErrNotAllowed without ChangeIP, 501 and ErrUnsupported for an
 // exit Pith can't change the address of, 502 and what went wrong for a
-// change that failed. A request a web page made, which has an Origin field
-// or a Sec-Fetch-Site other than "none", is refused with 403: the answers
-// are for programs, and for a person who opens the address in a browser.
+// change that failed, 503 and ErrBusy while another interface's address is
+// being changed, and 503 when the port has too many requests to answer.
 //
-// A port whose Upstream is another Pith's port asks it the same way: it
-// answers with what the upstream says, and passes a change on to it, through
-// MaxProxyHops ports at most.
+// The answers are for programs, and for a person who opens the address in
+// a browser, not for web pages. A Host field must name the port by an IP
+// address, "localhost", a name without dots or a name under ".local": a
+// page whose host name was made to point at this Mac names that instead,
+// and is refused with 403 and ErrNotAllowed. So is a request with an
+// Origin field, or a Sec-Fetch-Site other than "none", fields a browser
+// adds to what a page asks for.
+//
+// A port whose Upstream is another Pith's port asks it the same way, by the
+// address it connected to: it answers with what the upstream says, and
+// passes a change on to it, through MaxProxyHops ports at most. While the
+// upstream is too busy to answer, the port keeps what it said last.
 type ProxyInfo struct {
 	Pith int       `json:"pith"` // ProxyInfoVersion: it tells Pith's answer from another server's
 	Port int       `json:"port"`
@@ -228,8 +236,10 @@ type ProxyInfo struct {
 	// PublicIPv4 and PublicIPv6 are the addresses the internet sees the
 	// port's connections come from, as Pith's HTTPS test found them through
 	// its interface at At, or as its upstream tells them. Pith looks them up
-	// for a GET when it knows none, and again when they are older than the
-	// request allows: "GET /?max-age=60", in seconds. Empty when they
+	// for a GET when it knows none, unless a lookup failed lately (for 30
+	// seconds, twice as long after each failure in a row, ten minutes at
+	// most), and again when they are older than the request allows:
+	// "GET /?max-age=60", in seconds. Empty when they
 	// couldn't be found, and for a port by a scene's rules, whose connections
 	// leave from where each rule sends them.
 	PublicIPv4 string    `json:"publicIPv4,omitempty"`

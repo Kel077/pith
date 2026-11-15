@@ -73,7 +73,8 @@ type Service interface {
 	SetHotspotPassword(ctx context.Context, iface, password string) error
 	// RenewHotspot has the hotspot behind an interface reconnect to its
 	// carrier, which gives it new public addresses, and returns once it is
-	// connected again.
+	// connected again. ErrBusy while another interface's address is being
+	// changed.
 	RenewHotspot(ctx context.Context, iface string) (HotspotRenewal, error)
 
 	// Router reads the router behind a wired interface, by its Name:
@@ -89,6 +90,7 @@ type Service interface {
 	// is offline the interface counts as down: another connected interface
 	// becomes macOS's primary, rules skip it, and local proxies through it
 	// refuse connections. The router's other devices are offline meanwhile.
+	// ErrBusy while another interface's address is being changed.
 	RenewRouter(ctx context.Context, iface string) (RouterRenewal, error)
 
 	// ChangeProxyIP changes the public address of what the local proxy on a
@@ -99,7 +101,10 @@ type Service interface {
 	// its port's ChangeIP is on. ErrUnsupported for a proxy by a scene's
 	// rules, for an interface that leads to neither, and for an upstream
 	// that isn't Pith's. One change runs at a time for an interface: a call
-	// during one waits for it, and returns what it did.
+	// during one waits for it, and returns what it did. One runs at a time
+	// across interfaces too, so that the one carrying the Mac while a router
+	// renews isn't changed meanwhile: ErrBusy while another interface's
+	// address is being changed.
 	ChangeProxyIP(ctx context.Context, port int) (ProxyIPChange, error)
 
 	// Connections returns logged connections, newest first.
