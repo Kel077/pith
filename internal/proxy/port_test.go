@@ -310,21 +310,20 @@ func TestPortRequestSurvivesSuspend(t *testing.T) {
 
 func TestPortRequestsHaveOneManagerLimit(t *testing.T) {
 	entered, release := make(chan struct{}, maxPortRequests), make(chan struct{})
-	m, f := newTestManager(t, Options{Dial: echoPeer(t).dial, MaxPerPort: 1, ChangeIP: func(ctx context.Context, _ api.InterfaceRef) (api.ProxyIPChange, error) {
+	m, f := newTestManager(t, Options{Dial: echoPeer(t).dial, MaxPerPort: 1, Info: func(ctx context.Context, _ api.InterfaceRef, _ time.Duration) (api.ProxyInfo, error) {
 		entered <- struct{}{}
 		select {
 		case <-release:
-			return api.ProxyIPChange{}, nil
+			return api.ProxyInfo{Online: true}, nil
 		case <-ctx.Done():
-			return api.ProxyIPChange{}, ctx.Err()
+			return api.ProxyInfo{}, ctx.Err()
 		}
 	}})
 	a, b := testProxy(18080), testProxy(18081)
-	a.ChangeIP, b.ChangeIP = true, true
 	applyTest(t, m, a, b)
 	var pending []net.Conn
 	for i := range maxPortRequests {
-		pending = append(pending, portRequest(t, f, 18080+i%2, "POST", "/change-ip", "", ""))
+		pending = append(pending, portRequest(t, f, 18080+i%2, "GET", "/", "", ""))
 		<-entered
 	}
 	portError(t, portRequest(t, f, a.Port, "GET", "/", "", ""), 503, api.ErrInternal)
@@ -341,7 +340,7 @@ func TestPortRequestsHaveOneManagerLimit(t *testing.T) {
 	for _, c := range pending {
 		portAnswer(t, c, 200, nil)
 	}
-	waitFor(t, func() bool { m.mu.Lock(); defer m.mu.Unlock(); return m.requests == 0 })
+	waitFor(t, func() bool { m.mu.Lock(); defer m.mu.Unlock(); return m.requests == 0 && m.changeRequests == 0 })
 	roundTrip(t, stream, "still open")
 }
 

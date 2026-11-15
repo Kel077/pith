@@ -17,9 +17,12 @@ import (
 )
 
 const (
-	maxPortRequests = 16
-	maxChangeBody   = 4 << 10
-	changeIPTimeout = 10 * time.Minute
+	// Address changes may take minutes; their lower cap leaves room for
+	// status reads and requests that can be answered without waiting.
+	maxPortRequests   = 64
+	maxChangeRequests = 48
+	maxChangeBody     = 4 << 10
+	changeIPTimeout   = 10 * time.Minute
 )
 
 var unsupportedChange = &api.Error{Code: api.ErrUnsupported, Detail: "the public address of this proxy's exit cannot be changed"}
@@ -59,6 +62,22 @@ func (m *Manager) takeRequest(e *listener, s *session) bool {
 	m.total--
 	e.requests[s] = struct{}{}
 	m.requests++
+	return true
+}
+
+// takeChangeRequest counts a POST only after its immediate checks pass.
+// Its waiting slot is released with the request, including on cancellation.
+func (m *Manager) takeChangeRequest(e *listener, s *session) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed || e.retired || s.ctx.Err() != nil || m.changeRequests >= maxChangeRequests {
+		return false
+	}
+	if _, ok := e.requests[s]; !ok {
+		return false
+	}
+	s.waitingChange = true
+	m.changeRequests++
 	return true
 }
 
@@ -121,6 +140,10 @@ func (m *Manager) servePort(e *listener, s *session, req *http.Request, br *bufi
 		}
 		if err != nil {
 			writePortError(s.in, portProblem(http.StatusBadRequest, api.ErrInvalidConfig, "the request body is incomplete"))
+			return
+		}
+		if !m.takeChangeRequest(e, s) {
+			writePortError(s.in, portProblem(http.StatusServiceUnavailable, api.ErrInternal, "too many address change requests"))
 			return
 		}
 	}

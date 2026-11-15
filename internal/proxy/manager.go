@@ -98,14 +98,15 @@ const (
 type Manager struct {
 	opts Options
 
-	applyMu  sync.Mutex
-	mu       sync.Mutex
-	closed   bool
-	entries  []*listener
-	byPort   map[int]*listener
-	total    int
-	requests int // requests to the ports themselves, independently of streams
-	wg       sync.WaitGroup
+	applyMu        sync.Mutex
+	mu             sync.Mutex
+	closed         bool
+	entries        []*listener
+	byPort         map[int]*listener
+	total          int
+	requests       int // requests to the ports themselves, independently of streams
+	changeRequests int // requests waiting for an address change; part of requests
+	wg             sync.WaitGroup
 	// suspended tells the exits whose listeners refuse connections for now.
 	suspended func(api.InterfaceRef) bool
 	// allow is the other devices that may use shared listeners; devices, the
@@ -154,15 +155,16 @@ type listener struct {
 }
 
 type session struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	in     net.Conn
-	start  time.Time
-	mu     sync.Mutex
-	out    net.Conn
-	closed bool
-	active bool // protected by Manager.mu
-	stream bool // a proxy request, rather than an unclassified handshake; Manager.mu
+	ctx           context.Context
+	cancel        context.CancelFunc
+	in            net.Conn
+	start         time.Time
+	mu            sync.Mutex
+	out           net.Conn
+	closed        bool
+	active        bool // protected by Manager.mu
+	stream        bool // a proxy request, rather than an unclassified handshake; Manager.mu
+	waitingChange bool // holds an address change request slot; Manager.mu
 	// peer is the other device the stream is for, and dev what it moved;
 	// neither is set for this Mac's own.
 	peer netip.Addr
@@ -816,6 +818,10 @@ func (m *Manager) releaseLocked(e *listener, s *session) {
 		}
 		delete(e.requests, s)
 		m.requests--
+		if s.waitingChange {
+			s.waitingChange = false
+			m.changeRequests--
+		}
 	} else {
 		delete(e.conns, s)
 		m.total--
