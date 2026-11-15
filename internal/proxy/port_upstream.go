@@ -150,7 +150,7 @@ func (m *Manager) readUpstreamInfo(ctx context.Context, e *listener, maxAge time
 	var info *api.ProxyInfo
 	if err == nil && response.status == http.StatusOK {
 		var found api.ProxyInfo
-		if json.Unmarshal(response.json, &found) == nil && found.Pith >= api.ProxyInfoVersion {
+		if json.Unmarshal(response.json, &found) == nil && validateUpstreamInfo(&found, 0) {
 			info = &found
 		}
 	}
@@ -226,7 +226,7 @@ func (m *Manager) changeUpstreamIP(ctx context.Context, e *listener, hops int) (
 	switch response.status {
 	case http.StatusOK:
 		var changed api.ProxyIPChange
-		if json.Unmarshal(response.json, &changed) == nil && changed.Port > 0 {
+		if json.Unmarshal(response.json, &changed) == nil && validateUpstreamChange(&changed) {
 			changed.Port = e.cfg.Port
 			return changed, nil
 		}

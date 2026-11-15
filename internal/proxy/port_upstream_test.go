@@ -223,13 +223,14 @@ func TestPortUpstreamRelaysChangeFailures(t *testing.T) {
 		{"invalid success", "{}", 200, 502, api.ErrInternal},
 		{"loop", "", 508, 508, api.ErrInternal},
 		{"full", "", 503, 503, api.ErrInternal},
+		{"busy change", "{\"error\":{\"code\":\"busy\",\"detail\":\"another interface is changing\"}}", 503, 503, api.ErrBusy},
 		{"not Pith anymore", "", 404, 501, api.ErrUnsupported},
 		{"left unanswered", "", 0, 502, api.ErrUpstreamUnreachable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			up := portUpstream(t, func(c net.Conn, req *http.Request) {
 				if req.Method == "GET" {
-					writePortJSON(c, 200, api.ProxyInfo{Pith: 1, Port: 18081, Online: true, CanChangeIP: true}, "")
+					writePortJSON(c, 200, api.ProxyInfo{Pith: 1, Port: 18081, Exit: api.ExitInterface, Online: true, CanChangeIP: true}, "")
 					return
 				}
 				if tc.status == 0 {
@@ -291,7 +292,7 @@ func TestPortUpstreamHeadersAndBounds(t *testing.T) {
 	seen := make(chan *http.Request, 1)
 	peer := portUpstream(t, func(c net.Conn, req *http.Request) {
 		seen <- req
-		writePortJSON(c, 200, api.ProxyInfo{Pith: 2, Port: 18081, Online: true}, "")
+		writePortJSON(c, 200, api.ProxyInfo{Pith: 2, Port: 18081, Exit: api.ExitInterface, Online: true}, "")
 	})
 	m, f := newTestManager(t, Options{Dial: noDial(t), Upstream: peer.reach})
 	applyTest(t, m, upstreamProxy(18080, "example.com:18081"))
@@ -440,7 +441,7 @@ func TestPortUpstreamStatusRefreshesDuringTraffic(t *testing.T) {
 func TestPortUpstreamCanceledCaller(t *testing.T) {
 	peer := portUpstream(t, func(c net.Conn, req *http.Request) {
 		if req.Method == "GET" {
-			writePortJSON(c, 200, api.ProxyInfo{Pith: 1, Port: 18081, Online: true, CanChangeIP: true}, "")
+			writePortJSON(c, 200, api.ProxyInfo{Pith: 1, Port: 18081, Exit: api.ExitInterface, Online: true, CanChangeIP: true}, "")
 			return
 		}
 		_, _ = io.Copy(io.Discard, c)
