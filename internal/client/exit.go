@@ -126,6 +126,11 @@ func (c *Client) publicProbe(ctx context.Context, link api.Interface, links []ap
 		if state == nil || !sameExitLink(state.link, link) {
 			c.exitMu.Unlock()
 			c.proxyMu.Unlock()
+			if maxAge == nil {
+				// Another reader observed a different snapshot. Test the
+				// supplied interface without publishing into its new record.
+				return c.probe(ctx, link.Name, "", links)
+			}
 			return api.Probe{}, &api.Error{Code: api.ErrInterfaceUnavailable, Detail: "the interface changed before its public-address test"}
 		}
 		if maxAge != nil {
@@ -159,11 +164,11 @@ func (c *Client) publicProbe(ctx context.Context, link api.Interface, links []ap
 			return api.Probe{}, ctx.Err()
 		case <-pending.done:
 		}
-		if maxAge == nil || !pending.ownerCanceled {
+		if !pending.ownerCanceled || ctx.Err() != nil {
 			return pending.result, pending.err
 		}
-		// A poll doesn't inherit cancellation from the Test button it joined.
-		// Read the inventory again before starting its own independent test.
+		// A reader doesn't inherit cancellation from a test it joined. Read
+		// the inventory again before starting a test under its own context.
 		var err error
 		links, err = c.Interfaces(ctx)
 		if err != nil {
@@ -192,9 +197,7 @@ func (c *Client) runExitLookup(parent context.Context, state *exitState, pending
 		state.lookup = nil
 		if c.lifetime.Err() == nil && !pending.ownerCanceled && state.link.Up {
 			if pending.err == nil && inventoryErr == nil && publicIPs(pending.result) > 0 {
-				if !pending.result.At.Before(state.public.At) {
-					state.public = pending.result
-				}
+				state.public = pending.result
 				state.failed, state.backoff = time.Time{}, 0
 			} else {
 				if pending.forPoll {
