@@ -383,9 +383,16 @@ With no shared port enabled, no device is remembered.
 An address is all that tells a device: there is no password, and a device that
 is taken reaches what the Mac reaches through the port's exit, the networks it
 is connected to included. Not the Mac itself: every port refuses loopback,
-unspecified and multicast destinations, and the names reserved for loopback,
-before it asks its interface, its upstream or its rules, and a port through an
-interface or by a scene's rules refuses a name that resolves to one. An
+unspecified and multicast destinations, those in 0.0.0.0/8, any address on
+one of this Mac's interfaces, tunnels included, and the names reserved for
+loopback, before it asks its interface, its upstream or its rules. A port
+through an interface or by a scene's rules checks each address it dials,
+after a name has resolved, against the kernel's list of this Mac's addresses
+read anew (`net.InterfaceAddrs`, about 80 µs), and once connected checks the
+address it reached again before it relays anything, for an address the Mac
+took meanwhile; a list it can't read refuses the connection. Other hosts of
+the local network stay reachable, and this Mac reached back through its
+public address, by a router that forwards to it, isn't recognized. An
 address a client spells where a name goes is read as the address, and a name
 whose last label is a number, which only a lenient resolver reads as an
 address, is refused. A port
@@ -435,9 +442,9 @@ rule's interfaces are tried in order through the same interface-bound dialer
 as a port through one interface, with three seconds each; an interface that is
 suspended is skipped. When none
 connects, a rule that falls back, like a connection no rule matches, is dialed
-unbound, with macOS's routes and resolver, but never to a loopback address,
-which a name may resolve to: such a port reaches no more of this Mac than a
-port through an interface does. While a scene routes, that
+unbound, with macOS's routes and resolver, but never to an address of this
+Mac, which a name may resolve to: such a port reaches no more of this Mac than
+a port through an interface does. While a scene routes, that
 connection of the App is captured and follows that scene's rules as any app's.
 In a scene whose rules name domains alone, a name stays a name: the rules see
 it as the client asked for it, and each interface's own DNS, or macOS,
@@ -473,7 +480,12 @@ way. At `081e567`, with a rule that names addresses in a scene other than
 the default one, the same held, and an address a rule blocks was refused.
 Loopback destinations, by address, by `localhost`, by `127.1` and `2130706433`
 and by a public name that resolves to a loopback address, were refused through
-a shared port and through two ports in a row.
+a shared port and through two ports in a row. At `246c017`, the client alone
+on a Mac refused the Mac's own address on its local network through a port by
+Wi-Fi, one by a scene's rules and one through the first, as a SOCKS5, CONNECT
+or `http://` target; the Mac's `.local` name by a scene's rules, which macOS
+resolved to that address; and `0.0.0.0` and `0.1.2.3`. `example.com` loaded
+through all three, by SOCKS5 and as an HTTP proxy.
 
 ## Capturing and forwarding
 

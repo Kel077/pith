@@ -21,6 +21,7 @@ All notable changes to Pith are listed here. The format follows [Keep a Changelo
 
 ### Fixed
 
+- A local proxy no longer connects to the Mac itself by one of its network addresses. Only loopback addresses were refused, so a page opened through a proxy, whose name resolved to the Mac's address on the local network, could reach what the Mac serves there.
 - Removing a local proxy other than the last of the list no longer fails. The rows after it were drawn from the shortened list, which could quit Pith.
 - The helper no longer comes and goes as **Helper not answering**, with **Repair** appearing and disappearing, while the Mac is busy. The helper ended its live updates to Pith whenever one read of the network settings failed, as one can on a busy Mac, and Pith reported it whenever they ended twice within three seconds, or when it took more than half a second to answer. A failed read now keeps the updates going, and Pith reports the helper only when it isn't running, or doesn't answer within five seconds.
 - Pages opened through a local proxy no longer fail with `ERR_CONNECTION_RESET` once the browser has 128 connections open through its port. A browser keeps a connection for every site a page loads from, and one news page full of ads came close to that alone. A port now takes 1024 connections, and when one is full, the connection idle the longest closes to make room: the browser opens it again when it needs it.
