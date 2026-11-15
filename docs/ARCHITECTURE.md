@@ -298,7 +298,7 @@ a port belongs to no caller: it runs to its own end while callers wait for
 it, each for as long as it cares to, so another Mac's poll that gives up
 after three seconds finds the addresses the next time. Whether an
 interface's address can be changed is found once for an interface as it is:
-a hotspot by the interface's name, a router by asking its admin which model
+a hotspot by the interface's label, a router by asking its admin which model
 it is. A device Pith doesn't know stays unknown until the interface changes;
 one that didn't answer is asked again after a minute.
 
