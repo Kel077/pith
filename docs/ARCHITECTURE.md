@@ -256,10 +256,14 @@ to `Pith-Hops`, initially zero; an upstream request already at
 `api.MaxProxyHops` is answered `508` instead of being forwarded. That status
 returns through the chain.
 
-Requests to ports have 16 slots across the manager, with `503` beyond that.
-They count neither as open streams nor as traffic, and cannot be selected as
-the quietest stream. Suspending an exit leaves them and unclassified HTTP
-handshakes open, so a router renewal can answer the very POST that caused it.
+Requests to ports have 64 slots across the manager, with `503` beyond that.
+At most 48 may wait for an address change, leaving 16 for status reads and
+requests answered immediately; a 49th waiting POST is answered `503`.
+Immediate method, path, parameter, permission and body refusals do not count
+against the 48. Requests count neither as open streams nor as traffic, and
+cannot be selected as the quietest stream. Suspending an exit leaves them
+and unclassified HTTP handshakes open, so a router renewal can answer the
+very POST that caused it.
 GET uses the connect timeout, with a little time reserved for the answer;
 POST waits at most ten minutes. A departed caller ends only its wait:
 the client owns an interface's change, and coalesces other callers onto it.
