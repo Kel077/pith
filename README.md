@@ -146,6 +146,28 @@ Another Mac can keep its own ports: in its Pith, a local proxy goes out through 
 
 Sharing asks for no password. Any device that can use a listed address can use the port, and reaches what your Mac reaches through it, its local network included, though not what listens for your Mac alone: share on networks you trust. A shared proxy can't go out through a proxy on the same Mac.
 
+### For scripts
+
+A local proxy's port also answers two plain HTTP requests made to the port itself, for a script or a tool that drives browsers through it:
+
+| | |
+| :-- | :-- |
+| `GET /` | What the port goes out through, whether it is online, and the public IP addresses the internet sees it by, as JSON |
+| `POST /change-ip` | Changes that public IP, as **Change hotspot IP** and **Change IP** do on the Network page, and answers with the old and the new address once it is done |
+
+```sh
+curl http://127.0.0.1:1081/
+curl -X POST http://127.0.0.1:1081/change-ip
+```
+
+Whatever can use the port can ask `GET /`. Pith looks the addresses up once and keeps them until the network changes; `GET /?max-age=60` has them looked up again when they are older than a minute.
+
+`POST /change-ip` is refused until you turn on **Let apps and devices change its IP**, the button with two arrows on the proxy's row. Then every app on your Mac, and every device the proxy is shared with, can change that IP. A router that changes its IP takes everything on its network offline for a few seconds: think of who else is on it.
+
+A proxy that goes out through another Mac's Pith passes both requests on to it; a change needs the button on in both. Its row names the network the other Mac uses and its public IP, with **Change IP** beside them when the other Mac allows it.
+
+A web page can't ask a port either: Pith refuses requests that a page in a browser makes.
+
 ### Also
 
 - **Safe start**, on by default: if the Mac loses the internet right after routing starts, Pith undoes it.
@@ -204,7 +226,7 @@ If it reports an error, or you're still offline once the helper is removed, stop
 
 Pith reads where connections go: addresses, ports, and host names from TLS SNI, the HTTP Host or DNS. It never reads what they carry, decrypts nothing and installs no certificate. Rules, the connection log and traffic totals stay on your Mac, and the log keeps as many days as Settings says.
 
-Pith connects to the internet on its own in one case: with Safe start on, each time routing starts, the helper opens one TLS connection to api.ipify.org to check the Mac is still online, and sends no request over it. Everything else is something you start: a speed test on the Network page downloads 25 MB from and uploads 8 MB to [Cloudflare's speed test](https://speed.cloudflare.com), which also tells the public address it saw; changing a hotspot's or a router's IP asks [ipify](https://www.ipify.org) for its public addresses before and after; and reaching a server connects to the one you enter. With a hotspot's or a router's admin password, Pith reads the device's own admin page, on your local network, while the Network page is open.
+Pith connects to the internet on its own in one case: with Safe start on, each time routing starts, the helper opens one TLS connection to api.ipify.org to check the Mac is still online, and sends no request over it. Everything else is something you start: a speed test on the Network page downloads 25 MB from and uploads 8 MB to [Cloudflare's speed test](https://speed.cloudflare.com), which also tells the public address it saw; changing a hotspot's or a router's IP asks [ipify](https://www.ipify.org) for its public addresses before and after, as it does once when a script or another Mac's Pith asks a local proxy's port for them; and reaching a server connects to the one you enter. With a hotspot's or a router's admin password, Pith reads the device's own admin page, on your local network, while the Network page is open; and when a local proxy's port is first asked about itself, Pith looks at its network's router once, to tell whether it is one whose IP it can change.
 
 ## Documentation
 

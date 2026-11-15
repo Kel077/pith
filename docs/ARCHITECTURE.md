@@ -278,6 +278,43 @@ client's non-blocking `Changing` hook for an interface, or from a change
 being passed upstream or its last answer. A completed upstream change
 refreshes that answer; a canceled wait makes the next status poll due.
 
+What a port tells of an interface is the client's. It keeps, for each
+interface, the public addresses of the last HTTPS test that found any and
+when it did, in UTC on the wire: the Network page's test, a renewal's tests
+before and after, and a lookup for a port all fill the same record. It
+forgets them when the interface goes down or away, or when its hardware
+address, its own addresses or its router change, and a test that began
+before such a change can't put its result back. A `GET` without `max-age`
+is answered from the record and reaches the internet only when no address is
+known; a failed lookup keeps the next from being made for 30 seconds, twice
+as long for each failure in a row, ten minutes at most, until a lookup
+succeeds or the interface changes. With `max-age`, addresses older than
+that are looked up again, and a lookup that fails leaves none. A lookup for
+a port belongs to no caller: it runs to its own end while callers wait for
+it, each for as long as it cares to, so another Mac's poll that gives up
+after three seconds finds the addresses the next time. Whether an
+interface's address can be changed is found once for an interface as it is:
+a hotspot by the interface's name, a router by asking its admin which model
+it is. A device Pith doesn't know stays unknown until the interface changes;
+one that didn't answer is asked again after a minute.
+
+One change of an interface's address runs at a time, whoever asked: a
+port's request, `RenewHotspot` or `RenewRouter`. The others wait for it and
+get what it did, each in its own form. A change a port asked for runs under
+the client's lifetime, three minutes at most for a hotspot and eight for a
+router, and the request's end ends only its wait; one the Network page asked
+for ends with its caller, as before. `Close` waits for either, and a router
+left without an address is still asked for one.
+
+At `dbb1037`, the client alone on a Mac answered `curl` on three ports: one
+through Wi-Fi told the interface's name and both public addresses, 0.4
+seconds the first time and 10 ms from its record after, and looked them up
+again with `max-age=0`; one through the first told the same, nested under
+`upstream`; one by a scene's rules told that alone. A `POST` without
+`ChangeIP` was answered `403`, as were requests with an `Origin`, or with a
+`Sec-Fetch-Site` of `same-origin`, and the port asked for itself through
+itself; SOCKS5 and HTTP through the ports went on working.
+
 ### Sharing a port with other devices
 
 A port with `Proxy.Shared` listens on `0.0.0.0` rather than `127.0.0.1`, still

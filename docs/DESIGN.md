@@ -85,7 +85,11 @@ page has a large title and its actions on the right.
   carries the Mac.
 - **Settings.** Groups of rows, as System Settings has them. A local
   proxy's row ends with what it goes out through, a small button that
-  shares it, tinted while it does, its switch and a button that removes it.
+  shares it and one that lets what uses it change its IP, each tinted while
+  on, its switch and a button that removes it. A proxy through another
+  Mac's Pith says, under its address, the interface that Mac uses and its
+  public IP, and has "Change IP" before its menu when that Mac allows it;
+  the row says while the IP changes, and then the old and the new one.
   The devices that may use the shared proxies have a group of their own,
   there once a proxy is shared: what each moves, **Allow** beside one that
   was refused, and this Mac's addresses, which the devices type.
