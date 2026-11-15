@@ -515,6 +515,7 @@ func TestNoDNSDoesNotUseSystemResolver(t *testing.T) {
 }
 
 func TestDomainValidationAndLiteralFamilies(t *testing.T) {
+	ctx := proxy.WithInterfaceAddrs(context.Background(), func() ([]net.Addr, error) { return nil, nil })
 	for _, name := range []string{"", ".", "bad..example.com", "-bad.example.com", "bad-.example.com", "bad_name.example.com", "example.com:443", "example.com/path", strings.Repeat("a", 64) + ".example.com", "example.com\x00"} {
 		if _, err := domainName(name); err == nil {
 			t.Fatalf("accepted invalid name %q", name)
@@ -525,7 +526,7 @@ func TestDomainValidationAndLiteralFamilies(t *testing.T) {
 	}
 	for _, address := range []string{"203.0.113.1", "2001:db8::1", "fe80::1"} {
 		f := newTestNetwork()
-		conn, err := New(f.options()).Dial(context.Background(), testRef(), proxy.Target{Host: address, Port: 443})
+		conn, err := New(f.options()).Dial(ctx, testRef(), proxy.Target{Host: address, Port: 443})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -539,7 +540,7 @@ func TestDomainValidationAndLiteralFamilies(t *testing.T) {
 	}
 	for _, address := range []string{"127.0.0.1", "::1", "0.0.0.0", "::", "224.0.0.1", "ff02::1", "fe80::1%unrelated", "example.com"} {
 		f := newTestNetwork()
-		conn, err := New(f.options()).Dial(context.Background(), testRef(), proxy.Target{Host: address, Port: 443})
+		conn, err := New(f.options()).Dial(ctx, testRef(), proxy.Target{Host: address, Port: 443})
 		if conn != nil || err == nil || len(f.dials) != 0 {
 			t.Fatalf("unsafe literal %q was dialed", address)
 		}

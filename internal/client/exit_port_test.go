@@ -47,7 +47,7 @@ func installExitPort(t *testing.T, c *Client, peer string) *exitPortHooks {
 	c.newProxies = func() (*proxy.Manager, error) {
 		return proxy.New(proxy.Options{
 			Dial: func(ctx context.Context, _ api.InterfaceRef, _ proxy.Target) (net.Conn, error) {
-				return (&net.Dialer{}).DialContext(ctx, "tcp4", echo)
+				return dialProxyPeer(ctx, echo)
 			},
 			Listen: loopbackListen(peer),
 			Info: func(ctx context.Context, via api.InterfaceRef, age time.Duration) (api.ProxyInfo, error) {

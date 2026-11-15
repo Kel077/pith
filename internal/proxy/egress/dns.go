@@ -205,8 +205,10 @@ func (n *Native) resolve(ctx context.Context, b binding, raw string) ([]netip.Ad
 			if i >= len(family) {
 				continue
 			}
-			address, err := destination(family[i], b.iface.Name)
-			if err == nil && !seen[address] && len(all) < maxAddresses {
+			// Dial checks and scopes each actual candidate immediately before
+			// connecting, so forbidden answers retain the proxy's refusal error.
+			address := family[i].Unmap()
+			if !seen[address] && len(all) < maxAddresses {
 				seen[address] = true
 				all = append(all, address)
 			}
