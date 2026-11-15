@@ -61,6 +61,12 @@ func (c *Client) validateProxyInterfaces(ctx context.Context, configs []api.Prox
 	return nil
 }
 
+func (c *Client) proxyOptions() proxy.Options {
+	egress := proxyegress.New(proxyegress.Options{Interfaces: c.Interfaces})
+	return proxy.Options{Dial: egress.Dial, Health: egress.Health, Route: c.routeByRules(egress.Dial),
+		Info: c.exitInfo, ChangeIP: c.changeExitIP, Changing: c.exitChanging}
+}
+
 func (c *Client) syncProxies(parent context.Context, cfg api.Config, firstLoad bool) error {
 	configs, devices := cfg.Proxies, cfg.Devices
 	c.proxyMu.Lock()
@@ -76,9 +82,7 @@ func (c *Client) syncProxies(parent context.Context, cfg api.Config, firstLoad b
 		factory := c.newProxies
 		if factory == nil {
 			factory = func() (*proxy.Manager, error) {
-				egress := proxyegress.New(proxyegress.Options{Interfaces: func(ctx context.Context) ([]api.Interface, error) { return c.Interfaces(ctx) }})
-				return proxy.New(proxy.Options{Dial: egress.Dial, Health: egress.Health, Route: c.routeByRules(egress.Dial),
-					Info: c.exitInfo, ChangeIP: c.changeExitIP, Changing: c.exitChanging})
+				return proxy.New(c.proxyOptions())
 			}
 		}
 		manager, err := factory()

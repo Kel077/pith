@@ -322,13 +322,21 @@ func (c *Client) exitInfo(ctx context.Context, via api.InterfaceRef, maxAge time
 		info.CanChangeIP = info.Changing
 		return info, ctx.Err()
 	}
-	info.CanChangeIP = info.Changing || c.exitCanChange(ctx, *link)
-	if info.Online && !info.Changing {
-		_, _ = c.publicProbe(ctx, *link, links, &maxAge)
+	if info.Changing {
+		info.CanChangeIP = true
+	} else {
+		// Start identification and the public-address test together, so the
+		// first GET waits for the slower one rather than both bounds in turn.
+		identified := make(chan bool, 1)
+		go func() { identified <- c.exitCanChange(ctx, *link) }()
+		if info.Online {
+			_, _ = c.publicProbe(ctx, *link, links, &maxAge)
+		}
+		info.CanChangeIP = <-identified
 	}
-	if ctx.Err() != nil {
-		return info, ctx.Err()
-	}
+	// Even a canceled reader gets the state known so far. A port can still
+	// describe an offline interface when its work deadline has passed.
+	info.Changing = c.exitChanging(via)
 	suspended := c.proxySuspended(via)
 	c.exitMu.Lock()
 	current := make([]api.Interface, 0, len(c.exits))
@@ -349,7 +357,7 @@ func (c *Client) exitInfo(ctx context.Context, via api.InterfaceRef, maxAge time
 	}
 	c.exitMu.Unlock()
 	// Failure to find a public address isn't a failure to describe the port.
-	return info, nil
+	return info, ctx.Err()
 }
 
 // changeExitIP changes the public address of the interface a local proxy
