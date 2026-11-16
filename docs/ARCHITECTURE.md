@@ -487,6 +487,60 @@ or `http://` target; the Mac's `.local` name by a scene's rules, which macOS
 resolved to that address; and `0.0.0.0` and `0.1.2.3`. `example.com` loaded
 through all three, by SOCKS5 and as an HTTP proxy.
 
+## Tools for agents
+
+`internal/mcp` lets an agent work Pith over the
+[Model Context Protocol](https://modelcontextprotocol.io/specification/2025-11-25):
+tools alone, on the stdio transport. Two processes share the work, because the
+app alone holds the configuration and the local proxies: a second client beside
+it would open the same ports and save over its configuration.
+
+`Pith mcp`, the app's own executable as an agent's program starts it, speaks the
+protocol on its standard input and output (`mcp.Serve`). It answers `initialize`,
+`ping` and `tools/list` itself, from the tools compiled into it, and passes each
+`tools/call` to the app (`mcp.Remote`). It takes no single-instance lock and
+shows no interface. It may start before Pith and outlast it: a call made while
+no app listens is answered with a tool error that says so, and the next call
+finds the app again. Calls run concurrently, so that a change of address keeps
+no other waiting; `notifications/cancelled` cancels a call, and the end of the
+input cancels those that run. Protocol revisions 2024-11-05 to 2025-11-25 are
+accepted; a client that asks for another is answered with the latest.
+
+The app listens (`mcp.Listen`) on the Unix socket `mcp.sock` beside its
+configuration, in the user's Application Support folder: the same path whatever
+started the program that asks. `PITH_MCP_SOCKET` puts it elsewhere for
+development, and a Pith on the mock backend listens only there. The socket is
+bound under another name, set to mode 0600 and renamed into place: it is never
+there with the permissions the umask gave it, and it replaces a stale one in one
+step. Each connection's `LOCAL_PEERCRED` user must be the app's. No TCP port is
+opened, so that no web page and no other device reaches the tools. The socket
+gives the user's own programs nothing they lacked: they can already ask the
+helper on its socket and write the configuration file. A call is a connection of
+its own, one line of JSON for the tool and its arguments and one for the answer;
+closing it before the answer cancels the call. At most 32 run at once.
+
+The tools run on `ui.Agent`, the backend as the interface holds it. A change of
+configuration is made on the main thread to a copy of the interface's
+configuration, validated, shown, and saved by the interface's own saver, whose
+result the tool waits for. An agent's changes and the user's are thus made one
+after another, neither saves over the other's, and a save that fails puts the
+interface back to what is saved. Starting and stopping select the scene and
+record whether routing was left on, as the menu bar's switch does. Everything
+else goes straight to the `api.Service`.
+
+The tools read (status, configuration, interfaces, installed apps, connections,
+traffic, probes, speed tests, the rule checker, the hotspot or router behind an
+interface), change the configuration (rules, scenes, local proxies, devices),
+start and stop routing, and change public addresses (`RenewHotspot`,
+`RenewRouter`, `ChangeProxyIP`). Arguments are decoded strictly: an unknown one
+is an error rather than ignored. Interfaces are named by BSD name, alias or
+label, apps by path, bundle ID or name, scenes by ID or name; what is saved is
+what the interface would save. Each tool is annotated as read-only or
+destructive, for clients that ask their user before some tools. Not offered:
+installing or removing the helper, which macOS authorizes with the user's
+password, the admin passwords of hotspots and routers, the settings, and
+clearing the connection log.
+
 ## Capturing and forwarding
 
 ### iCloud Private Relay

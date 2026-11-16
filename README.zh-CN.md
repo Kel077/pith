@@ -172,6 +172,31 @@ curl -X POST http://127.0.0.1:1081/change-ip
 
 橘核只回答用 IP 地址、`localhost`、不带点的名字或 `.local` 名字指向端口的请求。浏览器里的网页发来的请求一律拒绝，网页把自己的域名指向这台 Mac 也一样。设备用完整域名来问（比如 `mac.example.com`）也会被拒绝，请改用这台 Mac 的地址，或者它在局域网里的名字。
 
+### 给 agent 用
+
+支持 [Model Context Protocol](https://modelcontextprotocol.io)（MCP）的 AI agent，比如 Claude Code 和 Codex，可以替你操作橘核：让某个应用换一个网络出去，添加或修改规则，建一个本地代理，或者给某个网络换 IP。服务端就是橘核自己的可执行文件，加上参数 `mcp` 添加到 agent 里即可：
+
+```sh
+claude mcp add pith -- /Applications/Pith.app/Contents/MacOS/Pith mcp
+codex mcp add pith -- /Applications/Pith.app/Contents/MacOS/Pith mcp
+```
+
+用 JSON 配置 MCP 服务的 agent，填 `{"command": "/Applications/Pith.app/Contents/MacOS/Pith", "args": ["mcp"]}`。
+
+| agent 能做的事 | |
+| :-- | :-- |
+| **查看** | 分流是否开着、场景和规则、网卡、已安装的应用、连接记录和流量；测试某个网卡能否上网、网速多少；检查一个连接会对上哪条规则 |
+| **修改** | 添加、修改、移动、删除规则和场景；打开或关闭分流，或者换一个场景；添加、修改、删除本地代理，以及可以使用共享代理的设备 |
+| **换 IP** | 给某个网卡后面的热点或路由器换 IP，或者给某个本地代理的出口换 IP |
+
+agent 改的内容会立刻显示在橘核里，生效方式和你自己改的一样。它操作的是正在运行的橘核；橘核没打开时，这些工具会回答橘核没有运行。有几件事仍然要你自己来：安装后台助手（需要你的密码），填写热点和路由器的管理密码，修改橘核的设置。
+
+只有在这台 Mac 上以你的身份运行的程序才能用这些工具，橘核不会为此打开任何网络端口。要操作另一台 Mac 上的橘核，让 agent 通过 SSH 在那台 Mac 上启动它：`ssh other-mac /Applications/Pith.app/Contents/MacOS/Pith mcp`。
+
+换 IP 可能要一分多钟，有些 agent 等一个工具等不了这么久。Codex 可以在配置文件的 `[mcp_servers.pith]` 下写 `tool_timeout_sec = 180`。
+
+这些工具能做的事和你在橘核里能做的一样，而且不会再问你一遍。agent 如果还会读网页或别人的文件，可能被读到的内容带偏，会改动东西的工具请按你对它的信任程度来放行。橘核会告诉 agent 哪些工具只是查看，方便它在用其他工具之前先问你。
+
 ### 其他
 
 - **安全启动**（默认开启）：打开分流后如果断网了，橘核会自动撤回。

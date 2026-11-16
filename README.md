@@ -170,6 +170,31 @@ A proxy that goes out through another Mac's Pith passes both requests on to it; 
 
 Pith answers only requests that name the port by an IP address, `localhost`, a name without dots or a `.local` name, and refuses those a page in a browser makes, even a page whose own name was pointed at your Mac. A device that asks by a full domain name, such as `mac.example.com`, is refused too: use your Mac's address, or its name on the local network.
 
+### For agents
+
+An AI agent that speaks the [Model Context Protocol](https://modelcontextprotocol.io), as Claude Code and Codex do, can work Pith for you: ask it to send an app through another network, to add or change rules, to set up a local proxy, or to change a network's IP. Pith's own executable is the server. Add it to the agent with the argument `mcp`:
+
+```sh
+claude mcp add pith -- /Applications/Pith.app/Contents/MacOS/Pith mcp
+codex mcp add pith -- /Applications/Pith.app/Contents/MacOS/Pith mcp
+```
+
+An agent that takes its servers as JSON takes `{"command": "/Applications/Pith.app/Contents/MacOS/Pith", "args": ["mcp"]}`.
+
+| The agent can | |
+| :-- | :-- |
+| **Read** | Whether routing is on, the scenes and their rules, the interfaces, the installed apps, the connections and the traffic; test an interface and its speed; check which rule a connection would match |
+| **Change** | Add, change, move and remove rules and scenes; turn routing on or off, or to another scene; add, change and remove local proxies, and the devices that may use the shared ones |
+| **Change IP** | Of the hotspot or the router behind an interface, or of what a local proxy goes out through |
+
+What an agent changes shows in Pith at once, and applies as your own changes do. It works the Pith that is open: while Pith is closed, the tools answer that it isn't running. Some things stay yours: installing the helper, which takes your password, the admin passwords of hotspots and routers, and Pith's settings.
+
+Only programs that run as you on this Mac reach the tools: Pith opens no network port for them. To work another Mac's Pith, have the agent start it there over SSH: `ssh other-mac /Applications/Pith.app/Contents/MacOS/Pith mcp`.
+
+Changing an IP can take over a minute, longer than some agents wait for a tool. Codex waits as long as `tool_timeout_sec = 180` says, under `[mcp_servers.pith]` in its configuration.
+
+The tools do what you could do in Pith, without asking you again. An agent that also reads web pages or other people's files can be talked into things by what it reads: allow it the tools that change something as far as you trust it. Pith tells the agent which tools only read, so that it can ask you before the others.
+
 ### Also
 
 - **Safe start**, on by default: if the Mac loses the internet right after routing starts, Pith undoes it.

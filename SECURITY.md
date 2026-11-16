@@ -11,6 +11,7 @@ Security-sensitive areas include:
 
 - `pithd` running as root and its Unix socket's peer-credential authorization;
 - helper installation, updates and uninstallation;
+- the app's Unix socket for agents (`Pith mcp`) and its peer-credential check;
 - capture-route ownership, shutdown and recovery;
 - the future update path, including artifact identity, integrity and authorization.
 
