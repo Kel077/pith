@@ -129,6 +129,32 @@ type saver struct {
 	next    *api.Config
 	nextGen uint64
 	running bool
+	waiting []saveWaiter
+}
+
+// saveWaiter waits for the changes up to gen to be saved: a save of that
+// snapshot or of a newer one, which holds them too.
+type saveWaiter struct {
+	gen  uint64
+	done chan<- error
+}
+
+// settle tells the waiters for gen and for older changes how the save of
+// gen went.
+func (s *saver) settle(gen uint64, err error) {
+	s.mu.Lock()
+	var settled []saveWaiter
+	s.waiting = slices.DeleteFunc(s.waiting, func(w saveWaiter) bool {
+		if w.gen > gen {
+			return false
+		}
+		settled = append(settled, w)
+		return true
+	})
+	s.mu.Unlock()
+	for _, w := range settled {
+		w.done <- err
+	}
 }
 
 // appIcon is an app's icon, loading or loaded.
@@ -408,7 +434,9 @@ func (a *App) change(fn func(cfg *api.Config)) {
 // skipping snapshots a newer one replaced before their turn.
 func (a *App) save(gen uint64, cfg api.Config) {
 	if a.syncIcons { // tests save at once
-		if err := a.Service.SaveConfig(a.ctx, cfg); err != nil {
+		err := a.Service.SaveConfig(a.ctx, cfg)
+		a.saves.settle(gen, err)
+		if err != nil {
 			saved, lerr := a.Service.LoadConfig(a.ctx)
 			a.saveFailed(gen, err, saved, lerr)
 		}
@@ -434,12 +462,25 @@ func (a *App) save(gen uint64, cfg api.Config) {
 				return
 			}
 			s.mu.Unlock()
-			if err := a.Service.SaveConfig(a.ctx, *next); err != nil {
+			err := a.Service.SaveConfig(a.ctx, *next)
+			if err != nil {
 				saved, lerr := a.Service.LoadConfig(a.ctx)
 				a.Post(func() { a.saveFailed(gen, err, saved, lerr) })
 			}
+			s.settle(gen, err)
 		}
 	}()
+}
+
+// saveWait saves as save does, and tells on the channel it returns how it
+// went, once the snapshot or a newer one is written.
+func (a *App) saveWait(gen uint64, cfg api.Config) <-chan error {
+	done := make(chan error, 1)
+	a.saves.mu.Lock()
+	a.saves.waiting = append(a.saves.waiting, saveWaiter{gen: gen, done: done})
+	a.saves.mu.Unlock()
+	a.save(gen, cfg)
+	return done
 }
 
 // saveFailed shows why a save failed and, unless newer changes are on their
