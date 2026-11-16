@@ -15,6 +15,18 @@ import (
 // mockHost is a Host on the mock backend alone: it edits what is saved.
 type mockHost struct{ *mock.Service }
 
+// Interfaces adds what a real Mac has beside the mock's: links that aren't
+// connected and that macOS gives no name, and a VPN's tunnel that is.
+func (h mockHost) Interfaces(ctx context.Context) ([]api.Interface, error) {
+	ifaces, err := h.Service.Interfaces(ctx)
+	return append(ifaces,
+		api.Interface{Name: "en5", Label: "en5", Kind: api.KindEthernet},
+		api.Interface{Name: "utun3", Label: "utun3", Kind: api.KindVPN},
+		api.Interface{Name: "utun4", Label: "Example VPN", Kind: api.KindVPN},
+		api.Interface{Name: "utun9", Label: "Example VPN", Kind: api.KindVPN, Up: true, IPv4: []string{"198.51.100.9"}},
+	), err
+}
+
 func (h mockHost) Edit(ctx context.Context, fn func(*api.Config) error) (api.Config, error) {
 	cfg, err := h.LoadConfig(ctx)
 	if err != nil {
@@ -160,7 +172,7 @@ func TestRuleMistakes(t *testing.T) {
 	before := config(t, h)
 	fails(t, h, "add_rule", `{"targets": ["example.com"]}`, "via")
 	fails(t, h, "add_rule", `{"targets": ["exa mple"], "via": ["en0"]}`, "exa mple")
-	fails(t, h, "add_rule", `{"via": ["en5"]}`, "en5", "en0 (Ethernet)", "en9 (M2000)")
+	fails(t, h, "add_rule", `{"via": ["en8"]}`, "en8", "en0 (Ethernet)", "en9 (M2000)")
 	fails(t, h, "add_rule", `{"apps": ["Nonesuch"], "via": ["en0"]}`, "Nonesuch", "list_apps")
 	fails(t, h, "add_rule", `{"apps": ["Notes"], "via": ["en0"]}`, "/Applications/Notes.app", "/System/Applications/Notes.app")
 	fails(t, h, "add_rule", `{"via": ["en0", "Ethernet"]}`, "via", "twice")
@@ -342,9 +354,21 @@ func TestReading(t *testing.T) {
 
 	var ifaces []interfaceView
 	run(t, h, "list_interfaces", ``, &ifaces)
-	if len(ifaces) != 4 || ifaces[0].Name != "en0" || !ifaces[0].CanProxy || !ifaces[0].Primary {
-		t.Errorf("interfaces: %+v", ifaces)
+	// Wi-Fi, though down, has a name of its own; of the rest that are down
+	// or unnamed, only the VPN that is connected shows.
+	var names []string
+	for _, i := range ifaces {
+		names = append(names, i.Name)
 	}
+	if !slices.Equal(names, []string{"en0", "en7", "en9", "en1", "utun9"}) || !ifaces[0].CanProxy || !ifaces[0].Primary || ifaces[4].CanProxy {
+		t.Errorf("interfaces: %v", names)
+	}
+	// One that isn't listed still goes by its BSD name.
+	// One that isn't listed still goes by its BSD name: it is found, and
+	// leads to nothing Pith knows.
+	fails(t, h, "gateway_status", `{"interface": "en5"}`, "unsupported", "en5 leads to no router")
+	var p probeView
+	fails(t, h, "set_proxy", `{"port": 1090, "via": "utun9"}`, "utun9", "VPN")
 
 	var apps struct {
 		Apps []api.AppRef `json:"apps"`
@@ -372,7 +396,6 @@ func TestReading(t *testing.T) {
 		t.Errorf("traffic: %d apps, %d interfaces, %d samples", len(tr.Apps), len(tr.Interfaces), len(tr.Series))
 	}
 
-	var p probeView
 	run(t, h, "test_interface", `{"interface": "Ethernet"}`, &p)
 	if !p.OK || p.Interface != "en0" || p.PublicIPv4 == "" || p.LatencyMS <= 0 {
 		t.Errorf("test: %+v", p)

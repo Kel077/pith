@@ -108,7 +108,7 @@ var tools = []tool{
 	},
 	{
 		name: "list_interfaces", title: "Interfaces", kind: reads, input: noArguments,
-		about: "Lists the Mac's network interfaces: BSD name, label, the user's name for it (alias), kind, whether it is up, its addresses, router and DNS servers, which one is macOS's primary, and whether a local proxy can go out through it.",
+		about: "Lists the Mac's network interfaces, the connected ones and the others macOS names: BSD name, label, the user's name for it (alias), kind, whether it is up, its addresses, router and DNS servers, which one is macOS's primary, and whether a local proxy can go out through it.",
 		does:  with(listInterfaces),
 	},
 	{
@@ -411,6 +411,13 @@ func readNetwork(ctx context.Context, h Host) (network, error) {
 	return network{ifaces: ifaces, aliases: cfg.Aliases}, nil
 }
 
+// shown tells the interfaces Pith shows from the dozens a Mac has: the
+// connected ones, and those macOS gives a name of their own, but for a
+// VPN's tunnel that isn't up. The others still go by their BSD names.
+func shown(i *api.Interface) bool {
+	return i.Up || i.Label != "" && i.Label != i.Name && i.Kind != api.KindVPN
+}
+
 func refOf(i *api.Interface) api.InterfaceRef {
 	return api.InterfaceRef{Name: i.Name, Label: i.Label, HardwareAddr: i.HardwareAddr}
 }
@@ -450,7 +457,9 @@ func (n network) find(ref string) (*api.Interface, error) {
 		}
 	}
 	for i := range list {
-		names = append(names, n.describe(&list[i]))
+		if len(found) > 1 || shown(&list[i]) {
+			names = append(names, n.describe(&list[i]))
+		}
 	}
 	if len(found) > 1 {
 		return nil, fmt.Errorf("several interfaces are named %q: give the BSD name, one of %s", ref, strings.Join(names, ", "))
@@ -526,9 +535,11 @@ func listInterfaces(ctx context.Context, h Host, _ none) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]interfaceView, len(n.ifaces))
+	out := []interfaceView{}
 	for i := range n.ifaces {
-		out[i] = interfaceView{Interface: n.ifaces[i], Alias: n.aliases[refOf(&n.ifaces[i]).Key()], CanProxy: n.ifaces[i].CanProxy()}
+		if iface := &n.ifaces[i]; shown(iface) {
+			out = append(out, interfaceView{Interface: *iface, Alias: n.aliases[refOf(iface).Key()], CanProxy: iface.CanProxy()})
+		}
 	}
 	return out, nil
 }
