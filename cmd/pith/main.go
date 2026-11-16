@@ -3,18 +3,23 @@
 //
 //	go run ./cmd/pith          the real backend
 //	go run ./cmd/pith -mock    an in-memory backend, for working on the interface
+//	go run ./cmd/pith mcp      a Model Context Protocol server on standard input
+//	                           and output, for an agent to work the Pith that runs
 package main
 
 import (
 	"context"
 	"flag"
+	"fmt"
 	"io"
 	"log"
+	"os"
 	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
+	"github.com/Kel077/pith/internal/mcp"
 	pithui "github.com/Kel077/pith/internal/ui"
 	"github.com/Kel077/pith/locales"
 )
@@ -28,6 +33,9 @@ func main() {
 	language := flag.String("lang", "", "speak this language (en or zh-Hans) instead of the setting's")
 	showPanel := flag.Bool("panel", false, "show the menu bar panel at launch")
 	flag.Parse()
+	if flag.Arg(0) == "mcp" {
+		os.Exit(serveAgent())
+	}
 	if !mygo.App.RequestSingleInstanceLock() {
 		return // the Pith that runs shows itself
 	}
@@ -41,6 +49,7 @@ func main() {
 			log.Fatal(err)
 		}
 		s.ready(svc, *page, *language, !*showPanel)
+		s.listen(*useMock)
 		if *showPanel {
 			// As a click on the icon would, once the icon is in the menu bar:
 			// activate Pith, then open the panel.
@@ -62,6 +71,9 @@ func main() {
 		}
 	})
 	mygo.App.OnWillQuit(func(*mygo.QuitEvent) {
+		if s.agents != nil {
+			s.agents.Close()
+		}
 		// The local proxies close with Pith: their connections fail rather
 		// than linger.
 		if c, ok := s.svc.(io.Closer); ok {
@@ -81,7 +93,40 @@ type shell struct {
 	window   *mygo.Window // the main window, made hidden at launch
 	panel    *mygo.Window // the flyout under the menu bar icon, while open
 	tray     *mygo.Tray
+	agents   *mcp.Listener // where "Pith mcp" asks for the tools, while it listens
 	quitting bool
+}
+
+// listen serves the tools agents work Pith with, to programs of this Mac's
+// user. The mock backend only listens where the environment says: never
+// where the real Pith does, for an agent to mistake it.
+func (s *shell) listen(mock bool) {
+	if mock && os.Getenv(mcp.SocketEnv) == "" {
+		return
+	}
+	path, err := mcp.SocketPath()
+	if err == nil {
+		s.agents, err = mcp.Listen(path, mcp.Tools{Host: s.app.Agent()})
+	}
+	if err != nil {
+		log.Print("mcp: ", err) // Pith works without it
+	}
+}
+
+// serveAgent is "Pith mcp", which an agent's program starts: it speaks the
+// Model Context Protocol on standard input and output until the input ends,
+// and has the Pith that runs do what the agent asks. It shows no interface,
+// and may start before Pith and outlast it.
+func serveAgent() int {
+	path, err := mcp.SocketPath()
+	if err == nil {
+		err = mcp.Serve(context.Background(), os.Stdin, os.Stdout, mcp.Remote{Path: path}, version)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "pith mcp:", err)
+		return 1
+	}
+	return 0
 }
 
 func (s *shell) ready(svc service, page, language string, openWindow bool) {
