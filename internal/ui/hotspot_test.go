@@ -19,6 +19,9 @@ func TestRenewalText(t *testing.T) {
 		{both("198.51.100.1", "2001:db8:1::1"), both("", "2001:db8:2::1"), "2001:db8:1::1 → 2001:db8:2::1"},
 		{both("", "2001:db8:1::1"), both("198.51.100.2", "2001:db8:2::1"), "198.51.100.2"},
 		{both("198.51.100.1", ""), both("198.51.100.1", ""), locales.IpUnchanged("198.51.100.1")},
+		{both("", "2001:db8:1::1"), both("", "2001:db8:1::1"), locales.IpUnchanged("2001:db8:1::1")},
+		// Without its IPv4 after, the same IPv6 doesn't make it unchanged.
+		{both("198.51.100.1", "2001:db8:1::1"), both("", "2001:db8:1::1"), "2001:db8:1::1"},
 		{both("198.51.100.1", ""), api.Probe{}, ""},
 	} {
 		if got := renewalText(tt.before, tt.after); got != tt.want {

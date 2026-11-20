@@ -243,10 +243,14 @@ func renewalText(b, a api.Probe) string {
 
 // ipChangeText tells what changing an IP did, from the public addresses
 // before and after: the IPv4 ones, or the IPv6 ones when there is no IPv4
-// after.
+// after. An IPv6 that stayed says nothing of an IPv4 there was before: it
+// is shown alone, not as unchanged.
 func ipChangeText(before4, before6, after4, after6 string) string {
 	before, after := before4, after4
 	if after == "" {
+		if before4 != "" && before6 == after6 {
+			return after6
+		}
 		before, after = before6, after6
 	}
 	switch {
