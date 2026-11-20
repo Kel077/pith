@@ -660,3 +660,50 @@ func TestExitCloseWaitsForHotspotRenewal(t *testing.T) {
 		t.Fatal("Close left the hotspot changing")
 	}
 }
+
+// Addresses of one family where the interface has both, as a renewal can
+// end with while the other family is a moment away, are looked up again
+// in turn rather than kept until the interface changes.
+func TestExitInfoLooksUpAMissingFamilyAgain(t *testing.T) {
+	c, n := exitClient(t)
+	ctx := context.Background()
+	ref := api.InterfaceRef{Name: "example0"}
+	n.mu.Lock()
+	n.public[0] = ""
+	n.mu.Unlock()
+	if p, err := c.Probe(ctx, "example0", ""); err != nil || p.PublicIPv4 != "" || p.PublicIPv6 != "2001:db8::9" {
+		t.Fatal(p, err)
+	}
+	n.mu.Lock()
+	n.public[0] = "198.51.100.9"
+	n.mu.Unlock()
+	got, err := c.exitInfo(ctx, ref, -1)
+	if err != nil || got.PublicIPv4 != "" || got.PublicIPv6 != "2001:db8::9" || n.tests() != [2]int{1, 1} {
+		t.Fatal("didn't keep the addresses found for a while", got, err, n.tests())
+	}
+	c.exitMu.Lock()
+	c.exits["example0"].failed = time.Now().Add(-exitFailureAge - time.Second)
+	c.exitMu.Unlock()
+	for range 2 {
+		got, err = c.exitInfo(ctx, ref, -1)
+		if err != nil || got.PublicIPv4 != "198.51.100.9" || got.PublicIPv6 != "2001:db8::9" || n.tests() != [2]int{2, 2} {
+			t.Fatal("didn't look the missing family up again once", got, err, n.tests())
+		}
+	}
+}
+
+// An interface without IPv4 addresses misses no family without a public one.
+func TestExitInfoKeepsTheOnlyFamily(t *testing.T) {
+	c, n := exitClient(t)
+	ctx := context.Background()
+	n.mu.Lock()
+	n.links[0].IPv4, n.links[0].Router = nil, ""
+	n.public[0] = ""
+	n.mu.Unlock()
+	for range 3 {
+		got, err := c.exitInfo(ctx, api.InterfaceRef{Name: "example0"}, -1)
+		if err != nil || got.PublicIPv6 != "2001:db8::9" || n.tests() != [2]int{1, 1} {
+			t.Fatal(got, err, n.tests())
+		}
+	}
+}

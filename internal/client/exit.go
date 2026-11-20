@@ -136,7 +136,14 @@ func (c *Client) publicProbe(ctx context.Context, link api.Interface, links []ap
 		if maxAge != nil {
 			known := publicIPs(state.public) > 0
 			fresh := known && (*maxAge < 0 || c.exitTime().Sub(state.public.At) <= *maxAge)
-			if fresh || *maxAge < 0 && !state.failed.IsZero() && c.exitTime().Sub(state.failed) < state.backoff {
+			waiting := !state.failed.IsZero() && c.exitTime().Sub(state.failed) < state.backoff
+			if *maxAge < 0 && missingFamily(state.public, state.link) {
+				// Addresses of one family where the interface has both, as
+				// right after a renewal: looked up again in turn, as after a
+				// failure, rather than kept until the interface changes.
+				fresh = known && waiting
+			}
+			if fresh || *maxAge < 0 && waiting {
 				p := state.public
 				c.exitMu.Unlock()
 				c.proxyMu.Unlock()
@@ -196,10 +203,22 @@ func (c *Client) runExitLookup(parent context.Context, state *exitState, pending
 	if c.exits[state.link.Name] == state && state.lookup == pending {
 		state.lookup = nil
 		if c.lifetime.Err() == nil && !pending.ownerCanceled && state.link.Up {
-			if pending.err == nil && inventoryErr == nil && publicIPs(pending.result) > 0 {
+			found := pending.err == nil && inventoryErr == nil && publicIPs(pending.result) > 0
+			switch {
+			case found && !missingFamily(pending.result, state.link):
 				state.public = pending.result
 				state.failed, state.backoff = time.Time{}, 0
-			} else {
+			case found:
+				// Found in part: a poll asks again later, as after a failure.
+				// A test someone asked for, as a renewal's, starts the wait over.
+				state.public = pending.result
+				state.failed = c.exitTime()
+				if pending.forPoll {
+					state.backoff = min(exitFailureMax, max(exitFailureAge, 2*state.backoff))
+				} else {
+					state.backoff = exitFailureAge
+				}
+			default:
 				if pending.forPoll {
 					state.public = api.Probe{}
 				}
@@ -209,6 +228,12 @@ func (c *Client) runExitLookup(parent context.Context, state *exitState, pending
 		}
 	}
 	close(pending.done)
+}
+
+// missingFamily tells whether a test found no public address of a family
+// the interface has addresses of.
+func missingFamily(p api.Probe, link api.Interface) bool {
+	return p.PublicIPv4 == "" && len(link.IPv4) > 0 || p.PublicIPv6 == "" && len(link.IPv6) > 0
 }
 
 func (c *Client) exitLabel(via api.InterfaceRef, link *api.Interface) string {
