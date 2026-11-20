@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -28,10 +29,18 @@ type MiFi struct {
 	Reconnect int  // readings of the status until connected again
 	Stuck     bool // never connected again
 	Expire    bool // the session ends after the next diagnostics page
+	// Lag is how many readings of the status still show the connection it
+	// had once data is turned off, as a hotspot slow to act on the switch.
+	Lag int
+	// Since is when its connection was made: an hour ago for a new MiFi.
+	Since   time.Time
+	dropped bool // the connection of Since has ended
 }
 
 // New is a MiFi that is connected.
-func New() *MiFi { return &MiFi{sessions: map[string]bool{}, DataOn: true} }
+func New() *MiFi {
+	return &MiFi{sessions: map[string]bool{}, DataOn: true, Since: time.Now().Add(-time.Hour)}
+}
 
 // Do runs fn with the MiFi to itself, to read or change its fields.
 func (f *MiFi) Do(fn func(f *MiFi)) {
@@ -51,16 +60,30 @@ func (f *MiFi) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/srv/status":
 		state := "Disconnected"
-		if f.DataOn && f.Reconnect == 0 {
+		switch {
+		case f.Lag > 0 && !f.dropped:
+			// Still on the old connection, whatever the switch says.
 			state = "Connected"
-		} else if f.DataOn {
+			if f.Lag--; f.Lag == 0 {
+				f.dropped = true
+			}
+		case f.DataOn && f.Reconnect == 0:
+			state = "Connected"
+			if f.dropped {
+				f.Since, f.dropped = time.Now(), false
+			}
+		case f.DataOn:
 			f.Reconnect--
+		}
+		lasted := 0
+		if state == "Connected" {
+			lasted = int(time.Since(f.Since) / time.Second)
 		}
 		login := 0
 		if f.loggedIn(r) {
 			login = 1
 		}
-		fmt.Fprintf(w, `{"loginStatus":%d,"statusData":{"statusBarConnectionState":%q,"statusBarTechnology":"5G","statusBarSignalBars":4}}`, login, state)
+		fmt.Fprintf(w, `{"loginStatus":%d,"statusData":{"statusBarConnectionState":%q,"statusBarConnectionDuration":"%d","statusBarTechnology":"5G","statusBarSignalBars":4}}`, login, state, lasted)
 	case "/login/":
 		fmt.Fprintf(w, `<form><input type="hidden" name="gSecureToken" id="gSecureToken" value="%s" /></form>`, loginToken)
 	case "/submitLogin/":
@@ -105,6 +128,9 @@ func (f *MiFi) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		on := strings.Contains(r.URL.Path, "enable")
 		f.Calls = append(f.Calls, map[bool]string{true: "on", false: "off"}[on])
 		f.DataOn = on
+		if !on && f.Lag == 0 {
+			f.dropped = true
+		}
 		if on {
 			f.Reconnect = 2
 			if f.Stuck {

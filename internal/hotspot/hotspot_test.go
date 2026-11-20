@@ -3,6 +3,7 @@ package hotspot
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -184,5 +185,43 @@ func TestRenewGivesUp(t *testing.T) {
 	d.Poll = 5 * time.Millisecond
 	if err := d.Renew(ctx, nil); err == nil {
 		t.Fatal("renewed a hotspot that never connected again")
+	}
+}
+
+// A hotspot slow to act on the switch still shows the connection it had
+// once data is on again: Renew waits for a new one, which a test of the
+// public addresses would otherwise find unchanged.
+func TestRenewWaitsForANewConnection(t *testing.T) {
+	f := hotspottest.New()
+	old := f.Since
+	f.Lag = 60
+	d := device(t, f, hotspottest.Password)
+	d.dropWait = 20 * time.Millisecond
+	if err := d.Renew(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	f.Do(func(f *hotspottest.MiFi) {
+		if f.Lag != 0 || !f.Since.After(old) {
+			t.Fatalf("returned on the old connection, %d readings of it left", f.Lag)
+		}
+	})
+}
+
+// How long the connection has lasted: a string on the M2000, and unknown
+// when the hotspot doesn't tell.
+func TestReadConnectionDuration(t *testing.T) {
+	for body, want := range map[string]time.Duration{
+		`{"statusData":{"statusBarConnectionState":"Connected","statusBarConnectionDuration":"438"}}`: 438 * time.Second,
+		`{"statusData":{"statusBarConnectionState":"Connected","statusBarConnectionDuration":5}}`:     5 * time.Second,
+		`{"statusData":{"statusBarConnectionState":"Connected"}}`:                                     -1,
+		`{"statusData":{"statusBarConnectionState":"Connected","statusBarConnectionDuration":""}}`:    -1,
+	} {
+		d := &Inseego{Base: "http://192.0.2.1", Model: "M2000", HTTP: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
+		})}}
+		h, lasted, err := d.read(context.Background())
+		if err != nil || !h.Connected || lasted != want {
+			t.Errorf("%s: %+v, %v, %v; want %v", body, h, lasted, err, want)
+		}
 	}
 }

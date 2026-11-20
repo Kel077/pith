@@ -43,6 +43,8 @@ type Inseego struct {
 	// second when zero.
 	Poll time.Duration
 
+	dropWait time.Duration // for its connection to drop once data is off: 10 s when zero
+
 	mu       sync.Mutex
 	loggedIn bool
 	refused  string // a hash of the password the hotspot refused: never tried again
@@ -85,7 +87,8 @@ func (d *Inseego) TryPassword(ctx context.Context, password string) error {
 }
 
 // Renew has the hotspot reconnect to its carrier: it turns its cellular
-// data off and on, and waits until it is connected again. before, if not
+// data off and on, and waits until it is connected again, by a connection
+// made since data went off when the hotspot tells. before, if not
 // nil, runs while Renew reads the hotspot's network settings, which takes
 // it a second or so: Renew turns data off once before has returned, and
 // not at all if it failed.
@@ -135,12 +138,17 @@ func (d *Inseego) Renew(ctx context.Context, before func(context.Context) error)
 			resultErr = errors.Join(resultErr, fmt.Errorf("hotspot: restore cellular data: %w", restoreErr))
 		}
 	}()
+	off := time.Now()
 	if err := d.post(ctx, "/wwan/disablecellulardata/", "/networks/", form); err != nil {
 		return fmt.Errorf("hotspot: turn cellular data off: %w", err)
 	}
 	// Let it drop its connection: some take a moment, and turning data on
 	// before that would leave the old connection in place.
-	d.await(ctx, 10*time.Second, func(h api.Hotspot) bool { return !h.Connected })
+	dropWait := d.dropWait
+	if dropWait == 0 {
+		dropWait = 10 * time.Second
+	}
+	d.await(ctx, dropWait, func(h api.Hotspot, _ time.Duration) bool { return !h.Connected })
 	err = d.post(ctx, "/wwan/enablecellulardata/", "/networks/", form)
 	if err != nil && ctx.Err() == nil {
 		err = d.post(ctx, "/wwan/enablecellulardata/", "/networks/", form)
@@ -149,24 +157,37 @@ func (d *Inseego) Renew(ctx context.Context, before func(context.Context) error)
 		return fmt.Errorf("hotspot: turn cellular data on: %w", err)
 	}
 	needsEnable = false
-	if !d.await(ctx, 90*time.Second, func(h api.Hotspot) bool { return h.Connected }) {
+	// Connected, by a connection made since data went off. One slow to act
+	// on the switch may still show the connection it had, through which a
+	// test would find the addresses from before, as if they hadn't changed.
+	// Its status tells in whole seconds how long its connection has lasted;
+	// one that doesn't is taken at its word.
+	stale := false
+	if !d.await(ctx, 90*time.Second, func(h api.Hotspot, lasted time.Duration) bool {
+		stale = h.Connected && lasted > time.Since(off)+time.Second
+		return h.Connected && !stale
+	}) {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if stale {
+			return errors.New("hotspot: still on the connection it had before, after 90 s")
 		}
 		return errors.New("hotspot: not connected again after 90 s")
 	}
 	return nil
 }
 
-// await reads the status until ok, or until limit has passed.
-func (d *Inseego) await(ctx context.Context, limit time.Duration, ok func(api.Hotspot) bool) bool {
+// await reads the status until ok, or until limit has passed. ok is given
+// how long the connection has lasted, or -1 when the hotspot doesn't say.
+func (d *Inseego) await(ctx context.Context, limit time.Duration, ok func(h api.Hotspot, lasted time.Duration) bool) bool {
 	poll := d.Poll
 	if poll == 0 {
 		poll = 500 * time.Millisecond
 	}
 	deadline := time.Now().Add(limit)
 	for {
-		if h, err := d.status(ctx); err == nil && ok(h) {
+		if h, lasted, err := d.read(ctx); err == nil && ok(h, lasted) {
 			return true
 		}
 		if time.Now().Add(poll).After(deadline) {
@@ -182,26 +203,38 @@ func (d *Inseego) await(ctx context.Context, limit time.Duration, ok func(api.Ho
 
 // status reads what the hotspot shows anyone: its connection and signal.
 func (d *Inseego) status(ctx context.Context) (api.Hotspot, error) {
+	h, _, err := d.read(ctx)
+	return h, err
+}
+
+// read reads the status, and how long the connection has lasted: -1 when
+// the hotspot doesn't say.
+func (d *Inseego) read(ctx context.Context) (api.Hotspot, time.Duration, error) {
 	h := api.Hotspot{Model: d.Model, At: time.Now()}
 	body, err := d.get(ctx, "/srv/status")
 	if err != nil {
-		return h, err
+		return h, -1, err
 	}
 	var s struct {
 		StatusData struct {
 			Connection string          `json:"statusBarConnectionState"`
 			Technology string          `json:"statusBarTechnology"`
 			Bars       json.RawMessage `json:"statusBarSignalBars"`
+			Lasted     json.RawMessage `json:"statusBarConnectionDuration"` // seconds, as a string on the M2000
 		} `json:"statusData"`
 	}
 	if err := json.Unmarshal(body, &s); err != nil {
-		return h, fmt.Errorf("hotspot: read its status: %w", err)
+		return h, -1, fmt.Errorf("hotspot: read its status: %w", err)
 	}
 	h.Connected = s.StatusData.Connection == "Connected"
 	h.Technology = strings.TrimSpace(s.StatusData.Technology)
 	bars, _ := strconv.Atoi(strings.Trim(string(s.StatusData.Bars), `" `))
 	h.Bars = min(max(bars, 0), 5)
-	return h, nil
+	lasted := time.Duration(-1)
+	if seconds, err := strconv.Atoi(strings.Trim(string(s.StatusData.Lasted), `" `)); err == nil && seconds >= 0 {
+		lasted = time.Duration(seconds) * time.Second
+	}
+	return h, lasted, nil
 }
 
 // adminPage reads a page behind the admin's login, logging in first, and
