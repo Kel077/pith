@@ -160,7 +160,7 @@ curl http://127.0.0.1:1081/
 curl -X POST http://127.0.0.1:1081/change-ip
 ```
 
-Whatever can use the port can ask `GET /`. Pith looks the addresses up once and keeps them until the network changes; `GET /?max-age=60` has them looked up again when they are older than a minute. When a lookup fails, a plain `GET /` waits 30 seconds before Pith tries again, then longer each time.
+Whatever can use the port can ask `GET /`. Pith looks the addresses up once and keeps them until the network changes; `GET /?max-age=60` has them looked up again when they are older than a minute. When a lookup fails, or finds only an IPv4 or only an IPv6 address where the network has both, a plain `GET /` waits 30 seconds before Pith tries again, then longer each time.
 
 `POST /change-ip` is refused until you turn on **Let apps and devices change its IP**, the button with two arrows on the proxy's row. Then every app on your Mac, and every device the proxy is shared with, can change that IP. A router that changes its IP takes everything on its network offline, from seconds to over a minute: think of who else is on it.
 

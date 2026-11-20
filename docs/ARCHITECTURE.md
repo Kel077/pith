@@ -22,7 +22,11 @@ requests are made; failures remain errors and are not reported as successful
 renewals. This is a device operation, independent of helper capture: changes to
 its public addresses, LAN addresses or DNS do not by themselves stop routing.
 The public-address test before a renewal runs while the device's network settings
-are read; data goes off only once both finish. Afterwards the client tests every
+are read; data goes off only once both finish. Once data is on again, the
+renewal waits for the device to show a connection made since data went off,
+not just any: a test through the old one would find the old addresses. Its
+status tells how long the connection has lasted, in whole seconds; a device
+that doesn't tell is taken at its word. Afterwards the client tests every
 second until the address families that answered before answer again, for 25
 seconds at most and 3 more for a family once the other works. A reconnected M2000
 refuses DNS queries for about ten seconds while its DNS server restarts; the
@@ -319,9 +323,12 @@ forgets them when the interface goes down or away, or when its hardware
 address, its own addresses or its router change, and a test that began
 before such a change can't put its result back. A `GET` without `max-age`
 is answered from the record and reaches the internet only when no address is
-known; a failed lookup keeps the next from being made for 30 seconds, twice
-as long for each failure in a row, ten minutes at most, until a lookup
-succeeds or the interface changes. With `max-age`, addresses older than
+known, or only those of one family where the interface has addresses of both,
+as a renewal can end with; a failed lookup, or one that found one family
+alone, keeps the next from being made for 30 seconds, twice as long for each
+such lookup in a row, ten minutes at most, until a lookup finds both or the
+interface changes; a test someone asked for, as a renewal's, that finds one
+family alone starts that wait over at 30 seconds. With `max-age`, addresses older than
 that are looked up again, and a lookup that fails leaves none. A lookup for
 a port belongs to no caller: it runs to its own end while callers wait for
 it, each for as long as it cares to, so another Mac's poll that gives up
