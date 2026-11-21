@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"slices"
 	"testing"
 	"time"
@@ -51,6 +52,45 @@ func TestOwnTunnelHidden(t *testing.T) {
 	a.setStatus(st)
 	if slices.Contains(names(), "utun9") {
 		t.Fatalf("still shown once the status names it: %v", names())
+	}
+}
+
+// withInterfaces is a backend with more interfaces than the mock's.
+type withInterfaces struct {
+	api.Service
+	more []api.Interface
+}
+
+func (w withInterfaces) Interfaces(ctx context.Context) ([]api.Interface, error) {
+	ifs, err := w.Service.Interfaces(ctx)
+	return append(ifs, w.more...), err
+}
+
+// An agent isn't offered Pith's own capture tunnel either.
+func TestAgentOwnTunnelHidden(t *testing.T) {
+	a, svc := testApp(t, mock.Options{Sample: true, HelperInstalled: true, Running: true})
+	own := api.Interface{Name: "utun9", Kind: api.KindVPN, Up: true, IPv4: []string{"192.0.2.253"}}
+	other := api.Interface{Name: "utun3", Kind: api.KindVPN, Up: true, IPv4: []string{"198.51.100.7"}}
+	g := &Agent{Service: withInterfaces{svc, []api.Interface{own, other}}, app: a}
+	names := func() []string {
+		ifs, err := g.Interfaces(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, i := range ifs {
+			out = append(out, i.Name)
+		}
+		return out
+	}
+	if !slices.Contains(names(), "utun9") {
+		t.Fatalf("hidden without a capture: %v", names())
+	}
+	st := a.status
+	st.LastCapture = &api.CaptureIdentity{Interface: "utun9", Index: 40, TunnelSubnets: []string{"192.0.2.252/30"}}
+	a.setStatus(st)
+	if got := names(); slices.Contains(got, "utun9") || !slices.Contains(got, "utun3") || len(got) < 3 {
+		t.Fatalf("offered %v", got)
 	}
 }
 

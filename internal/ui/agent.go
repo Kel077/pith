@@ -11,8 +11,9 @@ import (
 // (internal/mcp). What it reads of the configuration and what it changes
 // goes through the interface's own copy, on the main thread, so that its
 // changes show at once and neither side saves over the other's; starting and
-// stopping keep what the interface remembers of routing. Everything else is
-// the Service's. Its methods are called off the main thread.
+// stopping keep what the interface remembers of routing; the interfaces
+// leave out Pith's own tunnel, as the interface does. Everything else is the
+// Service's. Its methods are called off the main thread.
 type Agent struct {
 	api.Service
 	app *App
@@ -145,3 +146,17 @@ func (g *Agent) Stop(ctx context.Context) error {
 
 // Apps lists the apps installed, sorted by name.
 func (g *Agent) Apps(context.Context) ([]api.AppRef, error) { return g.app.Desktop.InstalledApps() }
+
+// Interfaces lists the interfaces but for the tunnel Pith captures through,
+// as the interface does: it isn't a network to show or to route through.
+func (g *Agent) Interfaces(ctx context.Context) ([]api.Interface, error) {
+	ifs, err := g.Service.Interfaces(ctx)
+	if err != nil {
+		return nil, err
+	}
+	st, err := onMain(ctx, g.app, func() (api.Status, error) { return g.app.status, nil })
+	if err != nil {
+		return nil, err
+	}
+	return withoutOwnTunnel(ifs, st), nil
+}
