@@ -3,8 +3,10 @@
 The helper is a pure-Go arm64 executable. `pithd --version` is unprivileged;
 normal startup requires root and `--owner-uid <installing user's UID>`. launchd
 starts it idle, with `ProcessType` set to `Interactive` so its forwarded
-sockets avoid the background traffic class. The routing engine is linked into
-`cmd/pithd`. Capture starts on an authenticated request. Local proxy ports and
+sockets avoid the background traffic class. A Background job has the lowest
+CPU priority and its sockets yield to other traffic on a busy Mac. The routing
+engine is linked into `cmd/pithd`. Importing or constructing it leaves capture
+off. An authenticated request starts it. Local proxy ports and
 the MCP socket belong to the menu bar app.
 
 HTTP/JSON runs only over a Unix socket, with protocol version 1 in
@@ -24,6 +26,13 @@ listener or trusted UID in JSON.
 | POST | `/v1/start`, `/v1/reload`, `/v1/stop` | Start, update or stop capture. |
 | POST | `/v1/connections`, `/v1/connections/clear`, `/v1/traffic` | Read or clear connection history, or query routing totals. |
 | POST | `/v1/yield` | Hold a temporary change of primary network for a router renewal. |
+
+Except for `GET /v1/status`, requests must carry the matching protocol header.
+The status response announces its own protocol. JSON request bodies that the
+helper decodes have a 4 MiB limit. The initial `GET /v1/events` interface
+snapshot is an explicit JSON array, even when empty. Cancellation, EOF or
+helper exit ends the stream. During shutdown the helper stops its backend and
+removes its socket.
 
 The helper retains its last interface snapshot across a failed read and retries.
 If the event stream ends, the client reconnects. It allows five seconds to

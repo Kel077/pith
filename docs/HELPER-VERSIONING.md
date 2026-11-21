@@ -43,6 +43,10 @@ identity with the same toolchain and dependencies. An actual helper, compiler or
 linked dependency change can require replacement even with the same display
 version. Compare two builds with different app versions in the build tests.
 
+Shared code linked into `pithd`, including `internal/api`, can change the helper
+artifact even when the feature itself runs only in the app. The local SOCKS5 API
+additions did so.
+
 Upgrading from v0.1.1 to the next release replaces the installed helper.
 The new build adds `POST /v1/yield` for router renewal, changes the
 interface watcher and ships an `Interactive` launchd job. Changes to the
