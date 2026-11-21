@@ -1,80 +1,46 @@
-# Backend integration (M1 and M2)
+# App backend
 
-Construct `client.New(client.Options{ResourcesDir: resourcesDir, ConfigDir:
-configDir, Version: version})`. `ConfigDir` can be empty to use
-`~/Library/Application Support/Pith`. Construction does not write or start
-anything. `*client.Client` implements `api.Service`.
+`internal/client.Client` implements `api.Service` in the menu bar app. Construct it
+with `client.New(client.Options{ResourcesDir: resourcesDir, ConfigDir: configDir, Version: version})`.
+The default configuration directory is `$HOME/Library/Application Support/Pith`.
+Construction opens no listeners. Call `Close` when the app quits.
 
-Available without a helper:
+## Services in the app
 
-- `LoadConfig` / `SaveConfig`: validated JSON, private permissions, atomic
-  replacement, file and directory sync. Missing file means `DefaultConfig`;
-  corrupt or incompatible data is reported, never silently overwritten.
-- `Interfaces`: native links, service labels, aliases, kind, addresses,
-  primary/default routes, per-service routers and DNS. SystemConfiguration
-  and routing table reads are read-only. `netif.Watch` is event driven and
-  must be canceled when its subscriber exits.
-- `Probe`: TCP `host:port`, or HTTPS requests to the IPv4 and IPv6 endpoints
-  documented by [ipify](https://www.ipify.org/). DNS and transport sockets
-  are bound to the requested interface. These requests only happen on Probe;
-  no background public-address polling. Either family succeeding sets `OK`.
-  A network failure is a Probe with `OK=false` and `Problem`; cancellation
-  and invalid inputs are errors.
-- `Check`: the selected scene by default, block priority, detailed reasons
-  for every rule, and ordered interface fallback. For a domain resolving to
-  several addresses it evaluates the first and returns all in `Addresses`;
-  provide `CheckInput.Address` to test a specific one without a DNS lookup.
-  It uses Go's default system resolver (Darwin uses the native resolver even
-  with `CGO_ENABLED=0`, unless explicitly built with `netgo`). Interface
-  availability predicts the route; it cannot guarantee the destination will
-  connect. A MAC-bearing interface reference never falls back to a different
-  adapter that happens to reuse its BSD name.
+| Service | Behavior |
+| --- | --- |
+| `LoadConfig`, `SaveConfig` | Read or atomically replace `config.json`. A missing file yields the default configuration. A corrupt file returns an error on load. Loading activates enabled local proxy ports and checks for an interrupted router renewal. Saving updates affected listeners and applies a changed running scene. |
+| `Interfaces`, `Check` | Read links, service labels, addresses, routers, DNS and default status. The UI applies saved aliases. The checker predicts a scene's decision using the current interfaces. For a name, it returns the resolved addresses and evaluates the first. Supply `CheckInput.Address` to check a particular address. |
+| `Probe`, `SpeedTest` | An explicit probe target makes a bound TCP connection. An empty target tests IPv4 and IPv6 through ipify. The independent Cloudflare test measures latency and download/upload speed. [Network tests](../../docs/ARCHITECTURE.md#network-tests) |
+| `Hotspot`, `Router` and their password/renewal methods | Use the selected interface to talk to the M2000 or CHR30A-R. Credentials go in the user's keychain. Router renewal additionally needs the verified helper and a working standby interface. [Router renewal](../../docs/ARCHITECTURE.md#renewing-a-routers-address) |
+| Local proxies and `ChangeProxyIP` | The app owns forwarding, port replies, upstream status and device counters. Scene exits use the compiled destination rules. The Network page and ports share address renewals. [Local proxy listeners](../../docs/ARCHITECTURE.md#local-proxy-listeners) |
 
-Helper operations use authenticated HTTP/JSON over a Unix socket. Missing
-helpers return `ErrHelperMissing`; mismatched build/protocol versions return
-`ErrHelperOutdated`. `Status` reports a missing helper as `Stopped` without an
-error. The client requires the server's kernel peer UID to be root. The server
-accepts only root and the installing user's kernel peer UID.
+A failed helper reload after saving returns an error indicating that the file
+was saved. Removing a running scene stops routing. A change limited to proxies
+or devices can be applied locally unless an earlier routing update is pending.
 
-`SaveConfig` pushes a running scene's saved rules/settings to the helper. If
-the running scene was removed, it stops routing. If saving succeeds but hot
-application fails, the error explicitly says the configuration was saved.
-`Subscribe` delivers Status, Interfaces, then updates; cancellation closes
-the stream. The UI may reconnect after EOF/error. Event interfaces include
-user aliases. `Connections`, `ClearConnections`, and `Traffic` use helper IPC.
+## Services in the helper
 
-`InstallHelper` prepares the bundled executable at `ResourcesDir/bin/pithd`
-and invokes the macOS administrator dialog. It verifies the staged executable
-against a pre-authorization SHA-256 and restores the previous helper/plist and
-launchd registration on a failed update. Canceling the dialog maps to
-`ErrCanceled`. `UninstallHelper` stops the service and removes its installation
-and helper data. See `internal/helper/README.md` for the changed paths and test
-plan. These privileged scripts have not yet been run on the development Mac.
+`Start`, `Stop`, `Connections`, `ClearConnections` and `Traffic` use authenticated
+HTTP/JSON over the helper's Unix socket. The shipped `cmd/pithd` links the routing
+engine. The client checks installed file identity and the executing root peer
+before sending a request. `InstallHelper` and `UninstallHelper` use macOS
+administrator authorization. The helper reference lists the managed paths and
+the upgrade guide describes artifact verification. [Helper IPC](../helper/README.md) · [Helper updates](../../docs/HELPER-VERSIONING.md)
 
-The M2 daemon uses `IdleBackend`: it opens authenticated IPC, reports Stopped,
-and refuses Start with an explicit engine-unavailable error. M3 will link in
-the actual routing backend. Only tests inject a fake engine that reports
-Running; the installed binary never simulates successful routing.
+`Status` combines the helper's routing state with app-owned proxy and device
+status. `Subscribe` starts with Status and Interfaces, then sends updates.
+A lost helper stream triggers reconnection. Local proxy updates continue while
+the helper is absent or unavailable. Closing the client ends its listeners and
+subscriptions. The UI's quit preference governs whether the helper stops routing.
 
-`internal/engine/attribution` reads the TCP/UDP `pcblist_n` sysctls and uses
-`proc_info` for executable paths and unique identities. It preserves the
-socket-owning `Process` while attributing `App` to the effective PID when
-present. Nested `.app` bundles resolve to the outermost app. The decoder was
-implemented from Apple XNU's [PCB headers](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/netinet/in_pcb.h),
-[socket headers](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/socketvar.h),
-[record producer](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/netinet/in_pcblist.c),
-and [libproc wrappers](https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/libproc/libproc.c),
-without copying Apple implementation code. `pcblist_n` exports effective PID,
-not the delegated executable UUID. Actual WebKit/nsurlsessiond delegation
-still needs an integration test; synthetic delegated sockets are covered.
+The MCP socket belongs to the running app. `Pith mcp` forwards calls there so
+configuration edits use the same UI state and saver as a window edit. [MCP tools](../../docs/ARCHITECTURE.md#tools-for-agents)
 
-All ordinary tests use synthetic documentation addresses or temporary local
-loopback sockets. Live PCB tests assert ownership without printing snapshots.
-An optional single network probe is:
+## Tests
 
-```sh
-PITH_TEST_INTERFACE=en0 PITH_TEST_TARGET=example.com:443 go test ./internal/client -run TestLiveProbeInterface -v
-```
-
-Omit `PITH_TEST_TARGET` to test HTTPS/public addresses. The test logs success
-and latency, not public addresses. No test installs a helper or changes routes.
+Ordinary client tests use synthetic interfaces, loopback HTTP servers and
+temporary configuration. Opt-in tests cover a live bound probe and a Cloudflare
+speed test. Router yield and renewal tests use real hardware and the installed
+helper. Their opt-in variables and network effects are described in the
+[hardware test reference](../../docs/ROOT-TEST.md#router-renewal-and-primary-yield).

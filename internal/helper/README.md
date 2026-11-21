@@ -1,11 +1,11 @@
 # Privileged helper and IPC
 
 The helper is a pure-Go arm64 executable. `pithd --version` is unprivileged;
-normal startup requires root and `--owner-uid <installing user's UID>`. Launchd
-starts it idle, as an Interactive job: it routes the Mac's connections, and a
-Background job gets the lowest CPU priority, with sockets that yield to other
-traffic. The engine backend is linked into `cmd/pithd`; importing or
-constructing it never starts capture. The helper owns its complete shutdown.
+normal startup requires root and `--owner-uid <installing user's UID>`. launchd
+starts it idle, with `ProcessType` set to `Interactive` so its forwarded
+sockets avoid the background traffic class. The routing engine is linked into
+`cmd/pithd`. Capture starts on an authenticated request. Local proxy ports and
+the MCP socket belong to the menu bar app.
 
 HTTP/JSON runs only over a Unix socket, with protocol version 1 in
 `X-Pith-Protocol`. The status response also announces its protocol/build
@@ -17,16 +17,20 @@ learned from the peer or an adjacent manifest. App versions are informational;
 only a differing helper artifact/protocol requires replacement. There is no TCP
 listener or trusted UID in JSON.
 
-Endpoints: `GET /v1/status`, `GET /v1/events` (NDJSON), and POST requests for
-`/v1/start`, `/v1/reload`, `/v1/stop`, `/v1/connections`,
-`/v1/connections/clear`, `/v1/traffic` and `/v1/yield`. Requests are size limited and version
-checked. A subscription first emits Status and Interfaces; empty interface
-snapshots remain explicit JSON arrays. Cancellation, EOF and helper exit
-close streams; a failed read of the network configuration doesn't: the last
-interface snapshot stays until a read works. The process stops its backend and
-removes its socket on exit.
+| Method | Path | Result |
+| --- | --- | --- |
+| GET | `/v1/status` | Helper and routing state. |
+| GET | `/v1/events` | NDJSON stream. Status and the interface list come first, followed by updates. |
+| POST | `/v1/start`, `/v1/reload`, `/v1/stop` | Start, update or stop capture. |
+| POST | `/v1/connections`, `/v1/connections/clear`, `/v1/traffic` | Read or clear connection history, or query routing totals. |
+| POST | `/v1/yield` | Hold a temporary change of primary network for a router renewal. |
 
-`/v1/yield` keeps one interface from being macOS's primary while its router
+The helper retains its last interface snapshot across a failed read and retries.
+If the event stream ends, the client reconnects. It allows five seconds to
+open a stream and read the initial snapshots. If setup fails and the cause
+requires a status check, that check has its own five-second budget.
+
+`internal/primary` keeps one interface from being macOS's primary while its router
 renews its address, for as long as the client keeps the request open and at
 most ten minutes. The helper adds a `PrimaryRank` of `Never` to the State:
 entity of the interface's network service, as a temporary key of a `scutil`
