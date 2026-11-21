@@ -10,6 +10,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -274,6 +275,90 @@ func TestRenewRouterNeedsAStandby(t *testing.T) {
 			t.Fatalf("calls = %v", f.Calls)
 		}
 	})
+}
+
+// refusingReload is a helper's engine that can't take new rules.
+type refusingReload struct{ *fakeEngine }
+
+func (refusingReload) Reload(context.Context, api.Scene, api.Settings) error {
+	return errors.New("reload refused")
+}
+
+// yieldingClient is a client of a helper that runs backend and yields en0 to
+// en9; released tells when a yield ends.
+func yieldingClient(t *testing.T, f *routertest.Router, backend helper.Backend) (c *Client, released <-chan struct{}) {
+	t.Helper()
+	ended := make(chan struct{}, 2)
+	fake := func(ctx context.Context, iface string, ready func(string)) error {
+		ready("en9")
+		<-ctx.Done()
+		ended <- struct{}{}
+		return nil
+	}
+	c, _, _ = startLocalHelper(t, "test", backend, func(o *helper.ServerOptions) { o.Yield = fake })
+	c, _ = routerClient(t, c, f)
+	if err := c.SetRouterPassword(context.Background(), "en0", routertest.Password); err != nil {
+		t.Fatal(err)
+	}
+	return c, ended
+}
+
+// failedRenewal checks that a renewal that failed left the router, the yield
+// and the drain as they were.
+func failedRenewal(t *testing.T, c *Client, f *routertest.Router, released <-chan struct{}) {
+	t.Helper()
+	f.Do(func(f *routertest.Router) {
+		if len(f.Calls) != 0 {
+			t.Fatalf("calls = %v", f.Calls)
+		}
+	})
+	select {
+	case <-released:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the yield outlived the renewal")
+	}
+	c.mu.Lock()
+	drained := c.drained
+	c.mu.Unlock()
+	if drained != nil {
+		t.Fatalf("still drained: %+v", drained)
+	}
+}
+
+// A router keeps its address when the helper can't have rules skip its
+// interface: the connections they still sent there would fail meanwhile.
+func TestRenewRouterNeedsRulesThatSkipIt(t *testing.T) {
+	f := routertest.New("203.0.113.10")
+	c, released := yieldingClient(t, f, refusingReload{newFakeEngine()})
+	ctx := context.Background()
+	if err := c.SaveConfig(ctx, api.DefaultConfig()); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Start(ctx, "default"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.RenewRouter(ctx, "en0"); err == nil || !strings.Contains(err.Error(), "reload refused") {
+		t.Fatalf("RenewRouter = %v, want the refused reload", err)
+	}
+	failedRenewal(t, c, f, released)
+}
+
+// A router keeps its address when Pith can't mark the renewal: should Pith
+// quit meanwhile, nothing would ask the router for an address again.
+func TestRenewRouterNeedsItsMark(t *testing.T) {
+	f := routertest.New("203.0.113.10")
+	c, released := yieldingClient(t, f, newFakeEngine())
+	// A folder where the mark goes.
+	if err := os.MkdirAll(filepath.Join(c.opts.ConfigDir, routerMark), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.RenewRouter(context.Background(), "en0"); err == nil {
+		t.Fatal("renewed without a mark")
+	}
+	failedRenewal(t, c, f, released)
+	if _, err := os.Stat(filepath.Join(c.opts.ConfigDir, drainFile)); !os.IsNotExist(err) {
+		t.Fatalf("the drain is still marked: %v", err)
+	}
 }
 
 func TestRenewRouterLocked(t *testing.T) {

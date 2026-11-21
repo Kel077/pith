@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/netip"
@@ -280,7 +281,11 @@ func (c *Client) renewRouter(ctx context.Context, iface string) (r api.RouterRen
 			standby = api.InterfaceRef{Name: i.Name, Label: i.Label, HardwareAddr: i.HardwareAddr}
 		}
 	}
-	defer c.drain(ctx, link, standby)()
+	undrain, err := c.drain(ctx, link, standby)
+	if err != nil {
+		return r, err
+	}
+	defer undrain()
 	// Pith quitting ends the renewal too, once the router is asked for an
 	// address again.
 	renewCtx, cancel := context.WithCancel(ctx)
@@ -309,10 +314,11 @@ func (c *Client) renewRouter(ctx context.Context, iface string) (r api.RouterRen
 	}
 	// Should Pith end before it asks for an address again, it does when it
 	// starts again.
+	// Without the mark, nothing would: the router stays without an address
+	// until it is asked, and so does everything behind it.
 	mark := filepath.Join(c.opts.ConfigDir, routerMark)
-	if data, err := json.Marshal(releasedRouter{Interface: iface, HardwareAddr: link.HardwareAddr}); err == nil {
-		_ = os.MkdirAll(c.opts.ConfigDir, 0700)
-		_ = os.WriteFile(mark, data, 0600)
+	if err := writeMark(c.opts.ConfigDir, mark, releasedRouter{Interface: iface, HardwareAddr: link.HardwareAddr}); err != nil {
+		return r, fmt.Errorf("router: can't mark the renewal for Pith to finish should it quit: %w", err)
 	}
 	c.forgetExitAddresses(iface)
 	for _, pause := range pauses {
@@ -417,7 +423,11 @@ func (c *Client) recoverRouter() {
 
 // drain has link count as down until the returned function is called: its
 // local proxies refuse connections and, while routing runs, rules skip it.
-func (c *Client) drain(ctx context.Context, link api.Interface, standby api.InterfaceRef) (undrain func()) {
+// When the helper can't be given the rules without link, or the drain can't
+// be marked for a Pith that quits meanwhile to undo, nothing stays drained
+// and drain fails: rules that kept sending connections to link would fail
+// them while it has no address.
+func (c *Client) drain(ctx context.Context, link api.Interface, standby api.InterfaceRef) (undrain func(), err error) {
 	match := func(ref api.InterfaceRef) bool { return ref.Resolve([]api.Interface{link}) != nil }
 	c.proxyMu.Lock()
 	manager := c.proxies
@@ -427,13 +437,15 @@ func (c *Client) drain(ctx context.Context, link api.Interface, standby api.Inte
 	}
 	c.mu.Lock()
 	c.drained = &drainState{link: link, standby: standby}
-	_ = os.MkdirAll(c.opts.ConfigDir, 0700)
-	_ = os.WriteFile(filepath.Join(c.opts.ConfigDir, drainFile), nil, 0600)
-	if cfg, err := c.loadConfig(ctx); err == nil {
-		_ = c.applyConfig(ctx, cfg)
+	err = writeMark(c.opts.ConfigDir, filepath.Join(c.opts.ConfigDir, drainFile), nil)
+	if err == nil {
+		var cfg api.Config
+		if cfg, err = c.loadConfig(ctx); err == nil {
+			err = c.applyConfig(ctx, cfg)
+		}
 	}
 	c.mu.Unlock()
-	return func() {
+	undrain = func() {
 		if manager != nil {
 			manager.Resume()
 		}
@@ -446,6 +458,26 @@ func (c *Client) drain(ctx context.Context, link api.Interface, standby api.Inte
 			_ = os.Remove(filepath.Join(c.opts.ConfigDir, drainFile))
 		}
 	}
+	if err != nil {
+		undrain()
+		return nil, fmt.Errorf("router: rules can't skip %s meanwhile: %w", link.Name, err)
+	}
+	return undrain, nil
+}
+
+// writeMark writes path, in dir, with v as JSON, or empty when v is nil.
+func writeMark(dir, path string, v any) error {
+	var data []byte
+	if v != nil {
+		var err error
+		if data, err = json.Marshal(v); err != nil {
+			return err
+		}
+	}
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0600)
 }
 
 // drainState is an interface that counts as down, and the one macOS made
