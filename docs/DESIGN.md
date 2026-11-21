@@ -67,32 +67,42 @@ page has a large title and its actions on the right.
   segmented capsules, the ordered interfaces as a pane of rows.
 - **Activity.** Connections (live, newest first), Apps, and Traffic (bars
   per interface over an hour, a day or a week), each as one pane.
-- **Network.** A pane per connected interface, a compact group for the
-  others, and a reachability test. A pane's foot tells its speed test: the
-  download and upload large, and over them the public IP, the server and
-  the latency. A hotspot Pith can talk to shows as
-  itself on its pane, drawn without its maker's marks, and its screen
-  says what it reports, as the device's own screen would: the bars in the
-  interface's color and 5G or LTE, the carrier, the band large with its
-  frequency, and the signal's strength and SNR. The screen stays white in
-  the dark, as the device's does. Locked, it shows a lock that asks for
-  the admin password. "Change hotspot IP" has the hotspot reconnect, and
-  then says the old and the new IP. An Ethernet or Wi-Fi interface whose
-  router Pith can talk to names the router's model beside its address, and
-  has "Change IP" beside "Test speed": locked, it asks for the router's
-  admin password; then the card says it is changing, and the old and the
-  new IP. Meanwhile the "System default" chip moves to the network that
-  carries the Mac.
-- **Settings.** Groups of rows, as System Settings has them. A local
-  proxy's row ends with what it goes out through, a small button that
-  shares it and one that lets what uses it change its IP, each tinted while
-  on, its switch and a button that removes it. A proxy through another
-  Mac's Pith says, under its address, the interface that Mac uses and its
-  public IP, and has "Change IP" before its menu when that Mac allows it;
-  the row says while the IP changes, and then the old and the new one.
-  The devices that may use the shared proxies have a group of their own,
-  there once a proxy is shared: what each moves, **Allow** beside one that
-  was refused, and this Mac's addresses, which the devices type.
+- **Network.** Connected interfaces have cards. Named disconnected services
+  share a compact list. Double-click a name to edit its alias. A card shows
+  **System default** when appropriate, and its local addresses, router, DNS
+  and hardware address when available.
+  - **Test speed** shows latency and the Cloudflare data center alongside the
+    public IP. The download and upload figures appear below in Mbps. A failed
+    transfer is a dash with details on hover. **Test All** runs the cards in
+    sequence. **Reach a server** has its own host-and-port field, **Test**
+    button and result row for each connected interface.
+  - The M2000 appears as a drawing of the hotspot. Its display shows bars
+    and network type. Unlocking adds carrier, band, frequency, signal strength
+    and SNR. **Change hotspot IP** is available when unlocked and connected.
+  - A recognized CHR30A-R has its model beside the router address even when
+    locked. Its **Change IP** button opens the password sheet while locked
+    and starts renewal when unlocked and connected. During the yield,
+    **System default** follows the network macOS selected.
+  - A renewal shows the addresses observed before and after. The display
+    prefers IPv4 and compares like families. If IPv4 disappears and IPv6
+    stays the same, it displays just the observed IPv6 address.
+- **Settings.** General and routing preferences, **Local proxies**, **Devices**,
+  **Helper**, backup and app information each have a group of rows.
+  - **Add Proxy** creates an enabled port. Double-click its address to change
+    the port. The exit menu offers physical interfaces, each scene's rules
+    and **Another proxy…**. The row shows listener state, open connections
+    and byte counts.
+  - **Share with devices** and **Let apps and devices change its IP** are
+    separate icon buttons, tinted while on. A scene has no IP-change toggle.
+    A Pith upstream that permits a renewal adds its own **Change IP** action.
+    The row can show the upstream interface, its address or the last renewal.
+  - **Devices** appears when a port is marked shared or saved devices exist.
+    **This Mac** gives the IPv4 addresses devices can use. **Add Device**
+    accepts an address or range. A refused visitor has an **Allow** action.
+    Double-click a saved device's name to edit it.
+  - Configuration changes made through MCP appear in the same window.
+    Its tools use the UI's saver, so editing rules or sharing a port has
+    the same visible result from either entry point.
 
 ## The menu bar
 

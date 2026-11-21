@@ -12,9 +12,10 @@ make check
 make build
 ```
 
-`make check` runs `go vet ./...` followed by `go test ./...`. It does not install
-the helper or activate routing. Privileged routing tests require a separate,
-explicitly approved test session.
+`make check` runs `go vet ./...` followed by `go test ./...`. With the live
+test variables unset, the suite exercises speed tests, both gateway drivers,
+proxy protocols and MCP with local fixtures. Live network and hardware tests
+have separate opt-ins. [Hardware test scope](ROOT-TEST.md#router-renewal-and-primary-yield)
 
 `make build` performs these steps:
 
@@ -60,6 +61,32 @@ real backend's explicit helper installation and verification. `make build`
 instead produces the complete app bundle. Running `go run ./cmd/pith` alone
 without the generated identity still opens the interface, but helper status is
 `helper_untrusted` and installation is refused before administrator approval.
+
+## Mock interface and MCP
+
+`go run ./cmd/pith -mock` opens the window with simulated networks, rules,
+devices and renewals. It needs no built helper. The mock and normal GUI share
+the single-instance lock. Run the mock when the normal instance is closed.
+Use `-page network` for speed tests and gateways or `-page settings` for
+proxies and device sharing. `-lang en`, `-lang zh-Hans` and `-panel` also
+work with the mock. [Snapshot rendering](DESIGN.md#reviewing-the-views)
+
+The same executable serves MCP over stdio. To check discovery from a source
+build, the following sends one request and exits at end of input. Discovery
+needs neither an open app nor a helper.
+
+```sh
+go run ./cmd/pith mcp <<'JSON'
+{"jsonrpc":"2.0","id":1,"method":"tools/list"}
+JSON
+```
+
+To exercise tool calls on the mock, give the mock and its stdio client the
+same `PITH_MCP_SOCKET`, an absolute socket path in a private temporary directory.
+The mock opens no MCP socket by default. The production app uses
+`$HOME/Library/Application Support/Pith/mcp.sock` by default. Quit the mock
+when finished. The packaged stdio command is
+`/Applications/Pith.app/Contents/MacOS/Pith mcp` when installed in Applications.
 
 ## Archives and disk images
 
