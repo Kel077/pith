@@ -45,7 +45,53 @@ uses an interface-bound outbound socket. It is separate from App-owned Network
 page probes; see [the startup behavior](ARCHITECTURE.md#lifecycle-and-recovery).
 
 Changing a port's exit while a test stream is open remains unverified; see the
-[local proxy plan](NEXT-ACCEPTANCE.md#local-socks5-acceptance).
+[local proxy plan](NEXT-ACCEPTANCE.md#local-proxy-acceptance).
+
+## Shared ports, scene exits and port responses
+
+The following hardware observations extend the loopback SOCKS5 result. The
+commits identify the builds used. The forwarding checks and the port's own
+HTTP requests exercise different paths.
+
+| Build | Recorded result |
+| --- | --- |
+| `a343b28` | A second Mac reached shared wired and cellular ports over both LAN and VPN addresses. Each used the expected exit. An unlisted client received SOCKS5 `0xFF` and appeared as refused. A chained port reported `upstream_refused` until its Mac was allowed. One 25 MB transfer through the chain ran at about 490 Mbit/s. |
+| `b5c3e1c`, `081e567` | A shared scene port routed one name to cellular, sent an unmatched name through the wired default and blocked another. SOCKS5, HTTP CONNECT and ordinary HTTP requests were exercised. A non-default scene with address rules also blocked the configured address. |
+| `dbb1037` | Direct HTTP requests read interface status, nested upstream status and a scene exit with no single address. `max-age=0` refreshed the lookup. A POST without permission and browser-origin requests were refused. Ordinary proxy forwarding still worked. |
+| `246c017` | Interface, scene and chained exits refused the Mac's own LAN address while ordinary external forwarding worked. The scene exit also refused a local name that resolved to that address. |
+
+The port tests use injected exits and loopback listeners to exercise live
+permission changes, request capacity, status during renewals, busy or slow
+upstreams and caller cancellation. The client integration tests exercise real
+HTTP framing against simulated gateways. [Port tests](../internal/proxy/port_test.go) · [Client integration tests](../internal/client/exit_port_test.go)
+
+## Router renewal and primary yield
+
+At `f01f34a`, during a CHR30A-R renewal the M2000 became primary in about
+0.2 seconds and the wired interface became primary again within 0.1 seconds
+of release of the yield. The router obtained the same IPv4 address after a
+five-second pause and a different one after a 20-second pause. The entire
+renewal took 34 seconds in that run. The app allows a third 60-second pause.
+These timings are a historical observation. The provider chooses the address.
+
+The opt-in Go tests below are separate from the scoped `rootcheck` harness.
+Keep their environment variables unset during ordinary `go test ./...`. For a
+hardware run, select one case explicitly and record the starting primary,
+WAN state and recovery steps before changing either. Yield and router tests
+use a running, verified helper that matches the test client's build identity.
+
+| Test | Opt-in variables | Effect |
+| --- | --- | --- |
+| `TestLiveProbeInterface` | `PITH_TEST_INTERFACE`, optional `PITH_TEST_TARGET` | Opens a bound TCP connection, or checks both public addresses through ipify when the target is empty. |
+| `TestLiveSpeedTest` | `PITH_TEST_INTERFACE`, `PITH_TEST_SPEED` | Contacts Cloudflare with a full payload of about 33 MB. |
+| `TestLiveYield` | `PITH_TEST_YIELD` | Temporarily yields the current primary, checks internet access on the new default, then verifies the old primary returns. |
+| `TestLiveRouterCycle` | `PITH_TEST_ROUTER`, `PITH_TEST_ROUTER_KEYCHAIN`, `PITH_TEST_ROUTER_CYCLE` | Reads an existing keychain item and exercises a single release/renew cycle under a yield. A second router session observes the WAN. |
+| `TestLiveRenewRouter` | `PITH_TEST_ROUTER`, `PITH_TEST_ROUTER_KEYCHAIN`, `PITH_TEST_ROUTER_RENEW` | Calls the app's `RenewRouter` path, including standby preflight, retries and restoration. |
+
+The router cases interrupt WAN access for other devices too. After a case,
+verify the router has a lease, the expected primary has returned and the
+chosen interfaces still reach their test destinations. The previous public
+address may no longer be assigned. [Live router tests](../internal/client/live_router_test.go) · [Renewal and recovery](ARCHITECTURE.md#renewing-a-routers-address)
 
 ## Recorded helper identity result
 
@@ -1230,6 +1276,12 @@ report retains all evidence, including the client's independent probe addresses.
 An unchanged public IP is reported as observed; renewal cannot promise a different
 carrier NAT allocation. This automated case returns as soon as verification
 finishes; `--observe` is its upper time bound, not a minimum wait.
+
+The M2000 reports its connection age in whole seconds. The driver waits for
+a session made since data was switched off when that field is available.
+The follow-up probe retries while DNS and the public address families return.
+The general app can return partial results. The harness additionally requires
+successful connectivity evidence for its selected adapter.
 
 Cancellation waits for the client's bounded cellular-data restoration before
 Stop; no renewal worker remains running after return. Stop still checks owned

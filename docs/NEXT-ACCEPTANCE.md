@@ -58,29 +58,19 @@ the older HTTP/3 hardware result does not establish these new boundaries.
 Native pre-capture passthrough and ICMP are outside this change. Future routing
 checks still require a separate reviewed scoped installation with its short lease.
 
-## Local SOCKS5 acceptance
+<a id="local-socks5-acceptance"></a>
 
-The unprivileged hardware subset passed at `b8b3628`, with TUN disabled and no
-running helper. Two App-owned IPv4-loopback listeners selected wired Ethernet
-and a cellular hotspot independently. HTTPS hostname requests resolved through
-the proxy's selected-interface DNS and returned the respective exits: the wired
-result matched a direct wired control, and the cellular result was different.
-After hotspot removal, its proxy immediately returned SOCKS `0x03` without
-falling back to Ethernet; the wired proxy continued to work. Reconnection
-restored cellular forwarding automatically, including normal public-address
-drift, without disturbing the wired proxy. See the
-[recorded result](ROOT-TEST.md#recorded-local-socks5-result).
+## Local proxy acceptance
 
-A later pre-release check at `2f9d14b` passed both proxies with a normal user
-scene running: exits stayed correct, the engine log contained no App-owned
-connections or observed proxy forwarding loop, and Stop restored the default
-route and utun count. A helper-owned SafeStart TLS connection is expected and
-does not imply that the App proxy path was captured. This result covers that
-scene, not every rule or VPN configuration.
+Recorded hardware results cover two interface-bound SOCKS5 ports, recovery
+after unplugging a cellular adapter, and use alongside one running scene.
+Later checks cover LAN and VPN clients, a refused and then allowed device,
+a chained port, HTTP and SOCKS5 through scene rules, and requests to the
+port itself. [Interface-port results](ROOT-TEST.md#recorded-local-socks5-result) · [Shared and chained ports](ROOT-TEST.md#shared-ports-scene-exits-and-port-responses)
 
-Remapping a port while a test stream is open was not exercised. These passes
-do not establish the other lifecycle or IPv6 checks below; retain the following
-procedure for the remaining checks and regressions.
+Remapping a port with an established hardware stream is still open.
+Literal IPv6 CONNECT, full IPv6 capture and other VPN configurations also
+need their own evidence. The following steps exercise the direct ports.
 
 The unprivileged App listener needs no helper installation or administrator
 approval. Before a run, choose two supported physical interfaces, two unused
@@ -551,13 +541,22 @@ not passed. An unplanned VPN change in a throughput stage still aborts that stag
 
 ## Required adapter renewal and fallback acceptance
 
+For the CHR30A-R, the existing hardware record covers temporary primary
+selection and one WAN renewal. The client tests also cover repeated leases,
+an unusable standby, cancellation and restoring a released router after an
+interruption. A hardware check of the latter recovery paths remains separate
+from the recorded renewal. [Router test scope and opt-ins](ROOT-TEST.md#router-renewal-and-primary-yield) · [Recovery tests](../internal/client/router_test.go)
+
 During approved capture, renew the selected cellular hotspot's public connection
 once through the app. Record an IPv6 prefix/privacy-address and DNS change when
 the device supplies them. Require Pith to remain Running, keep its owned routes,
 and send subsequent rule-matched connections through that adapter using current
 addresses and DNS. Existing sockets keep their bindings and may naturally fail
 when the provider invalidates their addresses; they must not migrate to another
-interface. Include DHCP/address renewal on the system-default adapter as well.
+interface. Record the address families actually observed on each probe.
+Keep this M2000 case separate from the CHR30A-R's WAN DHCP release, which
+interrupts every device behind the router. A DHCP/address renewal of the
+Mac's system-default adapter is a separate case again.
 
 Then, in a separately approved bounded case, unplug the preferred hotspot while
 its rule lists a second available adapter. A new connection must use that next

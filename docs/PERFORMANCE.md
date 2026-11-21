@@ -1,5 +1,14 @@
 # Relay performance investigation
 
+The measurements below cover the routing helper's relay. **Network → Test
+speed** runs separately in the app and binds its connection to the chosen
+interface. A full Cloudflare test transfers 25 MB down and 8 MB up. Its
+figures describe that interface's path to Cloudflare. The hardware comparison
+in this report used the same endpoint for direct and helper-routed transfers.
+It predates the change to launchd `ProcessType=Interactive`.
+That change keeps forwarded sockets out of the background traffic class.
+The recorded figures do not measure its effect. [Network tests](ARCHITECTURE.md#network-tests)
+
 The initial investigation identified the per-I/O interface identity lookup.
 The baseline `capture.Binding.Check` called the native driver's name lookup before
 each guarded socket read/write. Go's BSD `InterfaceByName` reads the entire
