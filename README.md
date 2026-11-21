@@ -135,7 +135,7 @@ A router can change its public IP too, when Pith has its admin password. Only th
 | :-- | :-- |
 | Verizon Router CHR30A-R (Fios) | Its model beside its address on the Ethernet or Wi-Fi it serves. **Change IP** asks for the admin password while locked and renews the address once unlocked |
 
-**Change IP** has the router give its public IPv4 address up and ask Verizon for another, waiting longer each time Verizon gives the same one back, three times at most; it took 34 seconds in a test. Before it gives up the address, Pith checks that another connected network can reach the internet and waits for macOS to make one that passed the default. Rules with other interfaces try those, and local proxies through the router's interface close their streams and refuse new connections. Everything else on the router's network is offline meanwhile, for 5 seconds on the first try, 20 on the second and a minute on the third, plus the time the router takes to connect again, and connections through the old address end. The renewal leaves IPv6 alone. Pith needs its routing helper to make the router's interface give way to the other network.
+**Change IP** has the router give its public IPv4 address up and ask Verizon for another, waiting longer each time Verizon gives the same one back, three times at most; it took 34 seconds in a test. Before it gives up the address, Pith tests the other connected networks and waits for macOS to switch to one that can reach the internet. Rules with other interfaces try those, and local proxies through the router's interface close their streams and refuse new connections. Everything else on the router's network is offline meanwhile, for 5 seconds on the first try, 20 on the second and a minute on the third, plus the time the router takes to connect again, and connections through the old address end. The renewal leaves IPv6 alone. Pith needs its routing helper to make the router's interface give way to the other network.
 
 ### Local proxies
 
@@ -171,7 +171,7 @@ curl --noproxy '*' http://127.0.0.1:1081/
 curl --noproxy '*' -X POST http://127.0.0.1:1081/change-ip
 ```
 
-Use your own port number in place of `1081`. Whatever can use the port can ask `GET /`. A port that follows a scene's rules has no single IP to report or change. Pith looks the addresses up once and keeps them until the network changes; `GET /?max-age=60` has them looked up again when they are older than a minute. When a lookup fails, or finds only an IPv4 or only an IPv6 address where the network has both, a plain `GET /` can use what Pith already knows. Another GET after 30 seconds makes it try again. The wait doubles each time, up to ten minutes.
+Use your own port number in place of `1081`. Whatever can use the port can ask `GET /`. A port that follows a scene's rules has no single IP to report or change. Pith looks the addresses up once and keeps them until the network changes; `GET /?max-age=60` has them looked up again when they are older than a minute. When a lookup fails, or finds only an IPv4 or only an IPv6 address where the network has both, a plain `GET /` can use what Pith already knows. Another GET after 30 seconds makes it try again. After each failed or incomplete lookup the wait doubles, up to ten minutes.
 
 `POST /change-ip` is refused until you turn on **Let apps and devices change its IP**, the button with two arrows on the proxy's row. Then every app on your Mac, and every device the proxy is shared with, can change that IP. A router that changes its IP takes everything on its network offline, from seconds to over a minute: think of who else is on it.
 
@@ -198,7 +198,7 @@ An agent that takes its servers as JSON takes `{"command": "/Applications/Pith.a
 | **Change** | Add, change, move and remove rules. Create, copy, rename or remove a scene. Turn routing on or off, or to another scene; add, change and remove local proxies, and the devices that may use the shared ones |
 | **Change IP** | Of the hotspot or the router behind an interface, or of what a local proxy goes out through |
 
-What an agent changes shows in Pith at once, and applies as your own changes do. It works the Pith that is open: while Pith is closed, the tools answer that it isn't running. Some things stay yours: installing the helper, which takes your password, the admin passwords of hotspots and routers, and Pith's settings.
+What an agent changes shows in Pith at once, and applies as your own changes do. It works the Pith that is open: while Pith is closed, the tools answer that it isn't running. Some things stay yours: installing the helper, which takes your password, the admin passwords of hotspots and routers, and changing Pith's settings.
 
 Only programs that run as you on this Mac reach the tools: Pith opens no network port for them. To work another Mac's Pith, have the agent start it there over SSH: `ssh other-mac /Applications/Pith.app/Contents/MacOS/Pith mcp`.
 
@@ -267,11 +267,11 @@ Pith reads where connections go: addresses, ports, and host names from TLS SNI, 
 
 With **Safe start** on, each time routing starts, the helper opens one TLS connection to `api.ipify.org` to check the Mac is still online, and sends no request over it.
 
-A full speed test on the Network page downloads 25 MB from and uploads 8 MB to [Cloudflare's speed test](https://speed.cloudflare.com), which also tells Pith the public address it saw. **Reach a server** connects to the host and port you enter. Changing a hotspot's or a router's IP asks [ipify](https://www.ipify.org) for its public addresses before and after. For a router, Pith also checks which other networks can carry the Mac.
+A full speed test on the Network page downloads 25 MB from and uploads 8 MB to [Cloudflare's speed test](https://speed.cloudflare.com), which also tells Pith the public address it saw. **Reach a server** connects to the host and port you enter. Changing a hotspot's or a router's IP asks [ipify](https://www.ipify.org) for its public addresses before and after. For a router, Pith also checks which other networks can carry the Mac. An agent that tests an interface without naming a server also asks ipify for its public addresses.
 
-When a script asks a port for its public addresses, Pith asks ipify if it needs to find them or refresh them. A port through another Mac's Pith checks its upstream from time to time while Pith is open. That check can ask the other Mac to look up its addresses too.
+When a script asks a port for its public addresses, Pith asks ipify if it knows none, if a missing address is due for another try, or if `max-age` finds them too old. A port through another Mac's Pith checks its upstream from time to time while Pith is open. That check can ask the other Mac to look up its addresses too.
 
-While the Network page is open, Pith reads the device's own admin page on your local network. It can read a hotspot's bars or a router's model before login, and more once it has the admin password. The first time a port through an interface is asked about itself, Pith also checks which device is there. It knows the hotspot by its label and asks a router for its model. It remembers the answer so it doesn't have to ask on every GET.
+While the Network page is open, Pith reads the device's own admin page on your local network. It can read a hotspot's bars or a router's model before login, and more once it has the admin password. The first time a port through an interface is asked about itself, Pith also checks which device is there. It knows the hotspot by its label and asks a router for its model. It remembers the answer so it doesn't have to ask on every GET. [Network tests](docs/ARCHITECTURE.md#network-tests)
 
 ## Documentation
 
