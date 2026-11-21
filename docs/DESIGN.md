@@ -72,31 +72,38 @@ page has a large title and its actions on the right.
   share a compact list. Double-click a name to edit its alias. A card shows
   **System default** when appropriate, and its local addresses, router, DNS
   and hardware address when available.
-  - **Test speed** shows latency and the Cloudflare data center alongside the
-    public IP. The download and upload figures appear below in Mbps. A failed
-    transfer is a dash with details on hover. **Test All** runs the cards in
+  - The foot of the card shows **Test speed** results. Above the large
+    download and upload figures in Mbps are the public IP, the Cloudflare
+    data center that answered and the latency. A dash in place of a speed
+    gives the reason on hover. **Test All** runs the cards in
     sequence. **Reach a server** has its own host-and-port field, **Test**
     button and result row for each connected interface.
-  - The M2000 appears as a drawing of the hotspot. Its display shows bars
-    and network type. Unlocking adds carrier, band, frequency, signal strength
-    and SNR. **Change hotspot IP** is available when unlocked and connected.
+  - The M2000 appears as a drawing of the hotspot without its maker's marks.
+    Its screen stays white in the dark, as the device's does. The bars take
+    the interface's color, beside 5G or LTE. A lock opens the admin password
+    sheet. Once unlocked, the screen shows the carrier, the band in large
+    type with its frequency, signal strength and SNR. **Change hotspot IP**
+    reconnects the hotspot when it is unlocked and connected.
   - A recognized CHR30A-R has its model beside the router address even when
-    locked. Its **Change IP** button opens the password sheet while locked
-    and starts renewal when unlocked and connected. During the yield,
+    locked. **Change IP**, beside **Test speed**, opens the password sheet
+    while locked and starts renewal when unlocked and connected. During the yield,
     **System default** follows the network macOS selected.
-  - A renewal shows the addresses observed before and after. The display
-    prefers IPv4 and compares like families. If IPv4 disappears and IPv6
+  - The card shows when a renewal is in progress, then the addresses observed
+    before and after. The display prefers IPv4 and compares like families. If IPv4 disappears and IPv6
     stays the same, it displays just the observed IPv6 address.
 - **Settings.** General and routing preferences, **Local proxies**, **Devices**,
-  **Helper**, backup and app information each have a group of rows.
+  **Helper**, backup and app information each have a group of rows, as in
+  System Settings.
   - **Add Proxy** creates an enabled port. Double-click its address to change
     the port. The exit menu offers physical interfaces, each scene's rules
     and **Another proxy…**. The row shows listener state, open connections
     and byte counts.
   - **Share with devices** and **Let apps and devices change its IP** are
     separate icon buttons, tinted while on. A scene has no IP-change toggle.
-    A Pith upstream that permits a renewal adds its own **Change IP** action.
-    The row can show the upstream interface, its address or the last renewal.
+    The row ends with its on/off switch and remove button. A Pith upstream
+    that permits renewal adds **Change IP** before the exit menu. Under the
+    port's address the row shows the upstream interface and public IP, that
+    a change is in progress, or the old and new addresses once it finishes.
   - **Devices** appears when a port is marked shared or saved devices exist.
     **This Mac** gives the IPv4 addresses devices can use. **Add Device**
     accepts an address or range. A refused visitor has an **Allow** action.

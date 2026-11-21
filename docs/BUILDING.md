@@ -14,8 +14,9 @@ make build
 
 `make check` runs `go vet ./...` followed by `go test ./...`. With the live
 test variables unset, the suite exercises speed tests, both gateway drivers,
-proxy protocols and MCP with local fixtures. Live network and hardware tests
-have separate opt-ins. [Hardware test scope](ROOT-TEST.md#router-renewal-and-primary-yield)
+proxy protocols and MCP with local fixtures. This ordinary run does not install
+the helper or activate routing. Live network tests have separate opt-ins, and
+privileged routing tests require a separately approved session. [Hardware test scope](ROOT-TEST.md#router-renewal-and-primary-yield)
 
 `make build` performs these steps:
 

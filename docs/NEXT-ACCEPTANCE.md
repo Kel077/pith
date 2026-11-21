@@ -62,8 +62,13 @@ checks still require a separate reviewed scoped installation with its short leas
 
 ## Local proxy acceptance
 
-Recorded hardware results cover two interface-bound SOCKS5 ports, recovery
-after unplugging a cellular adapter, and use alongside one running scene.
+At `b8b3628`, with capture off and no helper running, the wired and cellular
+SOCKS5 ports used their respective exits. Unplugging the hotspot returned
+`0x03` immediately on its port, while the wired one kept working. Reconnecting
+the hotspot restored its port, with a new public address. At `2f9d14b`, with
+one normal scene running, both ports retained their exits and no app-owned
+connection appeared in the engine log. Stop restored the default route and
+utun count. A short helper-owned TLS connection during Safe start is expected.
 Later checks cover LAN and VPN clients, a refused and then allowed device,
 a chained port, HTTP and SOCKS5 through scene rules, and requests to the
 port itself. [Interface-port results](ROOT-TEST.md#recorded-local-socks5-result) · [Shared and chained ports](ROOT-TEST.md#shared-ports-scene-exits-and-port-responses)
