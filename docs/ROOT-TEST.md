@@ -55,10 +55,10 @@ HTTP requests exercise different paths.
 
 | Build | Recorded result |
 | --- | --- |
-| `a343b28` | A second Mac reached shared wired and cellular ports over both LAN and VPN addresses. Each used the expected exit. An unlisted client received SOCKS5 `0xFF` and appeared as refused. A chained port reported `upstream_refused` until its Mac was allowed. One 25 MB transfer through the chain ran at about 490 Mbit/s. |
-| `b5c3e1c`, `081e567` | A shared scene port routed one name to cellular, sent an unmatched name through the wired default and blocked another. SOCKS5, HTTP CONNECT and ordinary HTTP requests were exercised. A non-default scene with address rules also blocked the configured address. |
-| `dbb1037` | Direct HTTP requests read interface status, nested upstream status and a scene exit with no single address. `max-age=0` refreshed the lookup. A POST without permission and browser-origin requests were refused. Ordinary proxy forwarding still worked. |
-| `246c017` | Interface, scene and chained exits refused the Mac's own LAN address while ordinary external forwarding worked. The scene exit also refused a local name that resolved to that address. |
+| `a343b28` | A second Mac reached shared wired and cellular ports over both LAN and VPN addresses. Each used the expected exit. An unlisted client received SOCKS5 `0xFF` and appeared as refused. A chained port reported `upstream_refused` until its Mac was allowed. One 25 MB download through the chain ran at about 490 Mbit/s. A control download over an SSH port forward between the same Macs reached about the same rate. |
+| `b5c3e1c`, `081e567` | A shared scene port routed one name to cellular, sent an unmatched name through the wired default and blocked another. SOCKS5, HTTP CONNECT and ordinary HTTP requests were exercised. With address rules in a non-default scene, the routed, default and blocked cases still took their expected paths. A shared port and a chain of two ports refused loopback literals, `localhost`, the short and integer loopback spellings `127.1` and `2130706433`, and a name that resolved to loopback. |
+| `dbb1037` | A `curl` GET to the Wi-Fi port returned its interface and both public addresses in 0.4 seconds, then in 10 ms from cache. `max-age=0` refreshed them. A chained port nested that answer under `upstream`, and a scene port reported just its exit. A POST without permission, GETs with `Origin` or `Sec-Fetch-Site: same-origin`, and a request through a port to itself received `403`. SOCKS5 and HTTP forwarding continued. |
+| `246c017` | Wi-Fi, scene and chained ports refused the Mac's own LAN address as a SOCKS5, HTTP CONNECT or plain HTTP target. The scene port refused the Mac's `.local` name after macOS resolved it to that address. The checks also refused `0.0.0.0` and `0.1.2.3`. A request for `example.com` worked through all three ports with SOCKS5 and HTTP. |
 
 The port tests use injected exits and loopback listeners to exercise live
 permission changes, request capacity, status during renewals, busy or slow
@@ -69,7 +69,9 @@ HTTP framing against simulated gateways. [Port tests](../internal/proxy/port_tes
 
 At `f01f34a`, during a CHR30A-R renewal the M2000 became primary in about
 0.2 seconds and the wired interface became primary again within 0.1 seconds
-of release of the yield. The router obtained the same IPv4 address after a
+of the end of the yield. The WAN went down about one second after Release and
+came back about 1.5 seconds after Renew. The observed outage was the chosen
+pause plus roughly three seconds. The router obtained the same IPv4 address after a
 five-second pause and a different one after a 20-second pause. The entire
 renewal took 34 seconds in that run. The app allows a third 60-second pause.
 These timings are a historical observation. The provider chooses the address.

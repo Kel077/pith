@@ -1,8 +1,11 @@
 # Backend architecture
 
-Pith has one pure-Go module. The menu bar app and the routing helper run as
-separate processes. The helper starts idle. An authenticated start request
-enables capture. The app can also reconnect to a helper that kept routing.
+Pith has one pure-Go module and no cgo. `cmd/pith` is the unprivileged MyGo
+app; `internal/client` implements `api.Service`. `cmd/pithd` is a root launchd
+helper. It always starts idle, even after a crash or reboot. Only an authenticated
+request starts routing. The app's rules/configuration are atomically saved with
+mode 0600; interface labels remain the System Settings names, with aliases
+applied by the UI.
 
 | Component | Responsibility |
 | --- | --- |
@@ -19,233 +22,408 @@ enables capture. The app can also reconnect to a helper that kept routing.
 | --- | --- |
 | `Service.Probe` with a target | Opens one TCP connection to the supplied `host:port` and reports the peer address and time to connect. **Reach a server** runs this through each connected interface. |
 | `Service.Probe` with an empty target | Queries `api.ipify.org` over IPv4 and `api6.ipify.org` over IPv6 in parallel. Either public address makes the probe successful. Renewals, interface-exit lookups and the MCP `test_interface` tool use this path. |
-| `Service.SpeedTest` | Measures latency and transfer rates against `speed.cloudflare.com`. The result includes the public IP and data center when Cloudflare supplies them. **Test All** queues one interface at a time. |
+| `Service.SpeedTest` | Measures latency and transfer rates against `speed.cloudflare.com`. Cloudflare sends the test to an edge near that network and reports the public IP it saw and the data center that answered. **Test All** queues one interface at a time. |
 
 These tests run in the app. The dialer binds DNS and TCP sockets to the
 specified interface. A probe retries an unanswered UDP DNS query after 400 ms
-and gives each socket up to one second. If the interface's resolvers fail
-within a two-second lookup budget, it can try eligible fallback resolvers from
-the Mac's configuration on the same interface. A definitive name-not-found
-answer is respected. The helper's [Safe start](#lifecycle-and-recovery) checks
-capture with a separate TLS handshake.
+and gives each socket up to one second. If the interface's resolvers fail within
+a two-second lookup budget, it can try eligible fallback resolvers from the
+Mac's configuration on the same interface. Link-local IPv6 servers take the
+interface as their zone. Retransmissions use the same socket, so a late reply
+still counts. The retry interval doubles but the one-second socket budget
+normally permits just one resend. Go's resolver would otherwise wait five
+seconds for a reply. The M2000 can drop the first query after a quiet period and
+answer the next one at once. A definitive name-not-found answer is respected.
+The helper's [Safe start](#lifecycle-and-recovery) checks capture with a
+separate TLS handshake.
 
-The speed test prefers IPv4 and uses IPv6 for an IPv6-only interface. It sends
-five `GET /__down?bytes=0` requests. The first has eight seconds to establish
-the connection. The remaining rounds have two seconds each. Latency is the
-shortest successful interval from writing the request to the first response
-byte, less the reported `Server-Timing` durations. The first response supplies
-the data center (`Colo` or the suffix of `CF-Ray`) and address (`CF-Meta-IP`).
+The speed test prefers IPv4 and uses IPv6 for an IPv6-only interface. It reuses
+the connection opened for the first latency request when possible. It sends five
+`GET /__down?bytes=0` requests. The first has eight seconds to establish the
+connection. The remaining rounds have two seconds each. Latency is the shortest
+successful interval from writing the request to the first response byte, less
+the reported `Server-Timing` durations. The first response supplies the data
+center (`colo` or the suffix of `CF-RAY`) and address (`cf-meta-ip`).
 
 A `GET /__down?bytes=25000000` times the download body. A `POST /__up` sends
-8,000,000 bytes and times the upload through the response headers. A completed
-upload longer than twice the measured latency deducts one round trip. Each
-transfer has eight seconds. A deadline-limited transfer can supply a rate after
-at least 1 MiB. A failed part has a zero rate and a reason in `Problem`. The
-Cloudflare result stays separate from the dual-stack address record used by
-proxy ports. [Speed test implementation](../internal/client/speedtest.go) · [Tests](../internal/client/speedtest_test.go)
+8,000,000 bytes of zeros and times the upload through the response headers. A
+completed upload longer than twice the measured latency deducts one round trip.
+Each transfer has eight seconds. A deadline-limited transfer can supply a rate
+after at least 1 MiB. A failed part has a zero rate and a reason in `Problem`.
+Trials of the endpoint found that a 100 MB download was refused and a 10 MB
+upload went unanswered. The Cloudflare result stays separate from the dual-stack
+address record used by proxy ports.
+[Speed test implementation](../internal/client/speedtest.go) ·
+[Tests](../internal/client/speedtest_test.go)
 
 ## Renewing a hotspot's address
 
-The app recognizes the Inseego 5G MiFi M2000 from the system interface label
-(case-insensitive `m2000`). The Network page checks connected cellular
-interfaces. Public status supplies the signal bars and network type. An
-authenticated diagnostics request adds the carrier, band, signal and SNR.
-The password is a keychain item under `io.github.kel077.pith.hotspot` keyed
-by the adapter's hardware address.
+The unprivileged client recognizes the Inseego 5G MiFi M2000 by its system
+interface label (case-insensitive `m2000`). The Network page checks connected
+cellular interfaces and shows signal bars and the network type before login.
+The authenticated diagnostics page adds carrier, band, signal strength and SNR.
 
-Both gateway drivers reuse an interface-bound HTTP client. The client verifies
-the interface name, hardware address, gateway and index before a request,
-including requests on pooled connections, and limits redirects to the same
-origin. The hotspot uses its local HTTP admin page. The router uses HTTPS.
-When saving a keychain item, the client passes the secret on standard input
-to `security -i`. Its arguments and diagnostics contain no password.
+Device requests use the selected interface, refresh the binding for every new
+socket, recheck the name/MAC/router before requests (including pooled sockets),
+and reject redirects outside the original origin. The client also rechecks the
+bound interface's kernel index. Cached sessions have at most two idle
+connections and a 30-second idle timeout. The hotspot uses its local HTTP admin
+page, the router HTTPS. Credentials require a hardware identity and live under
+the app's keychain service, `io.github.kel077.pith.hotspot` keyed by the
+adapter's hardware address for an M2000. Writing an item uses one quoted command
+on `security -i` stdin; no password appears in the process arguments,
+diagnostics, or application files. The command-input format is bounded and
+rejects embedded line breaks/NULs.
 
-`RenewHotspot` probes the old public addresses while the device reads its
-network settings. It switches cellular data off and on and polls device status
-every half second. It allows up to ten seconds to see the old connection drop
-and a 90-second reconnect window. When the M2000 reports connection age, a
-session older than the data-off event (allowing one second for rounding) is
-ignored. Without an age it accepts the device's connected state. If a disable
-might have taken effect and re-enabling fails or is canceled, cleanup has an
-independent 15-second budget for up to two restore requests.
-
-Both renewal paths then probe public addresses again, with a second between
-attempts. They aim to find at least one address and as many address families
-as the pre-change probe found. New attempts have a 25-second window, shortened
-to at most three more seconds once an address is available. A probe already
-underway has its own deadline. The best observed result can be partial or
-empty. A provider can also return the same address. [Device tests](../internal/hotspot/hotspot_test.go) · [Client retest](../internal/client/hotspot.go)
+Hotspot renewal restores cellular data with an independent 15-second bound if
+cancellation or a lost response follows an attempted disable. At most two
+restore requests are made; failures remain errors and are not reported as
+successful renewals. This is a device operation, independent of helper capture:
+changes to its public addresses, LAN addresses or DNS do not by themselves stop
+routing. The public-address test before a renewal runs while the device's
+network settings are read; data goes off only once both finish. The device is
+polled every half second, with up to ten seconds to see the old connection drop
+and a 90-second window for reconnection. Once data is on again, the renewal
+waits for the device to show a connection made since data went off, not just
+any: a test through the old one would find the old addresses. Its status tells
+how long the connection has lasted, in whole seconds; a device that doesn't tell
+is taken at its word. The client then probes with a second between attempts. It
+looks for at least one address and as many families as it found before. It
+starts new probes within a 25-second window, shortened to at most three more
+seconds after one family answers. An in-flight probe has its own deadline. The
+best result may be partial or empty. A reconnected M2000 refuses DNS queries for
+about ten seconds while its DNS server restarts; the probes can then ask the
+Mac's public DNS servers through the hotspot.
+[Device tests](../internal/hotspot/hotspot_test.go) ·
+[Client retest](../internal/client/hotspot.go)
 
 ## Renewing a router's address
 
-`internal/router` recognizes the Verizon Router CHR30A-R by the model its web
-admin returns before login. The client checks eligible connected Ethernet and
-Wi-Fi interfaces with a hardware address and a private IPv4 gateway (loopback
-is also accepted). It pins the observed TLS public key. The keychain service
-`io.github.kel077.pith.router` uses `sha256:` plus the hex hash of that key as
-the account. A changed key requires identification and its own credential.
-The driver uses the router's Basic login, session cookie and XSRF token. It
-reads the broadband WAN lease through the web admin's network-connections API.
+A router's admin also stays in the client, over the same interface-bound HTTP
+client as a hotspot's. The client identifies the router behind an Ethernet or
+Wi-Fi interface by the model its web admin names without a login; only Verizon's
+CHR30A-R is tested, and other models are left alone. The link must be up, with a
+hardware address and a private IPv4 gateway (loopback is also accepted). The web
+admin presents a self-signed certificate. The client pins the SHA-256 of the
+public key it first saw, and keeps the admin password under that key, as
+`sha256:` and its hex, in the keychain service `io.github.kel077.pith.router`. A
+device with another key at the router's address is locked, and never sent the
+password. Like the router's own page, the client logs in with HTTP Basic, then
+sends the session cookie and an XSRF token on authenticated requests. It reads
+the broadband connection from `/CRSP/getNetworkConnections` and sets the TR-181
+parameters of the lease's Release and Renew buttons,
+`Device.DHCPv4.Client.[Alias == 'wan'].X_PRPL-COM_Release` and
+`Device.DHCPv4.Client.[Alias == 'wan'].Renew`. A password refused during a
+device session is not retried in that session, and a router that refuses logins
+for a while gets none.
 
-1. `RenewRouter` reads the WAN state and probes the current interface and
-   eligible standby interfaces in parallel. A standby must be up, support
-   physical proxy egress, have a router and pass the internet probe.
-2. The helper's `POST /v1/yield` asks `internal/primary` to add
-   `PrimaryRank=Never` to the service's `State:/Network/Service/<id>` using a
-   temporary `scutil` key. It checks for another service with a router and
-   refuses to overwrite an existing state entity. Once macOS selects another
-   IPv4 primary, the helper names it on the open response. The app proceeds
-   only if that primary passed preflight. configd drops the key with the
-   session, on disconnect, helper exit or the ten-minute yield limit.
-   Scoped routes and the interface's local addresses still reach the router.
-3. The app suspends direct proxies on the renewing interface and attempts to
-   reload the running scene. Rules with other exits lose that interface for
-   the duration. A rule with only that exit uses the standby if fallback is
-   allowed. A strict rule keeps its sole reference. Scene-based proxy ports
-   skip suspended interfaces on new dials. System network preferences are
-   never written.
-4. The driver releases the WAN IPv4 lease and requests renewal after a pause.
-   It tries pauses of 5, 20 and 60 seconds while Verizon returns the original
-   WAN address. Each release interrupts internet access behind the router.
-   IPv6 leases are outside this operation. After a release, cleanup can ask
-   for a lease twice within an independent 20-second budget. A normal renewal
-   waits for reconnection for up to 90 seconds per attempt. The client can
-   wait another two minutes after an error.
-5. The client probes the interface again, resumes its direct proxies, tries
-   to restore the saved scene and ends the yield. The configuration directory
-   holds `.draining` for restoring rules and `.router-released` for a potentially
-   missing WAN lease. On a later configuration load, recovery checks the
-   recorded adapter and asks a recognized router without a lease to renew.
-   Client shutdown allows up to 25 seconds for outstanding renewals.
+`RenewRouter` reads the router's WAN state and tests its public addresses
+and the possible standby interfaces in parallel. Standbys must be up, have
+a router, support physical proxy egress and pass an internet probe. When the
+WAN is connected and a standby works, the helper's `POST /v1/yield` calls
+`internal/primary.Yield`. This makes the router's interface ineligible to be
+macOS's primary for as long as the request stays open, up to ten minutes.
 
-The rank is read by configd's IPMonitor. Temporary dynamic-store keys belong
-to the session that created them. [IPMonitor election](https://github.com/apple-oss-distributions/configd/blob/main/Plugins/IPMonitor/ip_plugin.c) · [Session cleanup](https://github.com/apple-oss-distributions/configd/blob/main/configd.tproj/_configclose.c)
+configd's IPMonitor ranks services by the `PrimaryRank` of their `Setup:` and
+`State:` entities. The helper adds `State:/Network/Service/<id>` with
+`PrimaryRank=Never` as a temporary key of a `scutil` session.
+[Primary election in `get_rank_changes`](https://github.com/apple-oss-distributions/configd/blob/main/Plugins/IPMonitor/ip_plugin.c)
 
-See the [client renewal](../internal/client/router.go), [primary election implementation](../internal/primary/primary.go) and [hardware results](ROOT-TEST.md#router-renewal-and-primary-yield).
+Closing the HTTP response cancels the yield. The helper closes the pipe to
+`scutil`'s standard input, and EOF makes `scutil` exit. Killing the helper also
+closes its end of that pipe. If `scutil` itself exits, its session ends directly.
+configd removes the session's temporary keys when it closes, so in every case
+the previous rank returns. Nothing is written to system preferences. The
+interface keeps its addresses and scoped routes, so the app can still reach
+the router and sockets bound to the interface stay on it. [Session cleanup in `_configclose.c`](https://github.com/apple-oss-distributions/configd/blob/main/configd.tproj/_configclose.c)
+
+The yield changes nothing when no other service has a
+router or the entity exists already. An NDJSON reply names the IPv4 primary
+macOS actually chose. The client proceeds to release the lease only if that
+interface passed the internet probe.
+
+Meanwhile the interface counts as down. Its local proxies answer every CONNECT
+that the network is unreachable and close their streams, rather than wait for
+timeouts or use another interface. Scene-based ports skip the suspended
+interface for new dials. The client also attempts to reload the running helper
+scene with that interface skipped. A rule tries its remaining interfaces. With
+none left, it uses the new primary when fallback is allowed. A strict rule
+retains its sole interface. The `.draining` file in the configuration directory
+lets the client restore the saved scene on a later load if Pith quit in the
+meantime.
+
+The router gives its address up, and is asked for one again after a pause of 5,
+20, then 60 seconds, until the address differs or three tries are done: asked
+again at once, a provider may give the same address back. Once asked to give it
+up, the driver attempts to get a lease back even if the request was canceled. It
+can send up to two restore requests within an independent 20-second bound. A
+normal try waits up to 90 seconds for reconnection and the client can wait two
+more minutes after an error. On quit, the client allows up to 25 seconds for
+outstanding renewals. Should Pith end before it asks, the client looks for
+`.router-released` on the next configuration load. It checks the recorded
+adapter before asking a recognized router without a lease to renew: the router
+stays without an address until it is asked, and so does everything behind it.
+After a completed cycle the client probes the interface again as it does for a
+hotspot, resumes the proxies, attempts to restore the saved scene and ends the
+yield. Connections through the old address end with it; apps that follow the
+network have moved to the new primary by then. Only the IPv4 lease is renewed.
+Pith leaves the router's delegated IPv6 prefix alone.
+
+[Client and cleanup](../internal/client/router.go) ·
+[Primary election](../internal/primary/primary.go) ·
+[Hardware results and timings](ROOT-TEST.md#router-renewal-and-primary-yield)
 
 ## Local proxy listeners
 
-`internal/proxy.Manager` runs in the app. `Config.Proxies` accepts up to 32
-unique ports in 1024–65535, including disabled entries. Exactly one of
-`Via`, `Scene` and `Upstream` chooses each port's exit. The first successful
-`LoadConfig` activates enabled listeners. After a save commits to disk, listener
-changes take effect even if that caller cancels. Replacing an exit, port or
-sharing mode closes that listener's streams. Toggling IP-change permission or
-editing a display label preserves streams, start time and counters. Saving again
-retries a failed bind (`port_in_use`). App exit closes all listeners, regardless
-of the helper's `KeepRouting` setting.
+`internal/proxy` runs inside the unprivileged App process. Each configured port
+binds TCP on `127.0.0.1`, or on every IPv4 address when it is shared, and goes
+out through one physical interface, through an upstream proxy or by a scene's
+rules; it needs neither an installed/trusted helper nor active TUN capture.
+Exactly one of `Via`, `Scene` and `Upstream` selects the exit. `Config.Proxies`
+is independent of the scene that routes, if any. Empty configuration opens no
+ports. The service implements the no-auth CONNECT subset of
+[RFC 1928](https://www.rfc-editor.org/rfc/rfc1928.html), with IPv4, IPv6 and
+ASCII/punycode domain requests; BIND and UDP ASSOCIATE return `0x07`. For a
+direct connection a successful reply contains the outbound socket's local
+address and port. A chained port uses the bound address the upstream reported.
+The parser bounds every field, validates versions/reserved bytes and closes
+malformed requests. There is no authentication credential store: a shared port
+tells devices by their addresses, as described
+[below](#sharing-a-port-with-other-devices).
 
-The app publishes proxy and device counters alongside authenticated helper
-status. `listening` reports a successful local bind. Open streams and relayed
-bytes belong to the listener. The helper's Activity log and traffic history
-describe connections observed by capture. A system-routed leg from the app can
-itself go through capture.
+At most 32 unique configured ports, each in 1024--65535, are accepted, including
+disabled entries. `Interface.CanProxy` is shared by the interface and backend:
+Ethernet, Wi-Fi, cellular and Thunderbolt remain selectable while down, but loopback,
+VPN/TUN, bridge and peer interfaces are excluded. `SaveConfig` rejects a currently
+resolved unsupported exit; a missing or down physical adapter remains valid saved
+intent and reports `interface_unavailable`. A usable DNS configuration is required
+for domain requests; literal addresses can still work without it.
+
+The initial handshake has five seconds; CONNECT setup has ten seconds total from
+accept. There are at most 1024 sessions per port and 2048 overall, including
+handshakes: a browser opens a stream for every host a page loads from and keeps
+idle ones for reuse, and a Chromium-based browser held about 120 through one
+port for a single news page. When a port is full, an established stream on that port gives up its slot.
+When only the total limit is reached, the manager chooses across all ports.
+It closes the quietest stream with no write in progress using an ordinary
+TCP close, without forcing a reset. Streams in their handshake or with a write in
+progress stay open; when no other stream is left, the new connection is refused.
+Relay preserves TCP half-close and records only successfully written stream
+bytes, excluding SOCKS negotiation and DNS. `Status.Proxies` includes disabled
+entries in configuration order; its `Since` and counters belong to one listener
+instance and reset on replacement. Listening means the local bind succeeded, not
+that the internet is reachable. Target-specific errors do not become listener
+errors. A device that isn't listed takes none of these sessions.
+
+`client.New` is idle. The first successful `LoadConfig` activates enabled local
+listeners; a canceled first activation retracts partial listeners. Valid saved
+changes take effect after atomic rename, even if the caller then cancels. Removing,
+disabling or changing a port's exit closes its pending/established streams before
+the replacement can forward; unrelated listeners and label-only edits stay open.
+A failed bind remains visible as `port_in_use` and is retryable by saving again.
+Proxy-only configuration changes do not reload TUN rules. A previously failed
+routing apply remains pending, so disk equality cannot turn its retry into a
+false success. Explicit identical saves still retry pending backend work.
+
+Subscriptions combine authenticated helper events with local proxy and device snapshots;
+missing or unverified helper status keeps its existing failure meaning. Local
+counter updates continue without a helper stream. `client.Close` cancels setup,
+closes all local listeners/streams and joins subscriptions without stopping TUN.
+App exit closes every proxy socket regardless of KeepRouting; no proxy daemon is
+installed. Protocol, DNS, lifecycle, cancellation and interface-reuse tests use
+loopback or injected state. For the wired and cellular tests with capture on and off, see the
+[hardware record](ROOT-TEST.md#recorded-local-socks5-result).
 
 ### Interface exits
 
-`internal/proxy/egress` resolves a saved `InterfaceRef`, pins the current
-name, hardware address and index, and binds sockets with `IP_BOUND_IF` or
-`IPV6_BOUND_IF`. Supported physical types are Ethernet, Wi-Fi, cellular and
-Thunderbolt, subject to `Interface.CanProxy`. A missing or down adapter stays
-configured. New streams can resume when it returns. An established stream
-keeps its binding. Identity checks around dialing and stream I/O prevent
-index reuse from redirecting it. Interface metadata is cached for at most
-one second.
+`internal/proxy/egress` resolves references with `InterfaceRef.Resolve`, pins the
+current name/MAC/index and uses `IP_BOUND_IF` or `IPV6_BOUND_IF`. It validates that
+identity before and after dialing and each stream I/O. An index reused by another
+interface cannot carry the old connection. New requests can resolve a renamed USB
+adapter by its unique MAC; established streams do not migrate. Address/prefix or
+DNS changes do not shut down unrelated listeners. Interface metadata is cached
+for at most one second, while kernel identity is checked directly. Canceling one
+metadata reader does not poison the cache for healthy callers.
 
-DNS sends A and AAAA queries on the pinned interface. The resolver tries its
-own servers, then eligible servers from `/etc/resolv.conf`. It excludes
-private, carrier-shared and link-local addresses from the fallback list, as
-well as IPv6 servers on a local interface's /64. A definitive negative answer
-ends that query. Truncation on UDP retries over TCP on the same server. Limits
-are three servers of each kind, four seconds for resolution, 750 ms per attempt
-and one retransmission after 400 ms. Replies have limits of 16 KiB, 128 records,
-eight CNAME steps and eight candidate addresses. Literal destinations do not
-need DNS. [Resolver](../internal/proxy/egress/dns.go) · [DNS tests](../internal/proxy/egress/dns_test.go)
+DNS uses explicit A/AAAA packets sent through the selected interface: to its
+configured servers, then, when none answers, to the Mac's own, from
+`/etc/resolv.conf`. The fallback list leaves out private, carrier-shared and
+link-local addresses, and IPv6 servers in any interface's local /64. A reconnected
+hotspot may restart its DNS server: the M2000's refuses queries for about ten
+seconds. A name the interface's servers say doesn't exist isn't asked again.
+There is no system resolver, hosts-file/search-list lookup, environment proxy or
+other-interface fallback. Truncated UDP answers retry TCP on the same server and
+binding. IDs, question, opcode and response code are checked; replies are limited
+to 16 KiB and 128 records, CNAME chains to eight steps and candidates to eight
+addresses. Resolution has a four-second bound, at most three servers of each
+kind and 750 ms per server attempt, whose query goes once more after 400 ms. DNS
+and target sockets use the same pinned binding.
 
-### Ports by a scene's rules
+Physical bound sockets use macOS's scoped routing and the full-capture split that
+preserves zero-address lookup, described below. Excluding tunnel interfaces also
+prevents selecting Pith's own utun as a proxy exit. A VPN policy can still refuse
+physical egress; that fails the request rather than selecting another interface.
+The bound forwarding path has its own counters, outside the helper's
+connection history and traffic totals. An unbound system leg from a scene
+port can itself enter capture. A client that resolves names itself or bypasses its
+proxy is outside the service's DNS/routing guarantee.
 
-The client compiles each scene named by a port with `internal/rules`.
-New proxy connections match that scene as TCP, independently of the scene
-routing the Mac. Rules restricted to an app cannot match. A block refuses the
-connection. A route tries available interfaces in order for up to three seconds
-each. Unmatched connections and permitted fallbacks use an unbound system
-dial. Editing rules affects the next connection. Deleting a scene redirects
-its configured ports to the selected scene.
-
-With domain-only rules, the selected exit resolves the name supplied by the
-client. If an enabled rule without an app filter names an IP address or CIDR,
-the client looks up the name once with the system resolver (up to two seconds),
-unless already blocked by name. It matches the first eight addresses together
-with the name. Rule-selected candidates are tried first, then unmatched ones.
-Blocked addresses are excluded. Only those literal candidates are dialed,
-staggered by up to 250 ms while earlier attempts are pending. [Route selection](../internal/client/route.go) · [Tests](../internal/client/route_test.go)
+[Resolver](../internal/proxy/egress/dns.go) ·
+[DNS tests](../internal/proxy/egress/dns_test.go)
 
 ### Sharing a port with other devices
 
-Listeners bind IPv4 loopback by default. A shared listener binds all IPv4
-addresses. A loopback peer or one whose source address equals the address it
-connected to is local. Other peers need a matching `Config.Devices` entry.
-The list is global across shared ports and accepts up to 64 IPv4 addresses or
-CIDRs with prefix length 8–32. Pith authenticates no device passwords.
-An unlisted peer can receive SOCKS5 method `0xFF` or HTTP `403`. Up to eight
-such replies run at once with a two-second deadline each.
+A port with `Proxy.Shared` listens on `0.0.0.0` rather than `127.0.0.1`, still
+IPv4 only; changing it replaces the listener, which closes its streams. Every
+accepted connection is then told apart by its source address. One from a
+loopback address, or from the very address it reached, as an app of this Mac
+makes to the Mac's own address, is this Mac's. Any other is a device, taken only
+when a `Config.Devices` entry, an IPv4 address or a range of at least 8 bits,
+covers its address. Up to 64 configured IPv4 addresses or ranges (/8 to /32)
+can be shared across all ports. A device that isn't covered holds no session slot and can't
+close anyone's stream: at most eight at a time, for two seconds each, are read
+far enough to be answered, SOCKS5's method `0xFF` or HTTP's `403`, so that the
+other end can tell a refusal from a proxy that is gone; more are reset at once.
 
-Device status tracks up to 64 recently seen addresses, their last connection,
-open streams and relayed bytes. At capacity it drops an inactive refused
-entry first, then the least recently seen inactive allowed entry. Removing
-coverage for a device closes its sessions. Turning off the last enabled shared
-port clears observed devices. Configured entries persist.
+The manager remembers at most 64 devices that connected since the app opened,
+with when each last did, its established streams and the bytes relayed for it;
+`Status.Devices` lists them, the latest first, refused ones included, for the
+interface to offer to allow. A full table forgets the device that connected
+longest ago and has no connection, a refused one first. When a saved
+configuration no longer covers a device, the manager resets its streams and
+forgets the device. Adding coverage closes nothing. With no shared port enabled,
+no device is remembered.
 
-Each port rejects local literal destinations, including loopback and addresses
-on any of the Mac's interfaces, and names reserved for loopback. Direct and
-scene exits also check resolved addresses against `net.InterfaceAddrs` before
-dialing and check the connected peer before relaying. Unspecified, multicast
-and IPv4 zero-network destinations are refused. Address literals supplied as
-names take the same checks. Other LAN hosts remain reachable. For a name sent
-to an upstream, the upstream owns resolution and destination checks.
-[Destination checks](../internal/proxy/destination.go) · [Sharing tests](../internal/proxy/share_test.go)
+An address is all that tells a device: there is no password, and a device that
+is taken reaches what the Mac reaches through the port's exit, the networks it
+is connected to included. Not the Mac itself: every port refuses loopback,
+unspecified and multicast destinations, those in 0.0.0.0/8, any address on
+one of this Mac's interfaces, tunnels included, and the names reserved for
+loopback, before it asks its interface, its upstream or its rules. A port
+through an interface or by a scene's rules checks each address it dials,
+after a name has resolved, against the kernel's list of this Mac's addresses
+read anew (`net.InterfaceAddrs`, about 80 µs), and once connected checks the
+address it reached again before it relays anything, for an address the Mac
+took meanwhile; a list it can't read refuses the connection. Other hosts of
+the local network stay reachable, and this Mac reached back through its
+public address, by a router that forwards to it, isn't recognized. An
+address a client spells where a name goes is read as the address, and a name
+whose last label is a number, which only a lenient resolver reads as an
+address, is refused. A port
+through an upstream can't see what a name resolves to there, so a shared
+port's upstream is on another machine: a loopback one is refused when saved,
+and one that turns out to be on this Mac when it is reached, a loopback
+address or the very address the connection left from, is refused before it is
+told anything, with `upstream_refused`. The listener is IPv4: devices reach it
+at the Mac's IPv4 addresses on its local networks, or at the one a VPN to the
+user's own devices gives it.
+
+[Destination checks](../internal/proxy/destination.go) ·
+[Sharing tests](../internal/proxy/share_test.go)
 
 ### Upstream proxies
 
-The app opens an ordinary macOS-routed TCP connection to the configured
-`host:port`, negotiates SOCKS5 without authentication, then forwards the
-original target. The upstream resolves names and its SOCKS reply supplies the
-bound address when available. A shared port refuses a local upstream at save
-time for loopback hosts or at connect time if the peer is loopback or matches
-the socket's own source address. A private port can use another local proxy.
+A port with `Proxy.Upstream`, a host and a port, has no interface. For each
+connection the manager opens a TCP connection to the upstream as macOS routes
+and resolves it, offers no authentication, and asks for the very target it was
+asked for: a name stays a name, resolved where the connection leaves, and what
+it reaches there is the upstream's to answer for. A reply
+other than success is repeated to the client, and the address the upstream
+bound becomes the reply's, or the connection's own when the upstream tells
+none, as OpenSSH's dynamic forwarding does. This is how a port another Mac's
+Pith shares becomes a port of this Mac.
 
-Dial and greeting have a three-second budget. `upstream_unreachable` and
-`upstream_refused` describe this Mac's connection to the upstream. Failure to
-reach an individual destination does not mark that proxy offline. While status
-is being read, the manager polls an enabled upstream at most once every ten
-seconds. A Pith upstream can answer with the network and addresses of its own
-exit. [SOCKS negotiation](../internal/proxy/upstream.go) · [Upstream tests](../internal/proxy/upstream_test.go)
+An upstream has three seconds, of the ten a CONNECT has, to take the connection
+and agree: if not, the client is told the network is unreachable, and
+`ProxyStatus.Error` is `upstream_unreachable`. An upstream that answers `0xFF`,
+as a shared port that doesn't list this Mac does, gives `upstream_refused`, and
+the client is told the connection is not allowed. Once the upstream agreed, a
+deadline is the target's, and says nothing against the upstream. A target the
+upstream couldn't reach clears the error, as a connection does. Every ten
+seconds at most, when status is read, a port asks its upstream whether it
+answers, as described under [requests to a port](#requests-to-a-port), without
+asking for a connection. Suspending an interface during a router's renewal
+leaves these ports alone. A private port can use another local proxy. A
+configuration pointing a port at itself on loopback is refused when saved. A
+longer forwarding loop can run into handshake capacity or the setup deadline.
+
+[SOCKS negotiation](../internal/proxy/upstream.go) ·
+[Upstream tests](../internal/proxy/upstream_test.go)
+
+### Ports by a scene's rules
+
+A port with `Proxy.Scene` asks the client's `Route` for each connection. The
+client compiles the rules of the scenes that ports name, with `internal/rules`
+as `Check` and the engine do, when the configuration is loaded and saved; an
+open stream keeps the exit it has. A destination is matched as TCP; a rule that
+names apps never matches, since nothing tells the app behind a proxy's
+connection, least of all on another device. A block rule's connection is refused
+as not allowed. A route rule's interfaces are tried in order through the same
+interface-bound dialer as a port through one interface, with three seconds each;
+an interface that is suspended is skipped. When none connects, a rule that falls
+back, like a connection no rule matches, is dialed unbound, with macOS's routes
+and resolver, but never to an address of this Mac, which a name may resolve to:
+such a port reaches no more of this Mac than a port through an interface does.
+While a scene routes, an unbound connection of the app can enter capture and
+follow the running scene's rules as any app's. In a scene whose rules name
+domains alone, a name stays a name: the rules see it as the client asked for it,
+and each interface's own DNS, or macOS, resolves it. When an enabled rule
+without apps names an address, a name is looked up once with macOS's resolver,
+for two seconds at most, unless a block rule names it. The rules then see the
+name with each of its first eight addresses, as the engine sees a connection an
+app makes, and the connection goes to those addresses alone, as literals: first
+to the ones a rule sends somewhere, then to the ones no rule names, never to one
+a rule blocks. Each address has a quarter of a second's head start on the next,
+as [RFC 8305, section 5](https://www.rfc-editor.org/rfc/rfc8305.html#section-5)
+has a client try the addresses of a name, and the first to connect is the
+connection: an address that never answers doesn't take the others' time. A name
+is not looked up a second time, so no socket connects to an address the rules
+haven't seen, and a name that can't be looked up fails. Such a port has no
+single interface to report. Its counters, like those of other ports, belong to
+the proxy manager. Deleting its scene redirects the configured port to the
+selected scene.
+
+[Route selection](../internal/client/route.go) ·
+[Rule tests](../internal/client/route_test.go) ·
+[Shared and chained ports on hardware](ROOT-TEST.md#shared-ports-scene-exits-and-port-responses)
 
 ### HTTP on the same port
 
-The first byte selects SOCKS5 or HTTP. SOCKS5 supports unauthenticated
-CONNECT to an IPv4 address, IPv6 address or domain. BIND and UDP ASSOCIATE
-return `0x07`. HTTP CONNECT takes `host:port` and opens a byte tunnel.
-An absolute `http://` request is forwarded in origin form with
-`Connection: close`, one request per connection. The proxy strips standard
-hop-by-hop fields, fields named by Connection and request trailers. It preserves
-an absent User-Agent and can relay the response while the request body is still
-arriving. HTTP headers have a 32 KiB limit. Malformed targets get `400`. A
-denied target gets `403`, host-unreachable gets `504`, and other dial failures
-get `502`. [HTTP implementation](../internal/proxy/http.go) · [Tests](../internal/proxy/http_test.go)
+The first byte of a connection tells its protocol: SOCKS5's version, or a
+capital letter, the start of an HTTP method. Such a connection is served as an
+HTTP proxy serves it, with `net/http`'s request parser over at most 32 KiB of
+request line and header fields, within the handshake's five seconds.
+`CONNECT host:port`
+([RFC 9110, section 9.3.6](https://www.rfc-editor.org/rfc/rfc9110.html#section-9.3.6))
+opens a tunnel, answered `200`, and what the client sent after its request
+without waiting is the tunnel's first bytes. A request for an `http://` URL
+([RFC 9112, section 3.2.2](https://www.rfc-editor.org/rfc/rfc9112.html#section-3.2.2))
+goes to its server in origin form, without the proxy authentication and
+connection fields the handler strips, including the headers named by the
+client's `Connection` field
+([RFC 9110, section 7.6.1](https://www.rfc-editor.org/rfc/rfc9110.html#section-7.6.1)),
+with `Connection: close`: one request a connection, whose answer is relayed
+while the request's body is still being sent. Its header fields are written
+anew, in `net/http`'s order and spelling. Go writes the framing the body
+requires, and Pith preserves an absent `User-Agent`. Request trailers are not
+sent on. A tunnel's bytes are relayed as they are. A request whose target is a
+path asks the port itself, as described below. Other invalid targets are
+answered `400`: an `https://` URL outside CONNECT, a CONNECT that names no port,
+a port of zero. A connection that can't be opened is answered `403` where SOCKS5
+says not allowed, `504` where it says host unreachable, else `502`. Names,
+targets, limits, counters and what a port goes out through are those of SOCKS5;
+there is no password here either.
 
-A handshake has five seconds. The ten-second connect budget starts at accept.
-The manager allows 1,024 stream sessions per port and 2,048 overall, including
-handshakes. When full, it can replace the least recently active established
-stream without a write in progress. If none qualifies, the new connection is
-refused. Tunnel relays preserve TCP half-close. Proxy byte counters exclude
-negotiation, DNS and requests to the port itself.
+[HTTP implementation](../internal/proxy/http.go) · [Tests](../internal/proxy/http_test.go)
 
 ### Requests to a port
 
-An origin-form HTTP request goes to the port itself. Both endpoints return
-JSON on success and `{"error":{"code":"…","detail":"…"}}` on a handler error.
-Times are UTC. Replies set `Cache-Control: no-store` and `Connection: close`.
+An origin-form request goes to the port itself. GET returns `api.ProxyInfo` and
+POST returns `api.ProxyIPChange`. Both endpoints return JSON on success and
+`{"error":{"code":"…","detail":"…"}}` on a handler error. Times are UTC. Every
+handler reply includes its content length, `Cache-Control: no-store`,
+`X-Content-Type-Options: nosniff` and `Connection: close`. Only one request is
+served on the connection.
 
 | Request | Success (`200`) |
 | --- | --- |
@@ -256,63 +434,193 @@ Any admitted client may read status. A POST requires `Proxy.ChangeIP` on each
 port in the chain. Scene ports cannot enable it. `canChangeIP` means that a
 request would be attempted. Device credentials and a working standby for a
 router are checked during the operation. The app's own `ChangeProxyIP` action
-calls the manager directly and needs only the upstream's permission, if any.
+calls `Manager.ChangeIP` directly and needs only the upstream's permission, if
+any.
 
 | HTTP status | Meaning for requests to the port |
 | --- | --- |
 | `400` | Invalid `max-age`, invalid `Pith-Hops` or an incomplete POST body (`invalid_config`). |
 | `403` | A disabled IP-change permission, disallowed Host or browser request headers (`not_allowed`). Unlisted devices can also be refused before endpoint dispatch. |
-| `404` / `405` | Unknown path or wrong method (`unsupported`). A method error includes `Allow`. |
+| `404` / `405` | Unknown path or wrong method (`unsupported`). A method error includes `Allow`, including for OPTIONS. |
 | `413` | POST body exceeds 4 KiB (`invalid_config`). |
 | `501` | The exit cannot renew its IP (`unsupported`), including an ordinary SOCKS5 upstream. |
-| `502` | Renewal, upstream or reply failure. If the caller's wait ended, the change may still be running. |
+| `502` | Renewal, upstream or reply failure. When the wait ends because the caller left or the ten minutes elapsed, `internal` means the change may still be running. |
 | `503` | Another interface on this Mac is renewing (`busy`), or the port request limits are full (`internal`). |
 | `508` | A request would exceed the limit of four upstream forwards (`internal`). |
 
-The Host can be an IP literal, `localhost`, a single-label name, a name under
-`.local`, or empty for HTTP/1.0. Any Origin field or a Sec-Fetch-Site value
-other than `none` is refused. The port supplies no CORS grants. These checks
-apply to the port's own endpoints. Shared-device admission also applies to
-ordinary forwarding.
+An interface's answers come from the client's `Info` hook. Without it the
+port reports its configured name and the listener state it knows. If the hook
+returns an error, any name, connection and change state it supplies survive,
+with no public addresses. A suspended exit is offline while its port still
+listens. A single nonnegative `max-age` query parameter bounds the age of
+cached public addresses in seconds.
 
-**Address cache.** The empty-target ipify probe feeds a per-interface record.
-The first GET can start the public-address lookup and device identification in
-parallel. A plain GET reuses complete results. If an expected family is missing
-or the lookup failed, later GETs retry after 30 seconds, doubling up to ten
-minutes. A single nonnegative `max-age` in seconds requests a freshness limit.
-Changing interface identity, addresses, availability or gateway invalidates the
-record. Late results cannot update a different interface snapshot. A lookup
-started by a port can finish after its reader leaves. Its next caller benefits
-from the result. Unsupported devices are cached, while transient identification
-errors can be retried after a minute.
+Before dispatch, a request is answered `403` and `not_allowed` when it has
+any `Origin` field or a `Sec-Fetch-Site` other than `none`, or when its
+`Host` is not an IP address, `localhost`, a name of one label or one under
+`.local`; an empty Host passes, as an HTTP/1.0 program sends. No CORS fields
+or preflight are provided. A page whose host name rebinds to this Mac makes
+same-origin GETs with neither `Origin` nor `Sec-Fetch-*`, which browsers send
+only to trustworthy origins, but with its own name as the Host, and that is
+what refuses it. Names of one label and `.local` names can still be rebound
+by whoever controls the local network's names. Programs and a person opening
+the port's address directly may ask; a device not listed is still refused
+before dispatch.
 
-**Concurrent calls.** The manager allows 64 requests to ports across all
-listeners. Up to 48 may wait for IP changes, leaving 16 slots available for
-other requests. The body must arrive within the connect deadline before a POST
-takes a waiting slot. A GET uses the connect deadline. The POST wait can last
-ten minutes. Requests to the same interface join one renewal, including
-requests from the Network page. A port-initiated change runs under the app's
-lifetime (up to three minutes for a hotspot or eight for a router). Disconnecting
-ends that caller's wait. A Network-page renewal uses its caller's context.
+#### Upstream answers
 
-**Upstream answers.** Requests go directly to the upstream port with its
-connected address as Host. Each forward increments `Pith-Hops`. The reader
-limits the entire upstream response to 64 KiB and validates the version, port,
-exit type and nesting depth. It truncates long interface labels to 256 UTF-8
-bytes and discards malformed address fields. A Pith response nests under
-`upstream`. A recognized Pith error or a silent timeout after a known response
-preserves the last good information. An ordinary SOCKS5 greeting can establish
-availability when an upstream does not speak Pith HTTP. Only a recognized Pith
-upstream receives the POST. [Wire types](../internal/api/proxy.go) · [Request handling](../internal/proxy/port.go) · [Client integration tests](../internal/client/exit_port_test.go)
+An upstream is asked over HTTP directly on its host and port through the same
+dialer that reaches it for SOCKS5, with `max-age` passed on and the address
+dialed as the Host, which the upstream takes whatever name it was configured by.
+A shared port refuses one reached on this Mac before sending anything. A `200`
+JSON answer with `pith` of at least one is another Pith's, once its port
+(1–65535), exit kind and nesting depth have been checked. `api.MaxProxyHops` is
+four. A longer interface name is trimmed to 256 bytes on a UTF-8 boundary.
+Malformed, zoned or wrong-family addresses are dropped. Its information is
+nested in `Upstream`, its online state, addresses, timestamp and change state
+are copied, and both ports' `ChangeIP` flags must allow a remote change. An
+error answer in Pith's form, other than `403`, is a Pith that can't answer now:
+its last answer stays, and the request is answered `503` or `508` as the
+upstream was, else `502` with its error. Silence until the time is up leaves it
+undecided: a last answer stays, and the request is answered `502` and
+`upstream_unreachable`; without one, a GET tries SOCKS5 as below, and a POST is
+answered the same `502` rather than `501`. Anything else, bytes that can't begin
+an HTTP answer, an answer without JSON or a closed connection, is another kind
+of proxy: a SOCKS5 greeting tells whether it answers and takes this Mac, without
+addresses or the ability to change them. HTTP answers are bounded to 64 KiB,
+including the headers. A poll's GET has three seconds within the port's connect
+timeout, which leaves time for the SOCKS5 check; a change's check before and its
+refresh after may take the whole connect timeout, as an upstream's first lookup
+may. A POST is passed on only after the upstream answers as Pith, and the change
+it answers with is checked too. Each forwarded request adds one to `Pith-Hops`,
+initially zero; an upstream request already at `api.MaxProxyHops` is answered
+`508` instead of being forwarded, and leaves what the port knows of its upstream
+alone. That status returns through the chain.
+
+#### Request limits and cancellation
+
+Requests to ports have 64 slots across the manager, with `503` beyond that. At
+most 48 may wait for an address change, leaving 16 for status reads and requests
+answered immediately; a 49th waiting POST is answered `503`. A POST's body is
+read within the connect timeout, and only then does it count against the 48 and
+its wait extend to ten minutes: one that never sends its body holds a slot no
+longer than a GET. Immediate method, path, parameter, permission and body
+refusals do not count against the 48. Requests count neither as open streams nor
+as traffic, and cannot be selected as the quietest stream. Suspending an exit
+leaves them and unclassified HTTP handshakes open, so a router renewal can
+answer the very POST that caused it. GET uses the connect timeout, with a little
+time reserved for the answer; POST waits at most ten minutes. A departed caller
+ends only its wait: the client owns an interface's change, and coalesces other
+callers onto it. Configuration replacement and manager close still end these
+sessions. Turning a port's `ChangeIP` on or off applies to new requests without
+replacing its listener or interrupting streams and requests already in progress;
+counters and the listening time are preserved.
+
+`ProxyStatus.Upstream` is the upstream's last Pith answer, cleared when it
+ceases to answer as Pith or the port is replaced; an error answer or silence
+keeps it. `ProxyStatus.Error` for an upstream tells only that this Mac can't
+reach it or that it refuses this Mac: one that answered records none,
+whatever it said of its own upstream. Status polls it at most
+once every ten seconds, even while connections flow, first by GET without
+`max-age`, then by SOCKS5 when needed. `ProxyStatus.Changing` comes from the
+client's non-blocking `Changing` hook for an interface, or from a change
+being passed upstream or its last answer. A completed upstream change
+refreshes that answer; a canceled wait makes the next status poll due.
+
+#### Interface address cache
+
+For each interface the client keeps the public addresses and timestamp from its
+dual-stack HTTPS test. A renewal's tests before and after, the empty-target
+`Probe` and a lookup for a port all fill this record. The Cloudflare speed test
+and a TCP test of a named server do not write to it. It forgets them when the
+interface goes down or away, or when its hardware address, label, interface
+kind, IP addresses or either router change, and a test that began before such a
+change can't put its result back. A `GET` without `max-age` is answered from the
+record and reaches the internet only when no address is known, or only those of
+one family where the interface has addresses of both, as a renewal can end with;
+a failed lookup, or one that found one family alone, keeps the next from being
+made for 30 seconds, twice as long for each such lookup in a row, ten minutes at
+most, until a lookup finds both or the interface changes; a test someone asked
+for, as a renewal's, that finds one family alone starts that wait over at 30
+seconds. With `max-age`, addresses older than that are looked up again, and a
+lookup that fails leaves none. A lookup for a port belongs to no caller: it runs
+to its own end while callers wait for it, each for as long as it cares to, so
+another Mac's poll that gives up after three seconds finds the addresses the
+next time. A caller that joins a test another started doesn't inherit its
+cancellation: when the one who started it gives up, a caller still waiting
+starts its own. When the record has changed since a caller read the interfaces,
+because another reader saw them otherwise meanwhile, an explicit address probe,
+including a renewal's, tests the interface it read without filling the new
+record. For a port, whether its address can be changed and what its addresses
+are are found at once, not in turn. Whether an interface's address can be
+changed is found once for an interface as it is: a hotspot by the interface's
+label, a router by asking its admin which model it is. A device Pith doesn't
+know stays unknown until the interface changes; a transient identification error
+can be retried after a minute. A refusal to connect from a gateway is classified
+as unsupported for that session.
+
+#### Shared address changes
+
+One change of an interface's address runs at a time, whoever asked: a port's
+request, `RenewHotspot` or `RenewRouter`. The others wait for it and get what it
+did, each in its own form. One runs at a time across interfaces too: while one
+is under way, a change of another interface is refused with `busy`, which a port
+answers `503`. A router's renewal leaves the Mac to another interface, which
+macOS picks only once the router yields, so no one interface can be set aside
+beforehand; and a renewal must not yield to a hotspot about to reconnect. A
+change a port asked for runs under the client's lifetime, three minutes at most
+for a hotspot and eight for a router, and the request's end ends only its wait;
+one the Network page asked for ends with its caller, as before. `Close` waits up
+to 25 seconds for the renewals. The router's restore request has its own
+deadline.
+
+[Wire types](../internal/api/proxy.go) ·
+[Request handling](../internal/proxy/port.go) ·
+[Client integration tests](../internal/client/exit_port_test.go) ·
+[Hardware results](ROOT-TEST.md#shared-ports-scene-exits-and-port-responses)
 
 ## Tools for agents
 
-`Pith mcp` speaks newline-delimited JSON-RPC on standard input and output.
-It answers `initialize`, `ping` and `tools/list` locally and forwards
-`tools/call` to the open app. It skips the GUI and single-instance lock.
-Discovery works with the app closed. A tool call then reports that Pith
-isn't running. The server accepts protocol revisions 2024-11-05, 2025-03-26,
-2025-06-18 and 2025-11-25 and offers the latest for an unknown revision.
+`internal/mcp` lets an agent work Pith over the
+[Model Context Protocol](https://modelcontextprotocol.io/specification/2025-11-25):
+tools alone, over newline-delimited JSON-RPC on standard input and output. Two
+processes share the work, because the app alone holds the configuration and the
+local proxies: a second client beside it would open the same ports and save over
+its configuration.
+
+`Pith mcp`, the app's own executable as an agent's program starts it, speaks the
+protocol on its standard input and output (`mcp.Serve`). It answers `initialize`,
+`ping` and `tools/list` itself, from the tools compiled into it, and passes each
+`tools/call` to the app (`mcp.Remote`). It takes no single-instance lock and
+shows no interface. It may start before Pith and outlast it: a call made while
+no app listens is answered with a tool error that says so, and the next call
+finds the app again. Calls run concurrently, so that a change of address keeps
+no other waiting; `notifications/cancelled` cancels a call, and the end of the
+input cancels those that run. The accepted protocol revisions are 2024-11-05,
+2025-03-26, 2025-06-18 and 2025-11-25. A client that asks for another gets
+the latest supported revision.
+
+The app listens (`mcp.Listen`) on
+`$HOME/Library/Application Support/Pith/mcp.sock`, beside its configuration. The
+path is the same however the stdio program was started. `PITH_MCP_SOCKET` puts
+it elsewhere for development, and a Pith on the mock backend listens only there.
+The socket is bound under another name, set to mode 0600 and renamed into place:
+it is never there with the permissions the umask gave it, and it replaces a
+stale one in one step. Each connection's `LOCAL_PEERCRED` user must be the
+app's. No TCP port is opened, so that no web page and no other device reaches
+the tools. Programs running as the same user can already write the configuration
+file and connect to the helper's user-owned socket. A call is a connection of
+its own, one line of JSON for the tool and its arguments and one for the answer;
+closing it before the answer cancels the call. At most 32 run at once.
+
+The tools run on `ui.Agent`, the backend as the interface holds it. A change of
+configuration is made on the main thread to a copy of the interface's
+configuration, validated, shown, and saved by the interface's own saver, whose
+result the tool waits for. An agent's changes and the user's are thus made one
+after another, neither saves over the other's, and a save that fails puts the
+interface back to what is saved. Starting selects the scene. Starting and
+stopping record whether routing was left on, as the menu bar's switch does.
+Everything else goes straight to the `api.Service`.
 
 | Task | Tool names |
 | --- | --- |
@@ -325,33 +633,30 @@ isn't running. The server accepts protocol revisions 2024-11-05, 2025-03-26,
 | Configure ports and devices | `set_proxy`, `remove_proxy`, `allow_device`, `remove_device` |
 | Renew an exit | `change_ip` with either `interface` or `port` |
 
-`list_interfaces` shows connected links and named inactive non-VPN services.
-It reads the backend inventory, which can include Pith's own active tunnel.
-The window filters that tunnel using the helper's capture identity.
-Tools accept interfaces by BSD name, alias or label, apps by path, bundle ID
-or name, and scenes by ID or name. Unknown arguments fail. The tool definitions
-supply `readOnlyHint` and `destructiveHint`. Configuration edits go through
-`ui.Agent` on the main thread and wait for the UI's saver. Starting and stopping
-use the app's routing state. Helper installation, entering device passwords,
-changing general settings and clearing the connection log are UI actions.
-[Tool definitions](../internal/mcp/tools.go) · [Tool tests](../internal/mcp/tools_test.go)
+`list_interfaces` shows connected links and named inactive non-VPN services. It
+reads the backend inventory, which can include Pith's own active tunnel. The
+window filters that tunnel using the helper's capture identity. Tools accept
+interfaces by BSD name, alias or label, apps by path, bundle ID or name, and
+scenes by ID or name. Unknown arguments fail. The tool definitions supply
+`readOnlyHint` and `destructiveHint`. Read-only, editing and disruptive tools
+have distinct annotations. Public-address changes call `RenewHotspot`,
+`RenewRouter` or `ChangeProxyIP`. The app handles helper installation and
+removal, entering gateway passwords, editing general settings and clearing the
+connection log. [Tool definitions](../internal/mcp/tools.go) ·
+[Tool tests](../internal/mcp/tools_test.go)
 
 `change_ip` reports the addresses it observed before and after. Its `changed`
 flag compares both pairs of fields, including missing values, when the final
 probe found an address. For a partial result, compare the old and new values
 of the same family before concluding that its address changed.
 
-The app listens on `$HOME/Library/Application Support/Pith/mcp.sock` with mode
-0600 and checks the connecting user's kernel UID. Each call opens its own Unix
-connection. The listener accepts at most 32 simultaneous calls. Cancellation,
-EOF on stdio or a disconnected call ends its wait. Neither MCP process opens a
-TCP listener. `PITH_MCP_SOCKET` overrides the socket for development. A mock app
-listens only with this override. [Socket implementation](../internal/mcp/socket.go) · [Running the mock](BUILDING.md#mock-interface-and-mcp)
-
 For clients configured with JSON, the server entry is
 `{"command":"/Applications/Pith.app/Contents/MacOS/Pith","args":["mcp"]}`.
 For a remote Mac, point the client at `ssh` with that Mac, executable path and
 `mcp` as arguments. The app must be running as the SSH user on that Mac.
+
+[Socket implementation](../internal/mcp/socket.go) ·
+[Running the mock](BUILDING.md#mock-interface-and-mcp)
 
 ## Capturing and forwarding
 
@@ -888,13 +1193,15 @@ bounded, with NDJSON events. Status/rates and connection updates are coalesced o
 a one-second tick only while running. Each publication reaches an event subscriber
 as one batch, so a tick's connection updates take one of its 128 slots however
 many connections changed; a subscriber that leaves 128 batches unread is closed.
-The interface watcher makes up to three attempts at its initial read. A later
+On a busy Mac a routing-table read can miss its 250 ms deadline. The interface
+watcher makes up to three attempts at its initial read. A later
 read failure preserves both the stream and its last snapshot. It retries after
 a change or on a timer starting at one second and doubling to 30 seconds.
 The client reconnects a lost stream immediately and spaces repeated attempts
 at least three seconds apart. Stream setup and the separate fallback status
 request each have a five-second budget. An answering helper keeps its normal
-status. The installed launchd job sets `ProcessType` to `Interactive` for
+status. A verified installation with nothing listening on its socket reports
+`helper_not_responding` without waiting through both budgets. The installed launchd job sets `ProcessType` to `Interactive` for
 the traffic it forwards. [Helper protocol](../internal/helper/README.md)
 
 For approved development tests the root helper accepts repeated `--capture CIDR`
