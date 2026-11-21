@@ -57,6 +57,8 @@ Both gateway drivers reuse an interface-bound HTTP client. The client verifies
 the interface name, hardware address, gateway and index before a request,
 including requests on pooled connections, and limits redirects to the same
 origin. The hotspot uses its local HTTP admin page. The router uses HTTPS.
+When saving a keychain item, the client passes the secret on standard input
+to `security -i`. Its arguments and diagnostics contain no password.
 
 `RenewHotspot` probes the old public addresses while the device reads its
 network settings. It switches cellular data off and on and polls device status

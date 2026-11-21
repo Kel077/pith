@@ -60,8 +60,9 @@ page has a large title and its actions on the right.
 - **Rules.** The scenes as a segmented capsule (the running one with a
   green dot), "+" and "…" beside it, and an ⓘ whose tooltip says how rules
   decide. The rules are rows of one pane: app icons, names, what they
-  match, the route as chips, a switch. A rule an earlier rule covers says
-  so in amber. Hover shows a drag handle; right-click edits, duplicates,
+  match, the route as chips, a switch. An amber notice identifies a rule
+  that can never decide, including a route fully covered by a block anywhere
+  in the list. Hover shows a drag handle; right-click edits, duplicates,
   moves to the top or deletes (with Undo).
 - **Rule editor** and **Check**: sheets of glass, labeled rows, chips,
   segmented capsules, the ordered interfaces as a pane of rows.

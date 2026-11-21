@@ -81,7 +81,7 @@ While routing is on, the helper receives captured connections through a utun int
 | **Apps** | Match every app, or pick apps and command-line tools. Pith can match a helper or a system process when macOS identifies the app it connects for. |
 | **Destinations** | Match an exact domain, a domain with its subdomains, an IPv4 or IPv6 address, or a CIDR range. Paste several destinations at once. Limit a rule to TCP or UDP if needed. |
 | **Route or block** | Block rules win. The first matching route rule tries its interfaces in order. If all fail, the rule can drop the connection or let macOS choose the route. |
-| **Order and check** | Drag rules to reorder them. Pith flags rules covered by an earlier rule. **Check** previews the decision for an app and destination, including which interface is available now. |
+| **Order and check** | Drag rules to reorder them. Pith flags rules that can never decide, including routes fully covered by a block anywhere in the list. **Check** previews the decision for an app and destination and shows the predicted interface. |
 
 Keep one scene for home and another for work. Create, duplicate, rename or delete scenes on **Rules**. The green dot marks the running scene. Switch scenes from the menu bar, or edit another scene while the current one runs. The scene menu imports and exports its rules.
 
@@ -120,7 +120,9 @@ Both tests use the chosen interface for DNS and the connection. If its DNS serve
 | **Inseego 5G MiFi M2000** | See signal bars and network type. Unlock with the hotspot's admin password for carrier, band, signal strength and **Change hotspot IP**. The hotspot reconnects to its carrier. Pith waits for a fresh cellular session when the device reports its age, then checks the public addresses again. |
 | **Verizon Router CHR30A-R (Fios)** | On Ethernet or Wi-Fi, Pith shows the model beside the router address. Choose **Change IP** and enter the router's admin password to unlock it. Choose **Change IP** on the unlocked card to renew the WAN IPv4 lease. |
 
-Router renewal needs the helper and another connected network with internet access. Pith waits for macOS to select a working standby before releasing the lease. Direct proxies on the renewing interface close their streams. The router's clients lose internet access during each release. If Verizon returns the same IPv4 address, Pith tries again, with pauses of 5, 20 and 60 seconds across at most three attempts. It only renews IPv4. Either provider can return the old address.
+Router renewal needs the helper and another connected network with internet access. Pith waits for macOS to select a working standby before releasing the lease. Rules with other exits can use them, and direct proxies on the renewing interface close their streams. The router's clients lose internet access during each release.
+
+If Verizon returns the same IPv4 address, Pith tries again, with pauses of 5, 20 and 60 seconds across at most three attempts. It only renews IPv4. With either device, the provider can return the old address.
 
 Device passwords stay in the macOS keychain. Other models can still serve as ordinary routing interfaces.
 
@@ -158,7 +160,9 @@ curl --noproxy '*' -X POST http://127.0.0.1:1080/change-ip
 | `GET /` | Exit type, online state, public addresses when known, and whether a change can be requested. A scene has no single public IP. `max-age` asks for addresses at most that many seconds old. |
 | `POST /change-ip` | The old and observed public addresses after a renewal. Enable **Let apps and devices change its IP** to allow this on the port. Every permitted caller can then request a renewal. |
 
-A Pith upstream relays both requests. A POST needs permission at each hop. In Pith itself, the upstream's **Change IP** button needs the upstream's permission. Requests for the same interface share the renewal. A different interface on the same Mac returns `503` with `busy` until it finishes.
+A plain GET reuses cached addresses. After an incomplete or failed lookup, later reads can retry after 30 seconds, with the interval doubling up to ten minutes. Requests for the same interface share one renewal. A change on another interface on that Mac returns `503` with `busy` until it finishes.
+
+A Pith upstream relays both requests. A POST needs permission at each hop. The local row can show the upstream's interface and public IP. Its **Change IP** button uses the upstream's permission even when the local port's POST is disabled.
 
 Use an IP address, `localhost`, a single-label name or a `.local` name. The port checks the Host and browser request headers. Lookup retries, response fields, timeouts and HTTP errors are in the [port reference](docs/ARCHITECTURE.md#requests-to-a-port).
 
