@@ -284,7 +284,7 @@ var tools = []tool{
 	"interface": {"type": "string", "description": "The interface whose hotspot or router gets a new address, by BSD name, the user's name for it or its label."},
 	"port": {"type": "integer", "description": "Instead of an interface: the port of a local proxy, to change the address of whatever it goes out through, another Mac's Pith included."}
 }, "additionalProperties": false}`,
-		about: "Changes the public IP address of a network: has the mobile hotspot behind an interface reconnect to its carrier, or the router behind it give its address up and ask its provider for another, and returns the addresses before and after once the internet works through it again. Give an interface or a local proxy's port. Connections through that network end. A hotspot is offline for some 20 seconds. A router takes every device behind it offline, from seconds to over a minute, changes its IPv4 address alone, and needs another connected network to carry the Mac meanwhile; the provider may give the same address back. Only when the user asks for a new IP. It can take two minutes: let the call wait that long.",
+		about: "Changes the public IP address of a network: has the mobile hotspot behind an interface reconnect to its carrier, or the router behind it give its address up and ask its provider for another, and returns the addresses before and after once the internet works through it again; changed tells that an address differs from the one of its family before, and a family missing on either side is not compared. Give an interface or a local proxy's port. Connections through that network end. A hotspot is offline for some 20 seconds. A router takes every device behind it offline, from seconds to over a minute, changes its IPv4 address alone, and needs another connected network to carry the Mac meanwhile; the provider may give the same address back. Only when the user asks for a new IP. It can take two minutes: let the call wait that long.",
 		does:  with(changeIP),
 	},
 }
@@ -1341,7 +1341,7 @@ type ipChangeView struct {
 	BeforeIPv6 string  `json:"beforeIPv6,omitempty"`
 	PublicIPv4 string  `json:"publicIPv4,omitempty"`
 	PublicIPv6 string  `json:"publicIPv6,omitempty"`
-	Changed    bool    `json:"changed"` // an address differs from before
+	Changed    bool    `json:"changed"` // an address differs from the one of its family before
 	Online     bool    `json:"online"`  // the internet answers through it now
 	Seconds    float64 `json:"seconds"`
 	Standby    string  `json:"standby,omitempty"` // the interface that carried the Mac meanwhile
@@ -1349,10 +1349,19 @@ type ipChangeView struct {
 	Problem    string  `json:"problem,omitempty"`
 }
 
+// ipChanged tells whether an address found both before and after a change
+// differs. A family found on one side alone tells nothing: an IPv4 address
+// that a test after the change missed hasn't changed, and the IPv6 one that
+// stayed doesn't make it unchanged either.
+func ipChanged(before4, before6, after4, after6 string) bool {
+	return before4 != "" && after4 != "" && before4 != after4 ||
+		before6 != "" && after6 != "" && before6 != after6
+}
+
 func viewRenewal(v ipChangeView, before, after api.Probe, took time.Duration) ipChangeView {
 	v.BeforeIPv4, v.BeforeIPv6 = before.PublicIPv4, before.PublicIPv6
 	v.PublicIPv4, v.PublicIPv6 = after.PublicIPv4, after.PublicIPv6
-	v.Changed = after.OK && (v.BeforeIPv4 != v.PublicIPv4 || v.BeforeIPv6 != v.PublicIPv6)
+	v.Changed = after.OK && ipChanged(v.BeforeIPv4, v.BeforeIPv6, v.PublicIPv4, v.PublicIPv6)
 	v.Online, v.Problem = after.OK, after.Problem
 	v.Seconds = float64(took.Round(100*time.Millisecond)) / float64(time.Second)
 	return v
@@ -1372,7 +1381,7 @@ func changeIP(ctx context.Context, h Host, a struct {
 		}
 		online := c.PublicIPv4 != "" || c.PublicIPv6 != ""
 		return ipChangeView{Port: c.Port, BeforeIPv4: c.BeforeIPv4, BeforeIPv6: c.BeforeIPv6, PublicIPv4: c.PublicIPv4, PublicIPv6: c.PublicIPv6,
-			Changed: online && (c.BeforeIPv4 != c.PublicIPv4 || c.BeforeIPv6 != c.PublicIPv6), Online: online, Seconds: c.Seconds}, nil
+			Changed: online && ipChanged(c.BeforeIPv4, c.BeforeIPv6, c.PublicIPv4, c.PublicIPv6), Online: online, Seconds: c.Seconds}, nil
 	}
 	iface, err := interfaceNamed(ctx, h, a.Interface)
 	if err != nil {

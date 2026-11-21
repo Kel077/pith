@@ -536,3 +536,34 @@ func TestChangeIP(t *testing.T) {
 	h.LockHotspot()
 	fails(t, h, "change_ip", `{"interface": "en9"}`, "wrong_password", "Network page")
 }
+
+func TestIPChanged(t *testing.T) {
+	const (
+		old4, new4 = "203.0.113.10", "203.0.113.20"
+		old6, new6 = "2001:db8::10", "2001:db8::20"
+	)
+	for _, c := range []struct {
+		name           string
+		b4, b6, a4, a6 string
+		want           bool
+	}{
+		{"both new", old4, old6, new4, new6, true},
+		{"IPv4 new, IPv6 kept", old4, old6, new4, old6, true},
+		{"IPv6 new, IPv4 kept", old4, old6, old4, new6, true},
+		{"both kept", old4, old6, old4, old6, false},
+		{"IPv4 missed after, IPv6 kept", old4, old6, "", old6, false},
+		{"IPv4 missed after, IPv6 new", old4, old6, "", new6, true},
+		{"nothing before", "", "", new4, new6, false},
+		{"IPv4 only, kept", old4, "", old4, "", false},
+		{"IPv6 appeared, IPv4 kept", old4, "", old4, new6, false},
+	} {
+		if got := ipChanged(c.b4, c.b6, c.a4, c.a6); got != c.want {
+			t.Errorf("%s: changed = %v, want %v", c.name, got, c.want)
+		}
+	}
+	// A renewal whose test after found the IPv6 address alone, unchanged.
+	v := viewRenewal(ipChangeView{}, api.Probe{OK: true, PublicIPv4: old4, PublicIPv6: old6}, api.Probe{OK: true, PublicIPv6: old6}, 0)
+	if v.Changed || !v.Online || v.BeforeIPv4 != old4 || v.PublicIPv4 != "" {
+		t.Fatalf("renewal = %+v", v)
+	}
+}
