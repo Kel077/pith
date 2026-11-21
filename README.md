@@ -115,7 +115,7 @@ One set of rules for home, another for the office. Switch between them from the 
 
 ### Network
 
-Each connected interface shows its addresses, router and DNS. **System default** marks the one macOS uses. Double-click a name to change it in Pith.
+Each connected interface shows its addresses, router and DNS. A **Default** chip marks the one macOS uses. Double-click a name to change it in Pith.
 
 **Test speed** measures latency, download and upload through that interface, and shows the Cloudflare data center that answered and the public IP it saw. A full test downloads 25 MB and uploads 8 MB. **Test All** tests the interfaces one after another so that two on the same line don't share the speed you're trying to measure.
 

@@ -70,7 +70,7 @@ page has a large title and its actions on the right.
   per interface over an hour, a day or a week), each as one pane.
 - **Network.** Connected interfaces have cards. Named disconnected services
   share a compact list. Double-click a name to edit its alias. A card shows
-  **System default** when appropriate, and its local addresses, router, DNS
+  a **Default** chip when macOS uses it, and its local addresses, router, DNS
   and hardware address when available.
   - The foot of the card shows **Test speed** results. Above the large
     download and upload figures in Mbps are the public IP, the Cloudflare
@@ -87,7 +87,7 @@ page has a large title and its actions on the right.
   - A recognized CHR30A-R has its model beside the router address even when
     locked. **Change IP**, beside **Test speed**, opens the password sheet
     while locked and starts renewal when unlocked and connected. During the yield,
-    **System default** follows the network macOS selected.
+    the **Default** chip follows the network macOS selected.
   - The card shows when a renewal is in progress, then the addresses observed
     before and after. The display prefers IPv4 and compares like families. If IPv4 disappears and IPv6
     stays the same, it displays just the observed IPv6 address.
