@@ -145,12 +145,15 @@ interface passed the internet probe.
 Meanwhile the interface counts as down. Its local proxies answer every CONNECT
 that the network is unreachable and close their streams, rather than wait for
 timeouts or use another interface. Scene-based ports skip the suspended
-interface for new dials. The client also attempts to reload the running helper
-scene with that interface skipped. A rule tries its remaining interfaces. With
-none left, it uses the new primary when fallback is allowed. A strict rule
-retains its sole interface. The `.draining` file in the configuration directory
-lets the client restore the saved scene on a later load if Pith quit in the
-meantime.
+interface for new dials. The client also reloads the running helper scene with
+that interface skipped. A rule tries its remaining interfaces. With none left,
+it uses the new primary when fallback is allowed. A strict rule retains its
+sole interface. The `.draining` file in the configuration directory lets the
+client restore the saved scene on a later load if Pith quit in the meantime.
+If that file can't be written or the helper refuses the reload, the client
+undoes the drain and ends the renewal before the router is asked anything:
+rules that still sent connections to the interface would fail them while it
+has no address. The same goes for the router's own mark, below.
 
 The router gives its address up, and is asked for one again after a pause of 5,
 20, then 60 seconds, until the address differs or three tries are done: asked
@@ -159,8 +162,10 @@ up, the driver attempts to get a lease back even if the request was canceled. It
 can send up to two restore requests within an independent 20-second bound. A
 normal try waits up to 90 seconds for reconnection and the client can wait two
 more minutes after an error. On quit, the client allows up to 25 seconds for
-outstanding renewals. Should Pith end before it asks, the client looks for
-`.router-released` on the next configuration load. It checks the recorded
+outstanding renewals. Before the first release the client writes
+`.router-released`, and ends the renewal when it can't. Should Pith end before
+it asks, the client looks for that file on the next configuration load. It
+checks the recorded
 adapter before asking a recognized router without a lease to renew: the router
 stays without an address until it is asked, and so does everything behind it.
 After a completed cycle the client probes the interface again as it does for a
@@ -633,9 +638,9 @@ Everything else goes straight to the `api.Service`.
 | Configure ports and devices | `set_proxy`, `remove_proxy`, `allow_device`, `remove_device` |
 | Renew an exit | `change_ip` with either `interface` or `port` |
 
-`list_interfaces` shows connected links and named inactive non-VPN services. It
-reads the backend inventory, which can include Pith's own active tunnel. The
-window filters that tunnel using the helper's capture identity. Tools accept
+`list_interfaces` shows connected links and named inactive non-VPN services.
+Like the window, it leaves out Pith's own capture tunnel, known by the helper's
+capture identity, and so do the tools that take an interface. Tools accept
 interfaces by BSD name, alias or label, apps by path, bundle ID or name, and
 scenes by ID or name. Unknown arguments fail. The tool definitions supply
 `readOnlyHint` and `destructiveHint`. Read-only, editing and disruptive tools
@@ -646,9 +651,10 @@ connection log. [Tool definitions](../internal/mcp/tools.go) ·
 [Tool tests](../internal/mcp/tools_test.go)
 
 `change_ip` reports the addresses it observed before and after. Its `changed`
-flag compares both pairs of fields, including missing values, when the final
-probe found an address. For a partial result, compare the old and new values
-of the same family before concluding that its address changed.
+flag tells that an address found both before and after differs, family by
+family, as the window compares them: a family missing on either side isn't
+compared. A hotspot whose test after the change found its IPv6 address alone,
+unchanged, is not reported changed, whatever its IPv4 address was.
 
 For clients configured with JSON, the server entry is
 `{"command":"/Applications/Pith.app/Contents/MacOS/Pith","args":["mcp"]}`.
