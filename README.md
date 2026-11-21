@@ -8,7 +8,7 @@
 
 **WeChat over your phone's hotspot. The office intranet over Ethernet. Everything else as usual.**<br>
 Write a few rules by app, domain or IP, and new connections leave through the interface you pick.<br>
-Activity shows which interface each routed connection used.
+You can also see which interface each connection Pith routed really used.
 
 [![License](https://img.shields.io/badge/license-MIT-111111)](LICENSE) [![Stars](https://img.shields.io/github/stars/Kel077/pith?style=flat&color=111111)](https://github.com/Kel077/pith/stargazers) <a href="https://awesomemygo.dev/apps/pith"><img src="https://awesomemygo.dev/badge.svg" height="20" alt="Listed on Awesome MyGo"></a> [![LINUX DO](https://img.shields.io/badge/LINUX_DO-community-111111?logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMjAgMTIwIj48Y2xpcFBhdGggaWQ9ImEiPjxjaXJjbGUgY3g9IjYwIiBjeT0iNjAiIHI9IjQ3Ii8%2BPC9jbGlwUGF0aD48cGF0aCBmaWxsPSIjZmZmZmZmIiBjbGlwLXBhdGg9InVybCgjYSkiIGQ9Ik0xMCAxMGgxMDB2MzBIMTB6TTEwIDgwaDEwMHYzMEgxMHoiLz48L3N2Zz4%3D)](https://linux.do)<br>
 ![macOS 13+](https://img.shields.io/badge/macOS_13+-000000?logo=apple&logoColor=white) ![Apple silicon](https://img.shields.io/badge/Apple_silicon-000000?logo=apple&logoColor=white) ![Go](https://img.shields.io/badge/Go-00ADD8?logo=go&logoColor=white)
@@ -33,28 +33,33 @@ A Mac can be on Ethernet, Wi-Fi and a phone's hotspot at the same time, but macO
 - **See where everything went**: each connection with its app, its destination, the rule that matched and the interface it actually used.
 - **Lend a line to your other devices**: a laptop, a phone or a tablet goes out through one of this Mac's networks, or by its rules.
 
+If your Mac is often on more than one network and you want certain apps to stick to one of them, Pith is for you. If you only ever use one network, you won't need it.
+
 Runs on Macs with Apple silicon and macOS 13 or later.
 
 ## Quick start
 
-**1 · Install.** Download Pith from [Releases](https://github.com/Kel077/pith/releases/latest), move it to Applications and open it. Pith is signed ad hoc. If macOS blocks the first launch, open System Settings → Privacy & Security, choose **Open Anyway** for Pith and confirm.
+**1 · Install.** Download Pith from [Releases](https://github.com/Kel077/pith/releases/latest) and move it to Applications. Pith is signed ad hoc, not notarized by Apple, so macOS won't open it the first time: open System Settings → Privacy & Security, choose **Open Anyway** for Pith, and confirm.
 
-<sub>To check a download, put it beside `SHA256SUMS` and run `shasum -a 256 -c SHA256SUMS --ignore-missing`. To verify its build provenance, use `gh attestation verify <file> -R Kel077/pith`.</sub>
+<sub>To check a download, run `shasum -a 256 -c SHA256SUMS --ignore-missing` in the folder with the files, or `gh attestation verify <file> -R Kel077/pith`.</sub>
 
-The features listed under **Unreleased** are in the source build. To build the app and its helper on an Apple silicon Mac with Go 1.27 and the Command Line Tools, run the following. [Changelog](CHANGELOG.md#unreleased) · [Build instructions](docs/BUILDING.md)
+The features under [Unreleased](CHANGELOG.md#unreleased) are in the source build. To try them, build it with [Go](https://go.dev/dl/) 1.27 or later:
 
 ```sh
 git clone https://github.com/Kel077/pith.git
 cd pith
-make build
-open build/darwin-arm64/Pith.app
+make helper                # first, the helper that does the routing
+go run ./cmd/pith          # the app, in the menu bar
+go run ./cmd/pith -mock    # the interface on simulated data, nothing installed
 ```
 
-**2 · Add a rule.** Open **Rules → Add Rule**. Pick an app, a destination or both. Choose the interfaces to try, in order.
+<sub>The first time you turn routing on, macOS asks for an administrator's password to install Pith's helper, which does the routing. Settings → Helper removes it at any time.</sub>
 
-**3 · Turn on routing.** Use the switch in the menu bar or at the top right of the window. The first time, macOS asks for an administrator password to install the helper. Open **Activity** to see where a new connection went.
+**2 · Add a rule.** On **Rules**, choose **Add Rule**: the apps, the destinations (domains, IP addresses or ranges), and the interfaces to try, in order.
 
-To give just one browser an explicit proxy, open **Settings → Local proxies → Add Proxy**. Enter the displayed address and port in the browser's proxy settings. This works with routing off.
+**3 · Turn routing on** from the menu bar, or with the switch at the top right of the window. New connections follow the rules at once, and **Activity** shows where each one went.
+
+If you only want a browser to use one network, you can leave routing off. In **Settings → Local proxies**, choose **Add Proxy** and put the address and port it shows in the browser's proxy settings.
 
 ## How it fits together
 
@@ -66,26 +71,32 @@ flowchart LR
   pithd --> wifi["Wi-Fi"]
   pithd --> phone["iPhone, hotspot"]
   app["Pith<br/>menu bar and window"] <-- "Unix socket" --> pithd
-  browser["Proxy clients"] --> port["Pith's local proxy port"]
-  port --> exit["Interface, scene rules or upstream proxy"]
+  browser["Apps and devices with a proxy set"] --> port["Local proxy port in Pith"]
+  port --> exit["One interface, a scene’s rules or another proxy"]
 ```
 
-While routing is on, the helper receives captured connections through a utun interface. It looks up their apps in the kernel's socket tables and uses the rules to choose an interface. Turning routing off removes its capture routes. Explicit proxy ports run in the menu bar app. Pith needs no system extension. An app update that keeps the same helper needs no administrator approval.
+While routing is on, the helper captures new connections through a utun interface and a user-space network stack, finds the app each belongs to from the kernel's socket tables, and the domain from TLS SNI, the HTTP Host, DNS or a QUIC Initial when it can read the name. It then makes the connection again, bound to the interface the rules choose, and relays the bytes. Turning routing off removes everything it added to the routing table. Pith needs no Apple developer account or system extension. macOS asks for your password only to install, update or remove the helper; an update of the app alone, with the same helper, asks for nothing.
 
 ## What it does
 
-### Rules and scenes
+### Rules as sentences
 
-| Match or action | What it does |
+Each rule reads like a sentence: these apps, going to these places, leave through these interfaces, in this order.
+
+| | |
 | :-- | :-- |
-| **Apps** | Match every app, or pick apps and command-line tools. Pith can match a helper or a system process when macOS identifies the app it connects for. |
-| **Destinations** | Match an exact domain, a domain with its subdomains, an IPv4 or IPv6 address, or a CIDR range. Paste several destinations at once. Limit a rule to TCP or UDP if needed. |
-| **Route or block** | Block rules win. The first matching route rule tries its interfaces in order. If all fail, the rule can drop the connection or let macOS choose the route. |
-| **Order and check** | Drag rules to reorder them. Pith flags rules that can never decide, including routes fully covered by a block anywhere in the list. **Check** previews the decision for an app and destination and shows the predicted interface. |
+| **Apps** | Any app, or the apps and command-line tools you pick. An app's helpers match too, and so do system processes that connect for it, such as Safari's WebKit networking process |
+| **Destinations** | Domains (with or without their subdomains), IP addresses and CIDR ranges, IPv4 and IPv6; paste a list to add many |
+| **Protocol** | TCP, UDP or both |
+| **Interfaces** | An ordered list: the next one is tried when one can't connect, and then macOS's routing if you allow it |
+| **Block** | Block rules always win; otherwise the first matching rule from the top decides. Drag to reorder |
+| **Checks** | A rule that can never decide says so, even when the block rule that covers it is farther down. **Check** tells which rule a connection would match, and where it would go now |
 
-Keep one scene for home and another for work. Create, duplicate, rename or delete scenes on **Rules**. The green dot marks the running scene. Switch scenes from the menu bar, or edit another scene while the current one runs. The scene menu imports and exports its rules.
+Changes apply as soon as you save them. An open connection that the new rules send elsewhere, or block, is closed, and its app connects again under the new rules; the others keep going.
 
-Saving a change to the running scene applies it to new connections. Pith closes the connections it handles whose routing decision changes, so their apps can reconnect.
+### Scenes
+
+One set of rules for home, another for the office. Switch between them from the menu bar; the running scene shows a green dot. On **Rules** you can work on another scene while the first one runs. The scene menu lets you rename or duplicate it and import or export its rules.
 
 ### Activity
 
@@ -96,94 +107,112 @@ Saving a change to the running scene applies it to new connections. Pith closes 
 </tr>
 </table>
 
-| View | What it shows |
+| | |
 | :-- | :-- |
-| **Connections** | See the app, destination, protocol, matched rule, actual interface and bytes for connections handled by routing. Filter or pause the list. Right-click a connection to make a rule for its app or destination. |
-| **Apps** | Compare traffic by app and see which interfaces each used. |
-| **Traffic** | Compare bytes by interface over the last hour, day or week. The menu bar panel shows each interface's current upload and download rates. |
+| **Connections** | Live, newest first: app, destination, protocol, the rule's interface in its color, or a quiet chip where macOS routed it. Filter or pause the list. Right-click to make a rule for the app or destination |
+| **Apps** | Traffic by app, with the interfaces each used |
+| **Traffic** | Bytes through each interface over the last hour, day or week |
 
 ### Network
 
-The **Network** page shows connected interfaces, their addresses, router and DNS servers. A chip marks the system default. Double-click an interface's name to give it a label in Pith.
+Each connected interface shows its addresses, router and DNS. **System default** marks the one macOS uses. Double-click a name to change it in Pith.
 
-| Test | What you get |
+**Test speed** measures latency, download and upload through that interface, and shows the Cloudflare data center that answered and the public IP it saw. A full test downloads 25 MB and uploads 8 MB. **Test All** tests the interfaces one after another so that two on the same line don't share the speed you're trying to measure.
+
+**Reach a server** lets you compare the networks against a destination of your own. Enter a host and port, such as `example.com:443`, and see which interfaces can connect and how long each took. If an interface's DNS servers don't answer, tests and local proxies through it can ask the Mac's public DNS servers, still through that interface.
+
+Some hotspots also show their signal and can change their public IP. Only these, each tested on the device itself:
+
+| Hotspot | Without its password | With its admin password |
+| :-- | :-- | :-- |
+| Inseego 5G MiFi M2000 | The bars, and 5G or LTE | Also the band in use (n41, n71…), the signal and the carrier, and **Change hotspot IP** |
+
+**Change hotspot IP** has the hotspot reconnect to its carrier, which usually gives it a new public IP. Pith keeps the admin password in your keychain. Any other hotspot, other Inseego models included, still works for routing as an ordinary interface, without these extras.
+
+A router can change its public IP too, when Pith has its admin password. Only this one, tested on the device itself:
+
+| Router | On its Network card |
 | :-- | :-- |
-| **Test speed** | Latency in milliseconds, download and upload speeds in Mbps, and the public IP and data center reported by Cloudflare. A full test uses about 33 MB per interface (25 MB down, 8 MB up). **Test All** runs the connected interfaces in sequence. |
-| **Reach a server** | Enter a host and port, such as `example.com:443`. Pith opens a TCP connection through each connected interface and shows the time and destination address or the error. |
+| Verizon Router CHR30A-R (Fios) | Its model beside its address on the Ethernet or Wi-Fi it serves. **Change IP** asks for the admin password while locked and renews the address once unlocked |
 
-Both tests use the chosen interface for DNS and the connection. If its DNS servers fail, Pith can try eligible resolvers from the Mac's DNS configuration through that interface.
-
-#### Change a public IP
-
-| Device | On its Network card |
-| :-- | :-- |
-| **Inseego 5G MiFi M2000** | See signal bars and network type. Unlock with the hotspot's admin password for carrier, band, signal strength and **Change hotspot IP**. The hotspot reconnects to its carrier. Pith waits for a fresh cellular session when the device reports its age, then checks the public addresses again. |
-| **Verizon Router CHR30A-R (Fios)** | On Ethernet or Wi-Fi, Pith shows the model beside the router address. Choose **Change IP** and enter the router's admin password to unlock it. Choose **Change IP** on the unlocked card to renew the WAN IPv4 lease. |
-
-Router renewal needs the helper and another connected network with internet access. Pith waits for macOS to select a working standby before releasing the lease. Rules with other exits can use them, and direct proxies on the renewing interface close their streams. The router's clients lose internet access during each release.
-
-If Verizon returns the same IPv4 address, Pith tries again, with pauses of 5, 20 and 60 seconds across at most three attempts. It only renews IPv4. With either device, the provider can return the old address.
-
-Device passwords stay in the macOS keychain. Other models can still serve as ordinary routing interfaces.
+**Change IP** has the router give its public IPv4 address up and ask Verizon for another, waiting longer each time Verizon gives the same one back, three times at most; it took 34 seconds in a test. Before it gives up the address, Pith checks that another connected network can reach the internet and waits for macOS to make one that passed the default. Rules with other interfaces try those, and local proxies through the router's interface close their streams and refuse new connections. Everything else on the router's network is offline meanwhile, for 5 seconds on the first try, 20 on the second and a minute on the third, plus the time the router takes to connect again, and connections through the old address end. The renewal leaves IPv6 alone. Pith needs its routing helper to make the router's interface give way to the other network.
 
 ### Local proxies
 
-Open **Settings → Local proxies → Add Proxy**. Pith suggests ports starting at `1080`. Double-click the displayed address to edit the port. Each port accepts SOCKS5, HTTP CONNECT and plain HTTP on TCP. It works while Pith is open, with or without the routing helper.
+A local proxy is a port on your Mac for apps and browsers that take a proxy, with routing on or off. It speaks SOCKS5 and HTTP, TCP only, and goes out one of three ways:
 
-| Exit | Where the connection goes |
+| | |
 | :-- | :-- |
-| **An interface** | Through one physical network. Connections fail if that interface goes down. Names sent to the proxy are resolved through that interface. |
-| **Rules: *scene*** | By the destination rules of any saved scene. Blocks, ordered interfaces and fallback apply. Unmatched traffic follows macOS. Rules restricted to particular apps are skipped. Rule edits apply to new proxy connections. |
-| **Another proxy…** | Through a SOCKS5 proxy that accepts connections without authentication, including a port shared by another Mac's Pith. The upstream resolves destination names. |
+| **Through one interface** | Everything through that network. When it is down, connections fail instead of using another |
+| **By a scene's rules** | Each connection where that scene's rules send it, even when another scene routes this Mac: a block rule refuses it, a rule's interfaces are tried in order, and what no rule matches goes where macOS sends it. Rules that name apps are left out: a proxy can't tell which app a connection is for |
+| **Through another proxy** | Through a port another Mac's Pith shares, or any SOCKS5 proxy without a password, by its host and port |
 
-Each row shows its connections and traffic. Quitting Pith closes its proxy ports, including when **Keep routing after quitting** is on.
+In Settings, **Add Proxy** suggests a port starting at `1080`. Double-click the address to change the port. Its row shows open connections and the bytes sent and received. Quitting Pith closes its ports, even with **Keep routing after quitting** on.
 
 ### Other devices
 
-1. Choose **Share with devices** on the proxy's row. On the other device, use an IPv4 address shown under **Devices → This Mac** and the proxy's port. A phone or tablet can use its Wi-Fi HTTP proxy setting.
-2. Choose **Add Device** and enter the device's IPv4 address or CIDR range. Or let the device connect once and choose **Allow** beside its refused attempt. The same device list applies to all shared ports.
-3. To keep another Mac's apps pointed at their local ports, set their Pith port's exit to **Another proxy…** and enter the sharing Mac's address and port.
+Turn on **Share with devices** for a local proxy, and the devices listed under **Devices** can use it at your Mac's IPv4 address: another computer, or a phone or tablet whose Wi-Fi settings take an HTTP proxy. **This Mac** shows the addresses they can use. **Add Device** takes a device's IPv4 address, or a range of them. The list applies to all shared ports. One that isn't listed is refused, and appears under **Devices** with **Allow** beside it. Each device shows its open connections and what it has moved.
 
-Shared ports identify clients by source IP. Allow devices on networks you trust. They can reach other hosts on the exit's local network. Pith checks destination addresses against the Mac's own interfaces. An upstream resolves names on its own machine, and a shared port requires its upstream to be on another machine.
+Another Mac can keep its own ports: in its Pith, a local proxy goes out through **Another proxy…**, your Mac's shared port, and the apps there still connect to `127.0.0.1`.
+
+Sharing asks for no password. Any device that can use a listed address can use the port, and reaches what your Mac reaches through it, its local network included. Pith refuses your Mac's own addresses. If another proxy looks up a name, what that name reaches is up to that proxy. Share on networks you trust. A shared proxy can't go out through a proxy on the same Mac.
 
 ### For scripts
 
-Send these HTTP requests directly to a configured port. Replace `1080` with the port shown in Settings.
+A local proxy's port also answers two plain HTTP requests made to the port itself, for a script or a tool that drives browsers through it:
+
+| | |
+| :-- | :-- |
+| `GET /` | What the port goes out through, whether it is online, and the public IP addresses the internet sees it by, as JSON |
+| `POST /change-ip` | Changes that public IP, as **Change hotspot IP** and **Change IP** do on the Network page, and answers with the old and the new address once it is done |
 
 ```sh
-curl --noproxy '*' 'http://127.0.0.1:1080/?max-age=60'
-curl --noproxy '*' -X POST http://127.0.0.1:1080/change-ip
+curl --noproxy '*' http://127.0.0.1:1081/
+curl --noproxy '*' -X POST http://127.0.0.1:1081/change-ip
 ```
 
-| Request | JSON response |
-| :-- | :-- |
-| `GET /` | Exit type, online state, public addresses when known, and whether a change can be requested. A scene has no single public IP. `max-age` asks for addresses at most that many seconds old. |
-| `POST /change-ip` | The old and observed public addresses after a renewal. Enable **Let apps and devices change its IP** to allow this on the port. Every permitted caller can then request a renewal. |
+Use your own port number in place of `1081`. Whatever can use the port can ask `GET /`. A port that follows a scene's rules has no single IP to report or change. Pith looks the addresses up once and keeps them until the network changes; `GET /?max-age=60` has them looked up again when they are older than a minute. When a lookup fails, or finds only an IPv4 or only an IPv6 address where the network has both, a plain `GET /` can use what Pith already knows. Another GET after 30 seconds makes it try again. The wait doubles each time, up to ten minutes.
 
-A plain GET reuses cached addresses. After an incomplete or failed lookup, later reads can retry after 30 seconds, with the interval doubling up to ten minutes. Requests for the same interface share one renewal. A change on another interface on that Mac returns `503` with `busy` until it finishes.
+`POST /change-ip` is refused until you turn on **Let apps and devices change its IP**, the button with two arrows on the proxy's row. Then every app on your Mac, and every device the proxy is shared with, can change that IP. A router that changes its IP takes everything on its network offline, from seconds to over a minute: think of who else is on it.
 
-A Pith upstream relays both requests. A POST needs permission at each hop. The local row can show the upstream's interface and public IP. Its **Change IP** button uses the upstream's permission even when the local port's POST is disabled.
+Pith changes one network's IP at a time, so that the network carrying your Mac while a router renews stays up: while another network's IP is being changed, `POST /change-ip` is answered `503`. Try again once that is done. Two requests for the same interface wait for the same change.
 
-Use an IP address, `localhost`, a single-label name or a `.local` name. The port checks the Host and browser request headers. Lookup retries, response fields, timeouts and HTTP errors are in the [port reference](docs/ARCHITECTURE.md#requests-to-a-port).
+A proxy that goes out through another Mac's Pith passes both requests on to it; a POST needs **Let apps and devices change its IP** on at every port it passes through. Its row names the network the other Mac uses and its public IP, with **Change IP** beside them when the other Mac allows it. You can use that button yourself even with POST turned off on your own port.
+
+Pith answers only requests that name the port by an IP address, `localhost`, a name without dots or a `.local` name, and checks the headers browsers send when a page makes the request. A page whose public name was pointed at your Mac still sends its own name and is refused. A device that asks by a full domain name, such as `mac.example.com`, is refused too: use your Mac's address, or its name on the local network. [Port replies and errors](docs/ARCHITECTURE.md#requests-to-a-port)
 
 ### For agents
 
-An MCP client can work with the Pith app you have open. Add the app's executable as a stdio server with the argument `mcp`. For a copy installed in Applications, use the command for your client.
+An AI agent that speaks the [Model Context Protocol](https://modelcontextprotocol.io), as Claude Code and Codex do, can work Pith for you: ask it to send an app through another network, to add or change rules, to set up a local proxy, or to change a network's IP. Pith's own executable is the server. Add it to the agent with the argument `mcp`:
 
 ```sh
 claude mcp add pith -- /Applications/Pith.app/Contents/MacOS/Pith mcp
 codex mcp add pith -- /Applications/Pith.app/Contents/MacOS/Pith mcp
 ```
 
-Ask it to check where an app would connect, test an interface, or show traffic. It can add and reorder rules, manage scenes, switch routing, configure proxies, allow devices and request an IP change. Configuration edits appear in the window. A renewal can take several minutes.
+An agent that takes its servers as JSON takes `{"command": "/Applications/Pith.app/Contents/MacOS/Pith", "args": ["mcp"]}`.
 
-Only programs running as your user can call the open app over its Unix socket. For a remote Mac, run the same command there over SSH. Tool calls can change routing without a second prompt from Pith. Set permissions in your MCP client. Helper installation, device passwords and editing Settings are handled in the app. [Tool names and connection details](docs/ARCHITECTURE.md#tools-for-agents)
+| The agent can | |
+| :-- | :-- |
+| **Read** | Whether routing is on, the scenes and their rules, the interfaces, the installed apps, the connections and the traffic; test an interface and its speed; check which rule a connection would match |
+| **Change** | Add, change, move and remove rules. Create, copy, rename or remove a scene. Turn routing on or off, or to another scene; add, change and remove local proxies, and the devices that may use the shared ones |
+| **Change IP** | Of the hotspot or the router behind an interface, or of what a local proxy goes out through |
+
+What an agent changes shows in Pith at once, and applies as your own changes do. It works the Pith that is open: while Pith is closed, the tools answer that it isn't running. Some things stay yours: installing the helper, which takes your password, the admin passwords of hotspots and routers, and Pith's settings.
+
+Only programs that run as you on this Mac reach the tools: Pith opens no network port for them. To work another Mac's Pith, have the agent start it there over SSH: `ssh other-mac /Applications/Pith.app/Contents/MacOS/Pith mcp`.
+
+Changing an IP can take over a minute, longer than some agents wait for a tool. Codex waits as long as `tool_timeout_sec = 180` says, under `[mcp_servers.pith]` in its configuration.
+
+The tools do what you could do in Pith, without asking you again. An agent that also reads web pages or other people's files can be talked into things by what it reads: allow it the tools that change something as far as you trust it. Pith tells the agent which tools only read, so that it can ask you before the others. [All 23 tools](docs/ARCHITECTURE.md#tools-for-agents)
 
 ### Settings
 
-**Safe start** checks internet access when routing starts and rolls back a failed start. It is on by default. Settings also controls IPv6 routing, domain recognition, log retention, opening at login, resuming routing on launch, keeping it on after quitting and showing the download rate in the menu bar.
-
-**Back up everything** exports and restores scenes, rules, interface aliases, proxies, allowed devices and settings. The app follows the system's light or dark appearance and supports English and Simplified Chinese.
+- **Safe start**, on by default: if the Mac loses the internet right after routing starts, Pith undoes it.
+- **Resume routing on launch**, **Keep routing after quitting**, **Open at login**, and the download speed in the menu bar.
+- Turn domain recognition and IPv6 routing on or off, and choose how long to keep the connection log.
+- **Back up everything** saves scenes and their rules, interface names, local proxies, allowed devices and settings in one file. Import it in Settings to put them back.
+- **English and Simplified Chinese**, light and dark.
 
 ## With a VPN or iCloud Private Relay
 
@@ -234,21 +263,29 @@ If it reports an error, or you're still offline once the helper is removed, stop
 
 ## Privacy
 
-Pith reads connection metadata and can recognize names from DNS, TLS, HTTP and QUIC. It does not decrypt HTTPS or install a certificate. Its configuration, connection log and traffic totals are stored on the Mac. Settings controls how long the connection log is kept.
+Pith reads where connections go: addresses, ports, and host names from TLS SNI, the HTTP Host, DNS or the start of a QUIC connection. It doesn't save what connections carry, decrypt HTTPS or install a certificate. Rules, the connection log and traffic totals stay on your Mac, and the log keeps as many days as Settings says.
 
-With **Safe start** on, starting routing opens a verified TLS connection to ipify. **Test speed** contacts Cloudflare. **Reach a server** connects to the host and port you enter. Public-address probes use ipify during renewals and when a proxy needs fresh exit information. An enabled Pith-to-Pith proxy can request that information automatically as it checks its upstream. The Network page reads supported gateways on the local network, including their model or signal before you unlock them. [Network and probe details](docs/ARCHITECTURE.md#network-tests)
+With **Safe start** on, each time routing starts, the helper opens one TLS connection to `api.ipify.org` to check the Mac is still online, and sends no request over it.
+
+A full speed test on the Network page downloads 25 MB from and uploads 8 MB to [Cloudflare's speed test](https://speed.cloudflare.com), which also tells Pith the public address it saw. **Reach a server** connects to the host and port you enter. Changing a hotspot's or a router's IP asks [ipify](https://www.ipify.org) for its public addresses before and after. For a router, Pith also checks which other networks can carry the Mac.
+
+When a script asks a port for its public addresses, Pith asks ipify if it needs to find them or refresh them. A port through another Mac's Pith checks its upstream from time to time while Pith is open. That check can ask the other Mac to look up its addresses too.
+
+While the Network page is open, Pith reads the device's own admin page on your local network. It can read a hotspot's bars or a router's model before login, and more once it has the admin password. The first time a port through an interface is asked about itself, Pith also checks which device is there. It knows the hotspot by its label and asks a router for its model. It remembers the answer so it doesn't have to ask on every GET.
 
 ## Documentation
 
-| Document | Contents |
+| | |
 | :-- | :-- |
-| [Architecture](docs/ARCHITECTURE.md) | Routing, DNS, proxies, public-IP changes and MCP. |
-| [Interface design](docs/DESIGN.md) | The window, menu bar panel and controls. |
-| [Building](docs/BUILDING.md) | Build the app, run the mock and verify a package. |
-| [Client](internal/client/README.md) · [Helper](internal/helper/README.md) · [Helper versioning](docs/HELPER-VERSIONING.md) | App services, privileged IPC and helper updates. |
-| [Performance](docs/PERFORMANCE.md) | Relay benchmarks and how to read the measurements. |
-| [Hardware tests](docs/ROOT-TEST.md) · [Acceptance plan](docs/NEXT-ACCEPTANCE.md) | Recorded results, their scope and outstanding checks. |
-| [Changelog](CHANGELOG.md) | Released and unreleased changes. |
+| **[Architecture](docs/ARCHITECTURE.md)** | The app, the helper, the engine, and how they talk |
+| **[Design](docs/DESIGN.md)** | The interface: its principles, colors and pages |
+| **[Helper](internal/helper/README.md)** | What installing the helper changes, and its socket |
+| **[Client](internal/client/README.md)** | The backend the interface talks to |
+| **[Building](docs/BUILDING.md)** | Build the app, run the mock and verify the package |
+| **[Helper updates](docs/HELPER-VERSIONING.md)** | When an update needs your password |
+| **[Performance](docs/PERFORMANCE.md)** | How the routing helper was measured |
+| **[Hardware tests](docs/ROOT-TEST.md)** · **[Acceptance plan](docs/NEXT-ACCEPTANCE.md)** | What passed on real networks and what still needs a test |
+| **[Changelog](CHANGELOG.md)** | What's new in the source build and each release |
 
 ## License
 
