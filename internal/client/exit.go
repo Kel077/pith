@@ -96,7 +96,7 @@ func (c *Client) observeExits(links []api.Interface) {
 
 func sameExitLink(a, b api.Interface) bool {
 	return a.Name == b.Name && a.HardwareAddr == b.HardwareAddr && a.Up == b.Up &&
-		a.Router == b.Router && a.Router6 == b.Router6 && a.Label == b.Label && a.Kind == b.Kind &&
+		a.Router == b.Router && a.Router6 == b.Router6 && a.Label == b.Label && a.HardwarePort == b.HardwarePort && a.Kind == b.Kind &&
 		slices.Equal(a.IPv4, b.IPv4) && slices.Equal(a.IPv6, b.IPv6)
 }
 
@@ -415,6 +415,7 @@ func (c *Client) changingExit(via api.InterfaceRef) *exitChange {
 	for _, state := range c.exits {
 		links = append(links, state.link)
 	}
+	current := links
 	// A device may temporarily disappear while reconnecting. Include the
 	// saved identity of its change without hiding other links with its MAC.
 	for _, pending := range c.exitChanges {
@@ -429,6 +430,20 @@ func (c *Client) changingExit(via api.InterfaceRef) *exitChange {
 		pending := c.exitChanges[link.Name]
 		if pending != nil && link.HardwareAddr == pending.link.HardwareAddr {
 			return pending
+		}
+		// The same modem may have returned under a new name. Resolve the
+		// original reference against the current inventory, without the
+		// synthetic entry for its missing old link.
+		if link.HardwarePort == api.HotspotRM520N {
+			for _, p := range c.exitChanges {
+				if p.link.HardwarePort != api.HotspotRM520N || p.link.HardwareAddr == "" || p.link.HardwareAddr != link.HardwareAddr {
+					continue
+				}
+				ref := api.InterfaceRef{Name: p.link.Name, HardwareAddr: p.link.HardwareAddr}
+				if now := ref.Resolve(current); now != nil && now.Name == link.Name {
+					return p
+				}
+			}
 		}
 		return nil
 	}
@@ -523,8 +538,9 @@ func (c *Client) runExitChange(parent context.Context, pending *exitChange, devi
 		defer bound()
 	}
 	iface := pending.link.Name
+	via := api.InterfaceRef{Name: iface, HardwareAddr: pending.link.HardwareAddr}
 	if device == exitAutomatic {
-		_, pending.err = c.hotspot(ctx, iface)
+		_, pending.err = c.hotspotFor(ctx, via)
 		if pending.err == nil {
 			device = exitHotspot
 		} else if api.Code(pending.err) == api.ErrUnsupported {
@@ -539,7 +555,7 @@ func (c *Client) runExitChange(parent context.Context, pending *exitChange, devi
 				ctx, bound = context.WithTimeout(ctx, 3*time.Minute)
 				defer bound()
 			}
-			pending.hotspot, pending.err = c.renewHotspot(ctx, iface)
+			pending.hotspot, pending.err = c.renewHotspot(ctx, via)
 			before, after = pending.hotspot.Before, pending.hotspot.After
 			pending.router = api.RouterRenewal{Before: before, After: after, Took: time.Since(started)}
 		} else {

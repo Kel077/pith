@@ -240,11 +240,15 @@ func storeInterfaces(store scDictionary) map[string]api.Interface {
 		if _, exists := result[name]; exists && id != primaryService {
 			continue
 		}
+		port := props.str("UserDefinedName")
 		label := store.dict(base).str("UserDefinedName")
 		if label == "" {
-			label = props.str("UserDefinedName")
+			label = port
 		}
-		iface := api.Interface{Name: name, Label: label, Kind: kind(name, label, props.str("Type"), props.str("Hardware"))}
+		iface := api.Interface{Name: name, Label: label, HardwarePort: port, Kind: kind(name, label, props.str("Type"), props.str("Hardware"))}
+		if strings.EqualFold(port, api.HotspotRM520N) {
+			iface.Kind = api.KindCellular
+		}
 		iface.Router = store.dict(state + "/IPv4").str("Router")
 		iface.Router6 = store.dict(state + "/IPv6").str("Router")
 		iface.DNS = store.dict(state + "/DNS").array("ServerAddresses")

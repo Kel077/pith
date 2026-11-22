@@ -16,6 +16,7 @@ import (
 	"github.com/Kel077/pith/internal/api"
 	"github.com/Kel077/pith/internal/helper"
 	"github.com/Kel077/pith/internal/helper/identity"
+	"github.com/Kel077/pith/internal/hotspot"
 	"github.com/Kel077/pith/internal/keychain"
 	"github.com/Kel077/pith/internal/netif"
 	"github.com/Kel077/pith/internal/proxy"
@@ -66,6 +67,7 @@ type Client struct {
 	artifactOpen   func(string, bool) (*os.File, artifactStamp, error)
 	checkFile      func(string, bool) error
 	hotspots       map[string]*hotspotSession
+	rmnet          hotspotController
 	hotspotPort    string        // of the hotspots' web admin: 80 when empty
 	hotspotPace    time.Duration // between tests after a renewal: a second when zero
 	hotspotIndex   func(string) (int, error)
@@ -113,7 +115,7 @@ func New(opts Options) (*Client, error) {
 	if opts.Version == "" {
 		opts.Version = "dev"
 	}
-	c := &Client{opts: opts, configPath: filepath.Join(opts.ConfigDir, "config.json"), interfaces: netif.List, lookup: net.DefaultResolver.LookupNetIP, dialer: netif.Dialer,
+	c := &Client{opts: opts, configPath: filepath.Join(opts.ConfigDir, "config.json"), interfaces: netif.List, lookup: net.DefaultResolver.LookupNetIP, dialer: netif.Dialer, rmnet: hotspot.NewRMNet(),
 		probeURLs: [2]string{"https://api.ipify.org", "https://api6.ipify.org"}, speedURL: speedServer, secretGet: keychain.Get, secretSet: keychain.Set,
 		hotspotIndex: func(name string) (int, error) {
 			link, err := net.InterfaceByName(name)

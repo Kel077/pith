@@ -56,6 +56,17 @@ func TestStoreEmptyValues(t *testing.T) {
 	}
 }
 
+func TestRenamedRMNetService(t *testing.T) {
+	store := scDictionary{
+		"Setup:/Network/Service/A":           scDictionary{"UserDefinedName": "Travel"},
+		"Setup:/Network/Service/A/Interface": scDictionary{"DeviceName": "cell-test", "UserDefinedName": api.HotspotRM520N, "Type": "Ethernet"},
+	}
+	link := storeInterfaces(store)["cell-test"]
+	if link.Kind != api.KindCellular || link.Label != "Travel" || link.HardwarePort != api.HotspotRM520N {
+		t.Fatal(link)
+	}
+}
+
 func TestKinds(t *testing.T) {
 	for _, tt := range []struct {
 		name, label, typ string

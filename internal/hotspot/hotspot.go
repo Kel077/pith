@@ -1,5 +1,5 @@
-// Package hotspot talks to mobile hotspots through the interfaces they
-// serve, over their web admin: Inseego MiFi devices, such as the M2000.
+// Package hotspot controls cellular connections through the M2000 web admin
+// and the Quectel RM520N-GL's local RMNet command-line tool.
 package hotspot
 
 import (
@@ -22,9 +22,7 @@ import (
 	"github.com/Kel077/pith/internal/api"
 )
 
-// Model is the model of the hotspot behind an interface, by the interface's
-// label, or "" when Pith can't talk to it. Only the Inseego 5G MiFi M2000 has
-// been tested; other models may differ, so Pith leaves them alone.
+// Model identifies an Inseego web admin by its interface label.
 func Model(label string) string {
 	if strings.Contains(strings.ToLower(label), "m2000") {
 		return "M2000"
