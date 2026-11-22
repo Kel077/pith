@@ -421,8 +421,9 @@ const (
 
 // Interface is a network interface.
 type Interface struct {
-	Name         string        `json:"name"`  // BSD name: en0
-	Label        string        `json:"label"` // as System Settings names it: Wi-Fi, Ethernet, iPhone USB
+	Name         string        `json:"name"`                   // BSD name: en0
+	Label        string        `json:"label"`                  // as System Settings names it: Wi-Fi, Ethernet, iPhone USB
+	HardwarePort string        `json:"hardwarePort,omitempty"` // the system's port name, independent of a renamed service
 	Kind         InterfaceKind `json:"kind"`
 	HardwareAddr string        `json:"hardwareAddr,omitempty"`
 	Up           bool          `json:"up"`             // it has a link and an address: rules can use it
@@ -475,6 +476,9 @@ type Hotspot struct {
 	At     time.Time    `json:"at"`
 }
 
+// HotspotRM520N is the Quectel model controlled by RMNet.
+const HotspotRM520N = "RM520N-GL"
+
 // HotspotCell is the cell a hotspot uses.
 type HotspotCell struct {
 	Operator string `json:"operator,omitempty"` // the carrier: T-Mobile
@@ -482,6 +486,19 @@ type HotspotCell struct {
 	Signal   int    `json:"signal"`             // dBm
 	SNR      int    `json:"snr"`                // dB
 	Roaming  bool   `json:"roaming,omitempty"`
+	// Component carriers as reported, primary first. A band can occur twice.
+	Carriers []HotspotCarrier `json:"carriers,omitempty"`
+	RSRP     *int             `json:"rsrp,omitempty"` // dBm, when measured
+	RSRQ     *int             `json:"rsrq,omitempty"` // dB
+	SINR     *float64         `json:"sinr,omitempty"` // dB, including a measured zero
+}
+
+// HotspotCarrier is one component of the reported cellular connection.
+type HotspotCarrier struct {
+	Role         string  `json:"role,omitempty"`         // PCC or SCC
+	RAT          string  `json:"rat,omitempty"`          // LTE or NR5G
+	Band         string  `json:"band"`                   // B3 or n78
+	BandwidthMHz float64 `json:"bandwidthMHz,omitempty"` // downlink, when known
 }
 
 // HotspotRenewal tells what renewing a hotspot changed: Pith's HTTPS test

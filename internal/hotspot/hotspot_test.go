@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -89,7 +90,7 @@ func TestStatusReadsTheCell(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := api.HotspotCell{Operator: "Example Mobile", Band: "n71", Signal: -101, SNR: 9}
-	if h.Locked || h.Cell == nil || *h.Cell != want {
+	if h.Locked || !reflect.DeepEqual(h.Cell, &want) {
 		t.Fatalf("%+v %+v", h, h.Cell)
 	}
 }
