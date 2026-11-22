@@ -13,7 +13,7 @@ applied by the UI.
 | `internal/client` | Interface inventory, rule checks, network tests, hardware sessions, proxy exits and authenticated helper IPC. Saves `config.json` atomically in the user's Pith Application Support directory. |
 | `internal/proxy` and `internal/proxy/egress` | App-owned TCP listeners, device access, proxy protocols and interface-bound dialing. These ports work while the helper is stopped or absent. |
 | `cmd/pithd`, `internal/helper`, `internal/engine` | Root launchd service, authenticated Unix socket and packet forwarding. The engine owns capture routes, flow attribution and routing telemetry. |
-| `internal/hotspot`, `internal/router`, `internal/primary` | The app talks to the two supported gateways. The helper temporarily yields an interface's primary rank for router renewal. |
+| `internal/hotspot`, `internal/router`, `internal/primary` | The app controls cellular modems and the supported router. The helper temporarily yields an interface's primary rank for router renewal. |
 | `internal/mcp` | The app serves tools on a per-user Unix socket. Another invocation of the same executable, `Pith mcp`, connects a stdio MCP client to it. |
 
 ## Network tests
@@ -96,6 +96,33 @@ about ten seconds while its DNS server restarts; the probes can then ask the
 Mac's public DNS servers through the hotspot.
 [Device tests](../internal/hotspot/hotspot_test.go) ·
 [Client retest](../internal/client/hotspot.go)
+
+### Quectel RM520N-GL over RMNet
+
+SystemConfiguration keeps the hardware port name alongside the editable
+service name. The RM520N-GL port is cellular even when the service has been
+renamed or has only IPv6. The unprivileged client invokes
+`/Applications/RMNet.app/Contents/MacOS/RMNet`. It reads the QMI data state
+from `status --json` and the operator, serving-cell signal and component
+carriers from `network --json`. Repeated bands are separate components.
+The modem can be registered and idle between packets while its data call is up.
+
+RMNet owns the QMI data calls. Its CLI exposes a radio switch, and the redial
+performed during an APN edit uses that same switch. Pith checks that the
+radio and data are on, probes the interface, then requests `radio off` and
+`radio on`. Status reads and the radio cycle take turns on the AT port.
+RMNet selects the first USB device matching `2c7c:0801`, so Pith checks for
+a single match and rechecks its identity before each switch. A lost reply
+or cancellation after the off request triggers a bounded independent attempt
+to restore the radio. The hardware address identifies the interface when it
+returns, including under a new BSD name.
+
+Once the driver has a data call again, the client retests both public address
+families through that interface. On an IPv6-only carrier with CLAT and NAT64,
+the HTTPS IPv4 result is the carrier's translated public address. The Network
+page and MCP compare only addresses seen on both sides of a renewal. RMNet
+renewal time includes the public-address test after reconnection.
+[Modem driver](../internal/hotspot/rmnet.go) · [Renewal tests](../internal/client/rmnet_test.go)
 
 ## Renewing a router's address
 
@@ -653,7 +680,8 @@ connection log. [Tool definitions](../internal/mcp/tools.go) ·
 `change_ip` reports the addresses it observed before and after. Its `changed`
 flag tells that an address found both before and after differs, family by
 family, as the window compares them: a family missing on either side isn't
-compared. A hotspot whose test after the change found its IPv6 address alone,
+compared. The optional `ipv4Changed` and `ipv6Changed` fields give the
+individual comparisons when both measurements exist. A hotspot whose test after the change found its IPv6 address alone,
 unchanged, is not reported changed, whatever its IPv4 address was.
 
 For clients configured with JSON, the server entry is

@@ -8,6 +8,8 @@ The next release updates the helper, so macOS asks for your password once when y
 
 ### Added
 
+- The Quectel RM520N-GL with RMNet in QMI mode shows its cellular signal and carrier aggregation and can renew its public addresses from the Network page, MCP or a local proxy.
+
 - **Share with devices** on a local proxy lets the devices listed under **Devices** use it at the Mac's address: another computer, or a phone or tablet whose Wi-Fi settings take an HTTP proxy. A device is listed by its IPv4 address or a range of them; one that isn't listed is refused, and appears under **Devices** with **Allow** beside it. Each device shows how many connections it has open and what it has moved across the shared ports. Sharing asks for no password: share on networks you trust.
 - A local proxy can go out through **Another proxy…**, a port another Mac's Pith shares or any SOCKS5 proxy without a password, so that a second Mac keeps the same ports on 127.0.0.1 and leaves through the first Mac's networks.
 - A local proxy can go out by the rules of any saved scene, even one that isn't routing this Mac: a block rule refuses a connection, a rule's interfaces are tried in order, and what no rule matches goes where macOS sends it. Rules that name apps are left out, since a proxy can't tell the app. When an IP or a range matters to the rules, the port checks the addresses of a name and connects only to ones the rules allowed.

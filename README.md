@@ -123,11 +123,12 @@ Each connected interface shows its addresses, router and DNS. A **Default** chip
 
 Some hotspots also show their signal and can change their public IP. Only these, each tested on the device itself:
 
-| Hotspot | Without its password | With its admin password |
+| Hotspot | Connection and signal | Change hotspot IP |
 | :-- | :-- | :-- |
-| Inseego 5G MiFi M2000 | The bars, and 5G or LTE | Also the band in use (n41, n71…), the signal and the carrier, and **Change hotspot IP** |
+| Inseego 5G MiFi M2000 | Signal bars and 5G or LTE. Its admin password unlocks the band, signal measurements and carrier | Reconnects cellular data through the hotspot's web admin |
+| Quectel RM520N-GL | With RMNet in QMI mode, the operator, network type, bands, component-carrier bandwidths and available RSRP, RSRQ and SINR | Uses RMNet to cycle the radio. The card compares public IPv4 and IPv6 separately and shows elapsed time |
 
-**Change hotspot IP** has the hotspot reconnect to its carrier, which usually gives it a new public IP. Pith keeps the admin password in your keychain. Any other hotspot, other Inseego models included, still works for routing as an ordinary interface, without these extras.
+The carrier assigns the addresses when the hotspot reconnects and may return the same ones. Pith keeps the M2000's password in your keychain. For the RM520N-GL, install RMNet in Applications and connect one modem. On an IPv6-only carrier that provides NAT64, the IPv4 result is the public address seen through the Mac's CLAT. Other hotspots can still be used as ordinary routing interfaces.
 
 A router can change its public IP too, when Pith has its admin password. Only this one, tested on the device itself:
 

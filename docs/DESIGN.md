@@ -84,6 +84,11 @@ page has a large title and its actions on the right.
     sheet. Once unlocked, the screen shows the carrier, the band in large
     type with its frequency, signal strength and SNR. **Change hotspot IP**
     reconnects the hotspot when it is unlocked and connected.
+  - The RM520N-GL shows its signal bars, radio technology and operator together.
+    The bands and their bandwidths sit above the available RSRP, RSRQ and SINR.
+    The card labels multiple components of the same radio technology as carrier
+    aggregation. After **Change hotspot IP**, it shows a result for each
+    address family and the time through the last address check.
   - A recognized CHR30A-R has its model beside the router address even when
     locked. **Change IP**, beside **Test speed**, opens the password sheet
     while locked and starts renewal when unlocked and connected. During the yield,
