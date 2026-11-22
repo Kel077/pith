@@ -100,6 +100,10 @@ func (a *App) readHotspots(ctx context.Context) {
 }
 
 func (a *App) setHotspot(name string, h api.Hotspot, err error) {
+	i := a.ifaceByName(name)
+	if i == nil || !i.Up || i.Kind != api.KindCellular || h.Model == api.HotspotRM520N && !strings.EqualFold(i.HardwarePort, h.Model) {
+		return
+	}
 	switch {
 	case api.Code(err) == api.ErrUnsupported:
 		a.hotspot.none[name] = true
@@ -107,6 +111,8 @@ func (a *App) setHotspot(name string, h api.Hotspot, err error) {
 		a.hotspotNames()
 	case err == nil:
 		a.hotspot.info[name] = h
+	case h.Model == api.HotspotRM520N && a.hotspot.info[name].Model == "":
+		a.hotspot.info[name] = api.Hotspot{Interface: name, Model: h.Model}
 	}
 	// Otherwise keep what was read last: a hotspot that reconnects doesn't
 	// answer for a moment.
@@ -128,12 +134,13 @@ func (a *App) hotspotNames() {
 
 // renewHotspot has the hotspot behind an interface reconnect to its
 // carrier, for new public addresses.
-func (a *App) renewHotspot(name string) {
-	if a.hotspot.renewing[name] {
+func (a *App) renewHotspot(i *api.Interface) {
+	name, key := i.Name, hotspotRenewalKey(i)
+	if a.hotspot.renewing[key] {
 		return
 	}
-	a.hotspot.renewing[name] = true
-	delete(a.hotspot.renewals, name)
+	a.hotspot.renewing[key] = true
+	delete(a.hotspot.renewals, key)
 	delete(a.speeds, name) // of its old connection
 	var r api.HotspotRenewal
 	a.async(func(ctx context.Context) (err error) {
@@ -142,13 +149,20 @@ func (a *App) renewHotspot(name string) {
 		r, err = a.Service.RenewHotspot(ctx, name)
 		return err
 	}, func() {
-		delete(a.hotspot.renewing, name)
-		a.hotspot.renewals[name] = r
+		delete(a.hotspot.renewing, key)
+		a.hotspot.renewals[key] = r
 		select { // read its new state
 		case a.hotspot.kick <- struct{}{}:
 		default:
 		}
-	}, func(error) { delete(a.hotspot.renewing, name) })
+	}, func(error) { delete(a.hotspot.renewing, key) })
+}
+
+func hotspotRenewalKey(i *api.Interface) string {
+	if strings.EqualFold(i.HardwarePort, api.HotspotRM520N) && i.HardwareAddr != "" {
+		return i.HardwareAddr
+	}
+	return i.Name
 }
 
 // The picture of a hotspot: its enclosure and a blank screen, without

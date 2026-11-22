@@ -197,6 +197,12 @@ func TestSnapshots(t *testing.T) {
 		a, svc := testApp(t, mock.Options{Sample: true, HelperInstalled: true, Running: true})
 		a.page = "network"
 		a.hotspot.renewals["en9"] = api.HotspotRenewal{Before: api.Probe{PublicIPv4: "198.51.100.80"}, After: api.Probe{PublicIPv4: "198.51.100.81"}}
+		rmnet := a.ifaceByName("cell-demo")
+		a.hotspot.renewals[hotspotRenewalKey(rmnet)] = api.HotspotRenewal{
+			Before: api.Probe{PublicIPv4: "192.0.2.60", PublicIPv6: "2001:db8:520::2"},
+			After:  api.Probe{PublicIPv4: "192.0.2.60", PublicIPv6: "2001:db8:521::2"},
+			Took:   14 * time.Second,
+		}
 		tt = ui.NewTester(a.WindowView, 1040, 1180)
 		tt.SetDark(dark)
 		tt.SetScale(2)

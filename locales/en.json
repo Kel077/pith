@@ -675,6 +675,24 @@
   },
   "wrongPassword": "Wrong password",
   "signalAndSnr": "Signal strength · signal-to-noise ratio",
+  "cellularBands": "Bands",
+  "modemStatusUnavailable": "Modem status unavailable",
+  "@cellularBands": {
+    "description": "The radio bands in use on a cellular modem."
+  },
+  "carrierAggregation": "Carrier aggregation",
+  "@carrierAggregation": {
+    "description": "The modem reports two or more component carriers of the same radio technology."
+  },
+  "hotspotRenewalTime": "Reconnected in {seconds} s",
+  "@hotspotRenewalTime": {
+    "description": "Elapsed time through the public-address check after a modem renewal.",
+    "placeholders": { "seconds": { "type": "String" } }
+  },
+  "addressNotObserved": "Not measured",
+  "@addressNotObserved": {
+    "description": "A public address family that the renewal probe could not measure."
+  },
   "ipUnchanged": "{ip} · unchanged",
   "@ipUnchanged": {
     "description": "After changing a hotspot's IP, when its public IP stayed the same.",

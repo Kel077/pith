@@ -29,3 +29,17 @@ func TestRenewalText(t *testing.T) {
 		}
 	}
 }
+
+func TestRMNetBands(t *testing.T) {
+	c := api.HotspotCell{Carriers: []api.HotspotCarrier{
+		{Role: "PCC", RAT: "LTE", Band: "B1", BandwidthMHz: 10},
+		{Role: "SCC", RAT: "NR5G", Band: "n78", BandwidthMHz: 80},
+	}}
+	if bands, ca := rmnetBands(&c); ca || bands != "B1 (10 MHz) + n78 (80 MHz)" {
+		t.Fatal("dual connectivity", bands, ca)
+	}
+	c.Carriers = append(c.Carriers, api.HotspotCarrier{Role: "SCC", RAT: "NR5G", Band: "n78"})
+	if bands, ca := rmnetBands(&c); !ca || bands != "B1 (10 MHz) + n78 (80 MHz) + n78" {
+		t.Fatal("aggregation", bands, ca)
+	}
+}

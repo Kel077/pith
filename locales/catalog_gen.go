@@ -3100,6 +3100,74 @@ func (msgs Messages) SignalAndSnr() string {
 	return Catalog.Format(msgs.locale, "signalAndSnr", nil)
 }
 
+// CellularBands says "Bands"
+// in the language the app shows.
+//
+// The radio bands in use on a cellular modem.
+func CellularBands() string { return In(i18n.Locale()).CellularBands() }
+
+// CellularBands says "Bands"
+// in the language of msgs.
+//
+// The radio bands in use on a cellular modem.
+func (msgs Messages) CellularBands() string {
+	return Catalog.Format(msgs.locale, "cellularBands", nil)
+}
+
+// ModemStatusUnavailable says "Modem status unavailable"
+// in the language the app shows.
+func ModemStatusUnavailable() string { return In(i18n.Locale()).ModemStatusUnavailable() }
+
+// ModemStatusUnavailable says "Modem status unavailable"
+// in the language of msgs.
+func (msgs Messages) ModemStatusUnavailable() string {
+	return Catalog.Format(msgs.locale, "modemStatusUnavailable", nil)
+}
+
+// CarrierAggregation says "Carrier aggregation"
+// in the language the app shows.
+//
+// The modem reports two or more component carriers of the same radio
+// technology.
+func CarrierAggregation() string { return In(i18n.Locale()).CarrierAggregation() }
+
+// CarrierAggregation says "Carrier aggregation"
+// in the language of msgs.
+//
+// The modem reports two or more component carriers of the same radio
+// technology.
+func (msgs Messages) CarrierAggregation() string {
+	return Catalog.Format(msgs.locale, "carrierAggregation", nil)
+}
+
+// HotspotRenewalTime says "Reconnected in {seconds} s"
+// in the language the app shows.
+//
+// Elapsed time through the public-address check after a modem renewal.
+func HotspotRenewalTime(seconds string) string { return In(i18n.Locale()).HotspotRenewalTime(seconds) }
+
+// HotspotRenewalTime says "Reconnected in {seconds} s"
+// in the language of msgs.
+//
+// Elapsed time through the public-address check after a modem renewal.
+func (msgs Messages) HotspotRenewalTime(seconds string) string {
+	return Catalog.Format(msgs.locale, "hotspotRenewalTime", map[string]any{"seconds": seconds})
+}
+
+// AddressNotObserved says "Not measured"
+// in the language the app shows.
+//
+// A public address family that the renewal probe could not measure.
+func AddressNotObserved() string { return In(i18n.Locale()).AddressNotObserved() }
+
+// AddressNotObserved says "Not measured"
+// in the language of msgs.
+//
+// A public address family that the renewal probe could not measure.
+func (msgs Messages) AddressNotObserved() string {
+	return Catalog.Format(msgs.locale, "addressNotObserved", nil)
+}
+
 // IpUnchanged says "{ip} · unchanged"
 // in the language the app shows.
 //

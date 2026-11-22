@@ -153,7 +153,11 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 		}
 		h, isHotspot := a.hotspot.info[i.Name]
 		if isHotspot {
-			a.hotspotDevice(c, h, col)
+			if h.Model == api.HotspotRM520N {
+				rmnetDevice(c, h, col, a.ifaceLabel(ref))
+			} else {
+				a.hotspotDevice(c, h, col)
+			}
 		}
 		rt, isRouter := a.router.info[i.Name]
 		// The details, as rows of their own inside the pane.
@@ -176,18 +180,22 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 		// it; over it, the public IP it found and where, or what changing a
 		// hotspot's IP did, on a line of its own that both addresses fit,
 		// wrapping rather than cutting them.
-		hr, rr := a.hotspot.renewals[i.Name], a.router.renewals[i.Name]
+		hotspotKey := hotspotRenewalKey(i)
+		hr, rr := a.hotspot.renewals[hotspotKey], a.router.renewals[i.Name]
+		rmnetResult := strings.EqualFold(i.HardwarePort, api.HotspotRM520N) && hr.Took > 0
 		renewal := renewalText(hr.Before, hr.After) // "" for none
 		if isRouter {
 			renewal = renewalText(rr.Before, rr.After)
 		}
 		s, tested := a.speeds[i.Name]
-		renewing := a.hotspot.renewing[i.Name] || a.router.renewing[i.Name]
+		renewing := a.hotspot.renewing[hotspotKey] || a.router.renewing[i.Name]
 		// What uses a local proxy through it may have had its IP changed.
 		asked := !renewing && a.exitChanging(i.Name)
 		busy := renewing || asked || a.speeding[i.Name]
 		ui.Column(c).Gap(8).Margin(ui.Auto, 0, 0, 0).Children(func() {
 			switch {
+			case rmnetResult:
+				rmnetRenewal(c, hr)
 			case renewal != "":
 				renewalLine(c, renewal)
 			case tested && s.OK:
@@ -205,7 +213,7 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 			}
 			ui.Row(c).Gap(10).Children(func() {
 				switch {
-				case a.hotspot.renewing[i.Name]:
+				case a.hotspot.renewing[hotspotKey]:
 					ui.Spinner(c)
 					muted(c, locales.ChangingHotspotIp())
 				case a.router.renewing[i.Name]:
@@ -219,7 +227,7 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 				case a.speeding[i.Name]:
 					ui.Spinner(c)
 					muted(c, locales.Testing())
-				case renewal != "":
+				case renewal != "" || rmnetResult:
 					// The line above says the addresses.
 				case tested && s.OK:
 					speedFigures(c, s)
@@ -239,7 +247,7 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 						renew.Opacity(0.5).Tooltip(locales.HotspotPassword())
 					}
 					if renew.Clicked() && !busy && !h.Locked && h.Connected {
-						a.renewHotspot(i.Name)
+						a.renewHotspot(i)
 					}
 				}
 				if isRouter {
@@ -293,6 +301,11 @@ func (a *App) downRow(c *ui.Context, i *api.Interface) {
 		}
 		ui.Text(c, i.Name).FontSize(12).TextColor(t.TextMuted)
 		ui.Spacer(c)
+		if a.hotspot.renewing[hotspotRenewalKey(i)] {
+			ui.Spinner(c)
+			muted(c, locales.ChangingHotspotIp())
+			return
+		}
 		dot(c, t.TextMuted, 7, true)
 		ui.Text(c, locales.NotConnected()).FontSize(12).TextColor(t.TextMuted).SingleLine().Shrink(0)
 	})
@@ -354,11 +367,16 @@ func speedFigures(c *ui.Context, s api.SpeedTest) {
 func (a *App) testSpeeds(names []string) {
 	var queue []string
 	for _, name := range names {
-		if a.speeding[name] || a.hotspot.renewing[name] || a.router.renewing[name] || a.exitChanging(name) {
+		i := a.ifaceByName(name)
+		if i == nil {
+			continue
+		}
+		key := hotspotRenewalKey(i)
+		if a.speeding[name] || a.hotspot.renewing[key] || a.router.renewing[name] || a.exitChanging(name) {
 			continue
 		}
 		a.speeding[name] = true
-		delete(a.hotspot.renewals, name)
+		delete(a.hotspot.renewals, key)
 		delete(a.router.renewals, name)
 		queue = append(queue, name)
 	}

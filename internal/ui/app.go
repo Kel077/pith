@@ -362,6 +362,12 @@ func (a *App) setStatus(st api.Status) {
 }
 
 func (a *App) setIfaces(ifs []api.Interface) {
+	for _, old := range a.ifaces {
+		next := refOf(&old).Resolve(ifs)
+		if next == nil || next.Name != old.Name || next.HardwarePort != old.HardwarePort {
+			delete(a.hotspot.info, old.Name)
+		}
+	}
 	a.allIfaces = ifs
 	a.ifaces = withoutOwnTunnel(ifs, a.status)
 	// Another device may sit behind an interface now: ask again.
