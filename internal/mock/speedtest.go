@@ -25,7 +25,9 @@ func (s *Service) SpeedTest(ctx context.Context, iface string) (api.SpeedTest, e
 		latency, down, up, ip := 6*time.Millisecond, int64(700*mbps), int64(150*mbps), "203.0.113.24"
 		switch {
 		case i.Name == hotspotIface:
-			latency, down, up, ip = 34*time.Millisecond, 140*mbps, 23*mbps, fmt.Sprintf("198.51.100.%d", 80+s.renewals%100)
+			latency, down, up, ip = 34*time.Millisecond, 140*mbps, 23*mbps, fmt.Sprintf("198.51.100.%d", 80+s.renewals[iface]%100)
+		case i.Name == rmnetIface:
+			latency, down, up, ip = 28*time.Millisecond, 180*mbps, 22*mbps, "192.0.2.60"
 		case i.Kind == api.KindCellular:
 			latency, down, up, ip = 41*time.Millisecond, 90*mbps, 18*mbps, "198.51.100.77"
 		case i.Kind == api.KindWiFi:

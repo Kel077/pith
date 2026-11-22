@@ -51,10 +51,10 @@ type Service struct {
 	born   time.Time // when the mock started: traffic before it is made up
 	series []api.TrafficSample
 
-	hotspotLocked  bool // Pith has no admin password for the hotspot
-	renewals       int  // how often the hotspot was renewed: its public addresses
-	routerLocked   bool // Pith has no admin password for Ethernet's router
-	routerRenewals int  // how often the router was renewed: its public IPv4 address
+	hotspotLocked  bool           // Pith has no admin password for the hotspot
+	renewals       map[string]int // public address changes per hotspot
+	routerLocked   bool           // Pith has no admin password for Ethernet's router
+	routerRenewals int            // how often the router was renewed: its public IPv4 address
 
 	proxies   map[int]*api.ProxyStatus     // the counters of listening proxies, by port
 	portInUse int                          // Options.ProxyPortInUse
@@ -90,6 +90,7 @@ func New(o Options) *Service {
 		devices:   map[string]*api.DeviceStatus{},
 		changes:   map[int]*proxyChange{},
 		renewing:  map[string]int{},
+		renewals:  map[string]int{},
 		stranger:  o.Sample,
 	}
 	if s.clock.IsZero() && !o.Live {
@@ -349,7 +350,9 @@ func (s *Service) Probe(ctx context.Context, iface, target string) (api.Probe, e
 		p = api.Probe{Interface: iface, Target: target, At: s.now(), OK: true, Latency: lat}
 		if target == "" {
 			if i.Name == hotspotIface {
-				p.PublicIPv4, p.PublicIPv6 = fmt.Sprintf("198.51.100.%d", 80+s.renewals%100), fmt.Sprintf("2001:db8:%x::1", 0x90+s.renewals)
+				p.PublicIPv4, p.PublicIPv6 = fmt.Sprintf("198.51.100.%d", 80+s.renewals[iface]%100), fmt.Sprintf("2001:db8:%x::1", 0x90+s.renewals[iface])
+			} else if i.Name == rmnetIface {
+				p.PublicIPv4, p.PublicIPv6 = "192.0.2.60", fmt.Sprintf("2001:db8:%x::2", 0x520+s.renewals[iface])
 			} else if i.Kind == api.KindCellular {
 				p.PublicIPv4, p.PublicIPv6 = "198.51.100.77", "2001:db8:77::1"
 			} else if i.Name == routerIface {
@@ -887,6 +890,8 @@ func sampleInterfaces() []api.Interface {
 			IPv4: []string{"172.20.10.2"}, IPv6: []string{"2001:db8:77::2"}, Router: "172.20.10.1", DNS: []string{"172.20.10.1"}},
 		{Name: hotspotIface, Label: "M2000", Kind: api.KindCellular, HardwareAddr: "02:00:5e:10:00:09", Up: true,
 			IPv4: []string{"192.0.2.20"}, IPv6: []string{"2001:db8:90::20"}, Router: "192.0.2.1", DNS: []string{"192.0.2.1"}},
+		{Name: rmnetIface, Label: api.HotspotRM520N, HardwarePort: api.HotspotRM520N, Kind: api.KindCellular, HardwareAddr: "02:00:5e:10:00:52", Up: true,
+			IPv6: []string{"2001:db8:520::2"}, Router6: "2001:db8:520::1", DNS: []string{"2001:db8::53"}},
 		{Name: "en1", Label: "Wi-Fi", Kind: api.KindWiFi, HardwareAddr: "02:00:5e:10:00:02"},
 	}
 }

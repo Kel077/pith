@@ -50,7 +50,7 @@ func (mockHost) Apps(context.Context) ([]api.AppRef, error) {
 
 // newHost is the mock with its sample configuration, routing its "home"
 // scene: interfaces en0 (Ethernet, behind a router), en7 (iPhone USB), en9
-// (M2000, a hotspot) and en1 (Wi-Fi, down).
+// (M2000), cell-demo (RM520N-GL) and en1 (Wi-Fi, down).
 func newHost(t *testing.T, o mock.Options) mockHost {
 	t.Helper()
 	o.Sample, o.HelperInstalled, o.Seed = true, true, 7
@@ -360,7 +360,7 @@ func TestReading(t *testing.T) {
 	for _, i := range ifaces {
 		names = append(names, i.Name)
 	}
-	if !slices.Equal(names, []string{"en0", "en7", "en9", "en1", "utun9"}) || !ifaces[0].CanProxy || !ifaces[0].Primary || ifaces[4].CanProxy {
+	if !slices.Equal(names, []string{"en0", "en7", "en9", "cell-demo", "en1", "utun9"}) || !ifaces[0].CanProxy || !ifaces[0].Primary || ifaces[len(ifaces)-1].CanProxy {
 		t.Errorf("interfaces: %v", names)
 	}
 	// One that isn't listed still goes by its BSD name.
@@ -557,13 +557,32 @@ func TestIPChanged(t *testing.T) {
 		{"IPv4 only, kept", old4, "", old4, "", false},
 		{"IPv6 appeared, IPv4 kept", old4, "", old4, new6, false},
 	} {
-		if got := ipChanged(c.b4, c.b6, c.a4, c.a6); got != c.want {
-			t.Errorf("%s: changed = %v, want %v", c.name, got, c.want)
+		got := ipChangeView{Online: true, BeforeIPv4: c.b4, BeforeIPv6: c.b6, PublicIPv4: c.a4, PublicIPv6: c.a6}.compared()
+		if got.Changed != c.want || (got.IPv4Changed != nil) != (c.b4 != "" && c.a4 != "") || (got.IPv6Changed != nil) != (c.b6 != "" && c.a6 != "") {
+			t.Errorf("%s: comparison %+v", c.name, got)
 		}
 	}
 	// A renewal whose test after found the IPv6 address alone, unchanged.
 	v := viewRenewal(ipChangeView{}, api.Probe{OK: true, PublicIPv4: old4, PublicIPv6: old6}, api.Probe{OK: true, PublicIPv6: old6}, 0)
 	if v.Changed || !v.Online || v.BeforeIPv4 != old4 || v.PublicIPv4 != "" {
 		t.Fatalf("renewal = %+v", v)
+	}
+}
+
+func TestRMNetTools(t *testing.T) {
+	h := newHost(t, mock.Options{})
+	h.LockHotspot()
+	var status struct{ Hotspot api.Hotspot }
+	run(t, h, "gateway_status", `{"interface":"RM520N-GL"}`, &status)
+	if status.Hotspot.Model != api.HotspotRM520N || status.Hotspot.Locked || len(status.Hotspot.Cell.Carriers) != 2 {
+		t.Fatal(status)
+	}
+	var change ipChangeView
+	run(t, h, "set_proxy", `{"port":1081,"via":"RM520N-GL"}`, nil)
+	for _, args := range []string{`{"interface":"RM520N-GL"}`, `{"port":1081}`} {
+		run(t, h, "change_ip", args, &change)
+		if !change.Changed || change.IPv4Changed == nil || *change.IPv4Changed || change.IPv6Changed == nil || !*change.IPv6Changed || change.Seconds <= 0 {
+			t.Fatal(change)
+		}
 	}
 }

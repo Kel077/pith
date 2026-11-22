@@ -9,10 +9,23 @@ import (
 
 // hotspotIface leads to a mobile hotspot the mock pretends to control.
 const hotspotIface = "en9"
+const rmnetIface = "cell-demo"
 
 func (s *Service) Hotspot(ctx context.Context, iface string) (api.Hotspot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if iface == rmnetIface {
+		h := api.Hotspot{Interface: iface, Model: api.HotspotRM520N, Connected: s.iface(iface).Up, At: s.now()}
+		if h.Connected {
+			h.Technology, h.Bars = "5G SA", 4
+			h.Cell = &api.HotspotCell{Operator: "Example Mobile", Band: "n78", Signal: -86, SNR: 19,
+				RSRP: new(-86), RSRQ: new(-9), SINR: new(18.5), Carriers: []api.HotspotCarrier{
+					{Role: "PCC", RAT: "NR5G", Band: "n78", BandwidthMHz: 80},
+					{Role: "SCC", RAT: "NR5G", Band: "n78", BandwidthMHz: 20},
+				}}
+		}
+		return h, nil
+	}
 	if iface != hotspotIface {
 		return api.Hotspot{Interface: iface}, &api.Error{Code: api.ErrUnsupported, Detail: iface + " leads to no hotspot Pith knows"}
 	}
@@ -27,6 +40,8 @@ func (s *Service) SetHotspotPassword(ctx context.Context, iface, password string
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch {
+	case iface == rmnetIface:
+		return &api.Error{Code: api.ErrUnsupported, Detail: "RMNet does not use a hotspot admin password"}
 	case iface != hotspotIface:
 		return &api.Error{Code: api.ErrUnsupported, Detail: iface + " leads to no hotspot Pith knows"}
 	case password == "" || password == "wrong":
@@ -42,9 +57,9 @@ func (s *Service) RenewHotspot(ctx context.Context, iface string) (api.HotspotRe
 	locked := s.hotspotLocked
 	s.mu.Unlock()
 	switch {
-	case iface != hotspotIface:
+	case iface != hotspotIface && iface != rmnetIface:
 		return r, &api.Error{Code: api.ErrUnsupported, Detail: iface + " leads to no hotspot Pith knows"}
-	case locked:
+	case iface == hotspotIface && locked:
 		return r, &api.Error{Code: api.ErrWrongPassword, Detail: "no admin password"}
 	}
 	if err := s.beginRenewal(iface); err != nil {
@@ -55,6 +70,9 @@ func (s *Service) RenewHotspot(ctx context.Context, iface string) (api.HotspotRe
 	if r.Before, err = s.Probe(ctx, iface, ""); err != nil {
 		return r, err
 	}
+	if iface == rmnetIface && !r.Before.OK {
+		return r, &api.Error{Code: api.ErrInterfaceUnavailable, Detail: "the modem is offline"}
+	}
 	r.Took = 14 * time.Second
 	if s.live { // a hotspot takes a while to connect again
 		select {
@@ -64,7 +82,7 @@ func (s *Service) RenewHotspot(ctx context.Context, iface string) (api.HotspotRe
 		}
 	}
 	s.mu.Lock()
-	s.renewals++
+	s.renewals[iface]++
 	s.mu.Unlock()
 	r.After, err = s.Probe(ctx, iface, "")
 	return r, err

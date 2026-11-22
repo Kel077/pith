@@ -284,7 +284,7 @@ var tools = []tool{
 	"interface": {"type": "string", "description": "The interface whose hotspot or router gets a new address, by BSD name, the user's name for it or its label."},
 	"port": {"type": "integer", "description": "Instead of an interface: the port of a local proxy, to change the address of whatever it goes out through, another Mac's Pith included."}
 }, "additionalProperties": false}`,
-		about: "Changes the public IP address of a network: has the mobile hotspot behind an interface reconnect to its carrier, or the router behind it give its address up and ask its provider for another, and returns the addresses before and after once the internet works through it again; changed tells that an address differs from the one of its family before, and a family missing on either side is not compared. Give an interface or a local proxy's port. Connections through that network end. A hotspot is offline for some 20 seconds. A router takes every device behind it offline, from seconds to over a minute, changes its IPv4 address alone, and needs another connected network to carry the Mac meanwhile; the provider may give the same address back. Only when the user asks for a new IP. It can take two minutes: let the call wait that long.",
+		about: "Reconnects a mobile hotspot or renews a router's IPv4 lease. Give an interface or a local proxy's port. Returns the public addresses before and after and the elapsed seconds. ipv4Changed and ipv6Changed compare each family when both addresses were observed. changed is true when either family changed. Connections through that network end. A router also takes other devices behind it offline and needs another connected network to carry the Mac. The provider may return the same address. Use only when the user asks for a new IP and allow time for reconnection.",
 		does:  with(changeIP),
 	},
 }
@@ -435,6 +435,7 @@ func (n network) find(ref string) (*api.Interface, error) {
 	for _, by := range []func(*api.Interface) string{
 		func(i *api.Interface) string { return n.aliases[refOf(i).Key()] },
 		func(i *api.Interface) string { return i.Label },
+		func(i *api.Interface) string { return i.HardwarePort },
 	} {
 		for i := range n.ifaces {
 			if name := by(&n.ifaces[i]); name != "" && strings.EqualFold(name, ref) {
@@ -1334,37 +1335,42 @@ func removeDevice(ctx context.Context, h Host, a struct {
 // ---- public addresses -------------------------------------------------------
 
 type ipChangeView struct {
-	Interface  string  `json:"interface,omitempty"`
-	Port       int     `json:"port,omitempty"`
-	Device     string  `json:"device,omitempty"` // "hotspot" or "router"
-	BeforeIPv4 string  `json:"beforeIPv4,omitempty"`
-	BeforeIPv6 string  `json:"beforeIPv6,omitempty"`
-	PublicIPv4 string  `json:"publicIPv4,omitempty"`
-	PublicIPv6 string  `json:"publicIPv6,omitempty"`
-	Changed    bool    `json:"changed"` // an address differs from the one of its family before
-	Online     bool    `json:"online"`  // the internet answers through it now
-	Seconds    float64 `json:"seconds"`
-	Standby    string  `json:"standby,omitempty"` // the interface that carried the Mac meanwhile
-	Tries      int     `json:"tries,omitempty"`   // times a router gave its address up
-	Problem    string  `json:"problem,omitempty"`
+	Interface   string  `json:"interface,omitempty"`
+	Port        int     `json:"port,omitempty"`
+	Device      string  `json:"device,omitempty"` // "hotspot" or "router"
+	BeforeIPv4  string  `json:"beforeIPv4,omitempty"`
+	BeforeIPv6  string  `json:"beforeIPv6,omitempty"`
+	PublicIPv4  string  `json:"publicIPv4,omitempty"`
+	PublicIPv6  string  `json:"publicIPv6,omitempty"`
+	Changed     bool    `json:"changed"` // an address differs from the one of its family before
+	IPv4Changed *bool   `json:"ipv4Changed,omitempty"`
+	IPv6Changed *bool   `json:"ipv6Changed,omitempty"`
+	Online      bool    `json:"online"` // the internet answers through it now
+	Seconds     float64 `json:"seconds"`
+	Standby     string  `json:"standby,omitempty"` // the interface that carried the Mac meanwhile
+	Tries       int     `json:"tries,omitempty"`   // times a router gave its address up
+	Problem     string  `json:"problem,omitempty"`
 }
 
-// ipChanged tells whether an address found both before and after a change
-// differs. A family found on one side alone tells nothing: an IPv4 address
-// that a test after the change missed hasn't changed, and the IPv6 one that
-// stayed doesn't make it unchanged either.
-func ipChanged(before4, before6, after4, after6 string) bool {
-	return before4 != "" && after4 != "" && before4 != after4 ||
-		before6 != "" && after6 != "" && before6 != after6
+// A missing measurement leaves that family's comparison unknown.
+func (v ipChangeView) compared() ipChangeView {
+	if v.Online && v.BeforeIPv4 != "" && v.PublicIPv4 != "" {
+		v.IPv4Changed = new(v.BeforeIPv4 != v.PublicIPv4)
+		v.Changed = *v.IPv4Changed
+	}
+	if v.Online && v.BeforeIPv6 != "" && v.PublicIPv6 != "" {
+		v.IPv6Changed = new(v.BeforeIPv6 != v.PublicIPv6)
+		v.Changed = v.Changed || *v.IPv6Changed
+	}
+	return v
 }
 
 func viewRenewal(v ipChangeView, before, after api.Probe, took time.Duration) ipChangeView {
 	v.BeforeIPv4, v.BeforeIPv6 = before.PublicIPv4, before.PublicIPv6
 	v.PublicIPv4, v.PublicIPv6 = after.PublicIPv4, after.PublicIPv6
-	v.Changed = after.OK && ipChanged(v.BeforeIPv4, v.BeforeIPv6, v.PublicIPv4, v.PublicIPv6)
 	v.Online, v.Problem = after.OK, after.Problem
 	v.Seconds = float64(took.Round(100*time.Millisecond)) / float64(time.Second)
-	return v
+	return v.compared()
 }
 
 func changeIP(ctx context.Context, h Host, a struct {
@@ -1381,22 +1387,32 @@ func changeIP(ctx context.Context, h Host, a struct {
 		}
 		online := c.PublicIPv4 != "" || c.PublicIPv6 != ""
 		return ipChangeView{Port: c.Port, BeforeIPv4: c.BeforeIPv4, BeforeIPv6: c.BeforeIPv6, PublicIPv4: c.PublicIPv4, PublicIPv6: c.PublicIPv6,
-			Changed: online && ipChanged(c.BeforeIPv4, c.BeforeIPv6, c.PublicIPv4, c.PublicIPv6), Online: online, Seconds: c.Seconds}, nil
+			Online: online, Seconds: c.Seconds}.compared(), nil
 	}
 	iface, err := interfaceNamed(ctx, h, a.Interface)
 	if err != nil {
 		return nil, err
 	}
-	hs, _, err := gateway(ctx, h, iface.Name)
-	if err != nil {
-		return nil, err
+	// RMNet is identified by its hardware port. Join a running renewal
+	// directly, even while it holds the modem's AT port.
+	isHotspot := strings.EqualFold(iface.HardwarePort, api.HotspotRM520N)
+	if !isHotspot {
+		hs, _, err := gateway(ctx, h, iface.Name)
+		if err != nil {
+			return nil, err
+		}
+		isHotspot = hs != nil
 	}
-	if hs != nil {
+	if isHotspot {
 		r, err := h.RenewHotspot(ctx, iface.Name)
 		if err != nil {
 			return nil, err
 		}
-		return viewRenewal(ipChangeView{Interface: iface.Name, Device: "hotspot"}, r.Before, r.After, r.Took), nil
+		name := iface.Name
+		if r.After.Interface != "" {
+			name = r.After.Interface
+		}
+		return viewRenewal(ipChangeView{Interface: name, Device: "hotspot"}, r.Before, r.After, r.Took), nil
 	}
 	r, err := h.RenewRouter(ctx, iface.Name)
 	if err != nil {

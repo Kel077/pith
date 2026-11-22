@@ -144,7 +144,7 @@ func (s *Service) changeProxyIP(ctx context.Context, p api.Proxy) (api.ProxyIPCh
 		s.mu.Unlock()
 		before = api.Probe{PublicIPv4: was.PublicIPv4, PublicIPv6: was.PublicIPv6}
 		after, took = api.Probe{PublicIPv4: now.PublicIPv4, PublicIPv6: now.PublicIPv6, At: s.now()}, 14*time.Second
-	case p.Via.Name == hotspotIface:
+	case p.Via.Name == hotspotIface || p.Via.Name == rmnetIface:
 		r, err := s.RenewHotspot(ctx, p.Via.Name)
 		if err != nil {
 			return change, err
