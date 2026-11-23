@@ -302,6 +302,19 @@ func TestHotspotRenewalMergesStaggeredFamiliesAndSuspendsProxies(t *testing.T) {
 	}
 }
 
+func TestParseUsableIPv6(t *testing.T) {
+	onlyDeprecated := "\tinet6 fe80::1%en9 prefixlen 64 secured scopeid 0xe\n" +
+		"\tinet6 2001:db8:1::2 prefixlen 64 deprecated autoconf secured\n" +
+		"\tinet6 2001:db8:2::3 prefixlen 64 tentative autoconf\n"
+	if parseUsableIPv6(onlyDeprecated) {
+		t.Fatal("accepted deprecated and tentative IPv6 addresses as usable")
+	}
+	withActive := onlyDeprecated + "\tinet6 2001:db8:3::4 prefixlen 64 autoconf temporary\n"
+	if !parseUsableIPv6(withActive) {
+		t.Fatal("missed active global IPv6 address")
+	}
+}
+
 func TestHotspotRenewalGivesUpTesting(t *testing.T) {
 	f := hotspottest.New()
 	none := func(after int) string { return map[bool]string{true: "192.0.2.9"}[after < 0] }

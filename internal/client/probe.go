@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -111,6 +112,9 @@ func (c *Client) probeWith(ctx context.Context, iface, target string, interfaces
 	responses := make(chan response, 2)
 	var workers sync.WaitGroup
 	defer workers.Wait()
+	if !opts.skipV6 && c.interfaces == nil && !hasUsableIPv6(probeCtx, iface) {
+		opts.skipV6 = true
+	}
 	expected := 0
 	// Separate families prevent a working IPv4 path from concealing broken IPv6.
 	for i, url := range c.probeURLs {
@@ -181,8 +185,57 @@ func (c *Client) probeWith(ctx context.Context, iface, target string, interfaces
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	if !result.OK && len(failures) > 0 {
-		result.Problem = errors.Join(failures...).Error()
+	if !result.OK {
+		if len(failures) > 0 {
+			result.Problem = errors.Join(failures...).Error()
+		} else {
+			result.Problem = "no usable global address on interface"
+		}
 	}
 	return result, nil
+}
+
+// hasUsableIPv6 reports whether iface has at least one global unicast IPv6
+// address that is neither deprecated nor tentative. When a hotspot rotates
+// SLAAC prefixes repeatedly, macOS retains deprecated /64 addresses that
+// silently blackhole outbound TCP SYNs and fill net.inet6.ip6.maxifprefixes.
+func hasUsableIPv6(ctx context.Context, iface string) bool {
+	if iface == "" {
+		return true
+	}
+	cmdCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+	out, err := exec.CommandContext(cmdCtx, "/sbin/ifconfig", iface, "inet6").Output()
+	if err != nil {
+		return true
+	}
+	return parseUsableIPv6(string(out))
+}
+
+func parseUsableIPv6(ifconfigOut string) bool {
+	for _, line := range strings.Split(ifconfigOut, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "inet6" {
+			continue
+		}
+		raw := fields[1]
+		if i := strings.IndexByte(raw, '%'); i >= 0 {
+			raw = raw[:i]
+		}
+		addr, err := netip.ParseAddr(raw)
+		if err != nil || !addr.Is6() || !addr.IsGlobalUnicast() {
+			continue
+		}
+		usable := true
+		for _, flag := range fields[2:] {
+			switch flag {
+			case "deprecated", "tentative", "detached", "duplicated", "anycast":
+				usable = false
+			}
+		}
+		if usable {
+			return true
+		}
+	}
+	return false
 }

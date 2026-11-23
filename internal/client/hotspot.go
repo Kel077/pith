@@ -131,7 +131,7 @@ func (c *Client) renewHotspot(ctx context.Context, via api.InterfaceRef) (api.Ho
 	)
 	// Its public IP before, tested while the hotspot prepares its session.
 	before := func(bctx context.Context) (err error) {
-		r.Before, err = probeM2000(bctx, probeOptions{dnsCache: dnsCache})
+		r.Before, err = probeM2000(bctx, probeOptions{timeout: min(c.probeLimit(), 2500*time.Millisecond), dnsCache: dnsCache})
 		if err == nil {
 			c.forgetExitAddresses(r.Before.Interface)
 			resume = c.suspendHotspotProxies(via)
@@ -311,6 +311,11 @@ func (c *Client) retestPublicSeeded(ctx context.Context, before, seed api.Probe,
 		}
 		if late := time.Now().Add(6 * pace); after.OK && late.Before(deadline) {
 			deadline = late
+		}
+		if after.OK && after.PublicIPv6 == "" && c.interfaces == nil && !hasUsableIPv6(ctx, after.Interface) {
+			if noV6 := time.Now().Add(2 * pace); noV6.Before(deadline) {
+				deadline = noV6
+			}
 		}
 		if time.Now().Add(wait).After(deadline) {
 			return after, nil
