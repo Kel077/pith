@@ -46,12 +46,16 @@ type Inseego struct {
 
 	mu       sync.Mutex
 	loggedIn bool
-	token    string // gSecureToken of the current web session
-	refused  string // a hash of the password the hotspot refused: never tried again
+	token    string    // gSecureToken of the current web session
+	tokenAt  time.Time // when token was last read or accepted
+	refused  string    // a hash of the password the hotspot refused: never tried again
 }
 
 // pageLimit bounds what Pith reads of a page of the web admin.
-const pageLimit = 1 << 20
+const (
+	pageLimit   = 1 << 20
+	tokenMaxAge = 90 * time.Second
+)
 
 // Status reads the hotspot: its connection, and its cell when Pith has its
 // admin password.
@@ -79,11 +83,32 @@ func (d *Inseego) Status(ctx context.Context) (api.Hotspot, error) {
 func (d *Inseego) TryPassword(ctx context.Context, password string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.loggedIn, d.token = false, ""
+	d.clearSession()
 	if password == "" || digest(password) == d.refused {
 		return &api.Error{Code: api.ErrWrongPassword, Detail: "the hotspot refused this admin password"}
 	}
 	return d.loginWith(ctx, password)
+}
+
+func (d *Inseego) clearSession() {
+	d.loggedIn, d.token, d.tokenAt = false, "", time.Time{}
+}
+
+func (d *Inseego) clearCookies() {
+	if d.HTTP == nil || d.HTTP.Jar == nil {
+		return
+	}
+	u, err := url.Parse(d.Base + "/")
+	if err != nil {
+		return
+	}
+	for _, c := range d.HTTP.Jar.Cookies(u) {
+		expired := *c
+		expired.Value = ""
+		expired.MaxAge = -1
+		expired.Expires = time.Unix(1, 0)
+		d.HTTP.Jar.SetCookies(u, []*http.Cookie{&expired})
+	}
 }
 
 // Renew has the hotspot reconnect to its carrier: it turns its cellular
@@ -108,7 +133,6 @@ func (d *Inseego) RenewReady(ctx context.Context, before func(context.Context) e
 	} else {
 		go func() { beforeDone <- before(beforeCtx) }()
 	}
-	cachedToken := d.loggedIn && d.token != ""
 	tok, err := d.sessionToken(ctx)
 	if err != nil {
 		stop()
@@ -147,8 +171,9 @@ func (d *Inseego) RenewReady(ctx context.Context, before func(context.Context) e
 	}()
 	off := time.Now()
 	err = d.post(ctx, "/wwan/disablecellulardata/", "/networks/", form)
-	if cachedToken && errors.Is(err, errSession) && ctx.Err() == nil {
-		// The cached session ended while idle; cellular data was not switched.
+	if errors.Is(err, errSession) && ctx.Err() == nil {
+		// The cached session or gSecureToken expired while idle (401/403/406 or
+		// gIsLoggedIn=0); cellular data was rejected before switching.
 		tok, err = d.sessionToken(ctx)
 		if err != nil {
 			needsEnable = false
@@ -159,6 +184,9 @@ func (d *Inseego) RenewReady(ctx context.Context, before func(context.Context) e
 		err = d.post(ctx, "/wwan/disablecellulardata/", "/networks/", form)
 	}
 	if err != nil {
+		if errors.Is(err, errSession) {
+			needsEnable = false
+		}
 		return fmt.Errorf("hotspot: turn cellular data off: %w", err)
 	}
 	// Let it drop its connection: some take a moment, and turning data on
@@ -218,9 +246,10 @@ func (d *Inseego) RenewReady(ctx context.Context, before func(context.Context) e
 }
 
 func (d *Inseego) sessionToken(ctx context.Context) (string, error) {
-	if d.loggedIn && d.token != "" {
+	if d.loggedIn && d.token != "" && !d.tokenAt.IsZero() && time.Since(d.tokenAt) <= tokenMaxAge {
 		return d.token, nil
 	}
+	d.token, d.tokenAt = "", time.Time{}
 	page, err := d.adminPage(ctx, "/networks/", func(p string) bool { return strings.Contains(p, "/wwan/enablecellulardata/") })
 	if err != nil {
 		return "", err
@@ -229,7 +258,7 @@ func (d *Inseego) sessionToken(ctx context.Context) (string, error) {
 	if m == nil {
 		return "", errors.New("hotspot: no session token on its network settings")
 	}
-	d.token = m[1]
+	d.token, d.tokenAt = m[1], time.Now()
 	return d.token, nil
 }
 
@@ -306,7 +335,7 @@ func (d *Inseego) adminPage(ctx context.Context, path string, ok func(string) bo
 		if page := string(body); ok(page) {
 			return page, nil
 		}
-		d.loggedIn, d.token = false, ""
+		d.clearSession()
 	}
 	return "", fmt.Errorf("hotspot: %s needs a session it doesn't keep", path)
 }
@@ -332,6 +361,21 @@ func (d *Inseego) login(ctx context.Context) error {
 }
 
 func (d *Inseego) loginWith(ctx context.Context, password string) error {
+	for attempt := range 2 {
+		if attempt > 0 {
+			d.clearCookies()
+		}
+		err := d.loginOnce(ctx, password)
+		var st httpStatusError
+		if attempt == 0 && errors.As(err, &st) && isAuthStatus(st.code) && ctx.Err() == nil {
+			continue
+		}
+		return err
+	}
+	return nil
+}
+
+func (d *Inseego) loginOnce(ctx context.Context, password string) error {
 	body, err := d.get(ctx, "/login/")
 	if err != nil {
 		return err
@@ -385,18 +429,45 @@ func (d *Inseego) submit(ctx context.Context, path, from string, form url.Values
 	return d.do(req)
 }
 
-// post submits a form of a logged-in session: its reply must say so.
+type httpStatusError struct {
+	method string
+	path   string
+	status string
+	code   int
+}
+
+func (e httpStatusError) Error() string {
+	return fmt.Sprintf("hotspot: %s %s: %s", e.method, e.path, e.status)
+}
+
+// isAuthStatus reports HTTP statuses the M2000 web UI returns when a session
+// or its gSecureToken is missing, expired or displaced (401, 403, 406).
+func isAuthStatus(code int) bool {
+	return code == http.StatusUnauthorized || code == http.StatusForbidden || code == http.StatusNotAcceptable
+}
+
+// post submits a form of a logged-in session: its reply must say so. On the
+// M2000, an expired session or stale gSecureToken answers 401, 403 or 406.
 func (d *Inseego) post(ctx context.Context, path, from string, form url.Values) error {
 	body, err := d.submit(ctx, path, from, form)
 	if err != nil {
+		var st httpStatusError
+		if errors.As(err, &st) && isAuthStatus(st.code) {
+			d.clearSession()
+			d.clearCookies()
+			return fmt.Errorf("%w: %w", errSession, err)
+		}
 		return err
 	}
 	var r struct {
 		LoggedIn int `json:"gIsLoggedIn"`
 	}
 	if json.Unmarshal(body, &r) != nil || r.LoggedIn != 1 {
-		d.loggedIn, d.token = false, ""
+		d.clearSession()
 		return errSession
+	}
+	if d.token != "" {
+		d.tokenAt = time.Now()
 	}
 	return nil
 }
@@ -412,7 +483,7 @@ func (d *Inseego) do(req *http.Request) ([]byte, error) {
 		return nil, err
 	}
 	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("hotspot: %s %s: %s", req.Method, req.URL.Path, res.Status)
+		return nil, httpStatusError{method: req.Method, path: req.URL.Path, status: res.Status, code: res.StatusCode}
 	}
 	return body, nil
 }

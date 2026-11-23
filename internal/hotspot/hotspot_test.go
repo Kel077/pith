@@ -241,6 +241,56 @@ func TestRenewCachesNetworkTokenAndRefreshesExpiredSession(t *testing.T) {
 	}
 }
 
+func TestRenewRecoversFrom406StaleTokenAnd403SubmitLogin(t *testing.T) {
+	f := hotspottest.New()
+	d := device(t, f, hotspottest.Password)
+	var rejectDisable406, rejectLogin403 bool
+	base := http.DefaultTransport
+	d.HTTP.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if rejectDisable406 && req.URL.Path == "/wwan/disablecellulardata/" {
+			rejectDisable406 = false
+			return &http.Response{
+				StatusCode: http.StatusNotAcceptable,
+				Status:     "406 Not Acceptable",
+				Body:       io.NopCloser(strings.NewReader("")),
+				Request:    req,
+			}, nil
+		}
+		if rejectLogin403 && req.URL.Path == "/submitLogin/" {
+			rejectLogin403 = false
+			return &http.Response{
+				StatusCode: http.StatusForbidden,
+				Status:     "403 Forbidden",
+				Body:       io.NopCloser(strings.NewReader("")),
+				Request:    req,
+			}, nil
+		}
+		return base.RoundTrip(req)
+	})
+	// Prime the cached gSecureToken.
+	if err := d.Renew(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate the real M2000 expiring its session idle: POST /wwan/disablecellulardata/
+	// answers 406 Not Acceptable, and the first re-login answers 403 Forbidden.
+	rejectDisable406 = true
+	rejectLogin403 = true
+	if err := d.Renew(context.Background(), nil); err != nil {
+		t.Fatalf("Renew failed to recover from 406/403: %v", err)
+	}
+	f.Do(func(f *hotspottest.MiFi) {
+		if !f.DataOn || strings.Join(f.Calls, ",") != "off,on,off,on" {
+			t.Fatalf("unexpected data switches: %v (DataOn=%v)", f.Calls, f.DataOn)
+		}
+	})
+
+	// Also verify an aged token (> tokenMaxAge) proactively refreshes /networks/.
+	d.tokenAt = time.Now().Add(-2 * tokenMaxAge)
+	if err := d.Renew(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRenewReadyFinishesEarlyOnlyAfterADrop(t *testing.T) {
 	f := hotspottest.New()
 	d := device(t, f, hotspottest.Password)
