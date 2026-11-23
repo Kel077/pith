@@ -15,6 +15,7 @@ import (
 	"github.com/Kel077/pith/internal/api"
 	"github.com/Kel077/pith/internal/hotspot/hotspottest"
 	"github.com/Kel077/pith/internal/keychain"
+	"github.com/Kel077/pith/internal/proxy"
 )
 
 func TestHotspot(t *testing.T) {
@@ -242,9 +243,62 @@ func TestHotspotRenewalStopsWaitingForAFamilyThatDoesNotComeBack(t *testing.T) {
 	if err != nil || r.After.PublicIPv4 != "192.0.2.9" || r.After.PublicIPv6 != "" || !r.After.OK {
 		t.Fatalf("%+v %v", r, err)
 	}
-	// It waited 3 paces for IPv6, not 25.
+	// It waited 6 paces for IPv6, not 25.
 	if waited := time.Since(start) - r.Took; waited > 15*c.hotspotPace {
 		t.Fatalf("waited %v for IPv6", waited)
+	}
+}
+
+func TestHotspotRenewalMergesStaggeredFamiliesAndSuspendsProxies(t *testing.T) {
+	f := hotspottest.New()
+	var v6CallsAfter int
+	var mu sync.Mutex
+	// IPv6 works on the first post-renewal attempt; IPv4 comes up 3 attempts later.
+	c := renewalClient(t, f,
+		func(after int) string { return map[bool]string{true: "192.0.2.19", false: map[bool]string{true: "192.0.2.9"}[after < 0]}[after >= 3] },
+		func(after int) string {
+			if after < 0 {
+				return "2001:db8::9"
+			}
+			mu.Lock()
+			v6CallsAfter++
+			mu.Unlock()
+			return "2001:db8::19"
+		})
+	manager, err := proxy.New(proxy.Options{Dial: func(context.Context, api.InterfaceRef, proxy.Target) (net.Conn, error) {
+		return nil, fmt.Errorf("unexpected proxy connection")
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.proxies = manager
+	var suspendedDuringOff bool
+	s, err := c.hotspot(context.Background(), "en9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := s.device.HTTP.Transport
+	s.device.HTTP.Transport = exitRoundTrip(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path == "/wwan/disablecellulardata/" {
+			suspendedDuringOff = manager.Suspended(api.InterfaceRef{Name: "en9"})
+		}
+		return base.RoundTrip(req)
+	})
+	r, err := c.RenewHotspot(context.Background(), "en9")
+	if err != nil || r.After.PublicIPv4 != "192.0.2.19" || r.After.PublicIPv6 != "2001:db8::19" {
+		t.Fatalf("renewal: %+v %v", r, err)
+	}
+	if !suspendedDuringOff {
+		t.Fatal("proxy port was not suspended before cellular data went off")
+	}
+	if manager.Suspended(api.InterfaceRef{Name: "en9"}) {
+		t.Fatal("proxy port remained suspended after renewal")
+	}
+	mu.Lock()
+	gotV6Calls := v6CallsAfter
+	mu.Unlock()
+	if gotV6Calls != 1 {
+		t.Fatalf("IPv6 probed %d times after renewal, want 1", gotV6Calls)
 	}
 }
 

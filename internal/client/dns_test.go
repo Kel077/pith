@@ -220,3 +220,45 @@ func TestProbeDNSDialsTheNamedHost(t *testing.T) {
 	}
 	conn.Close()
 }
+
+func TestProbeDNSDialsWithoutDuplicateQueryAndUsesCache(t *testing.T) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			conn.Close()
+		}
+	}()
+	own := newFakeDNS(t, 0, 0).with(func(f *fakeDNS) { f.answer = [4]byte{127, 0, 0, 1} })
+	macs := newFakeDNS(t, 0, 0).with(func(f *fakeDNS) { f.answer = [4]byte{127, 0, 0, 1} })
+	_, port, _ := net.SplitHostPort(listener.Addr().String())
+	cache := &probeDNSCache{}
+	p := testProbeDNS(own.addr(), macs.addr())
+	p.cache = cache
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := p.dial(ctx, &net.Dialer{}, "tcp4", net.JoinHostPort("once.example.com.", port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.Close()
+	if n := own.count(); n != 1 {
+		t.Fatalf("own DNS queries = %d, want 1", n)
+	}
+	// With cached addresses, a subsequent dial while own DNS is dead needs zero queries.
+	dead := testProbeDNS(refusingAddress(t), refusingAddress(t))
+	dead.cache = cache
+	dead.cachedOnly = true
+	conn, err = dead.dial(ctx, &net.Dialer{}, "tcp4", net.JoinHostPort("once.example.com.", port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.Close()
+}

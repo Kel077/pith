@@ -45,9 +45,24 @@ func (c *Client) Probe(ctx context.Context, iface, target string) (api.Probe, er
 	return c.probe(ctx, iface, target, interfaces)
 }
 
+type probeOptions struct {
+	timeout        time.Duration
+	skipV4, skipV6 bool
+	preferFallback bool
+	dnsCache       *probeDNSCache
+	cachedOnly     bool
+}
+
 func (c *Client) probe(ctx context.Context, iface, target string, interfaces []api.Interface) (api.Probe, error) {
+	return c.probeWith(ctx, iface, target, interfaces, probeOptions{})
+}
+
+func (c *Client) probeWith(ctx context.Context, iface, target string, interfaces []api.Interface, opts probeOptions) (api.Probe, error) {
 	result := api.Probe{Interface: iface, Target: target, At: c.exitTime()}
-	timeout := c.probeLimit()
+	timeout := opts.timeout
+	if timeout <= 0 {
+		timeout = c.probeLimit()
+	}
 	var dns []string
 	for _, link := range interfaces {
 		if link.Name == iface {
@@ -61,6 +76,9 @@ func (c *Client) probe(ctx context.Context, iface, target string, interfaces []a
 		return result, nil
 	}
 	names := newProbeDNS(dialer, iface, dns, proxyegress.FallbackDNS(interfaces, proxyegress.SystemDNS()))
+	names.preferFallback = opts.preferFallback
+	names.cache = opts.dnsCache
+	names.cachedOnly = opts.cachedOnly
 	probeCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	started := time.Now()
@@ -93,8 +111,13 @@ func (c *Client) probe(ctx context.Context, iface, target string, interfaces []a
 	responses := make(chan response, 2)
 	var workers sync.WaitGroup
 	defer workers.Wait()
+	expected := 0
 	// Separate families prevent a working IPv4 path from concealing broken IPv6.
 	for i, url := range c.probeURLs {
+		if (i == 0 && opts.skipV4) || (i == 1 && opts.skipV6) {
+			continue
+		}
+		expected++
 		workers.Go(func() {
 			network := "tcp4"
 			if i == 1 {
@@ -138,7 +161,7 @@ func (c *Client) probe(ctx context.Context, iface, target string, interfaces []a
 		})
 	}
 	var failures []error
-	for range 2 {
+	for range expected {
 		res := <-responses
 		if res.err != nil {
 			failures = append(failures, res.err)
@@ -158,7 +181,7 @@ func (c *Client) probe(ctx context.Context, iface, target string, interfaces []a
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	if !result.OK {
+	if !result.OK && len(failures) > 0 {
 		result.Problem = errors.Join(failures...).Error()
 	}
 	return result, nil

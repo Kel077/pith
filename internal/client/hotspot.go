@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Kel077/pith/internal/api"
@@ -75,6 +76,13 @@ func (c *Client) RenewHotspot(ctx context.Context, iface string) (api.HotspotRen
 	return change.hotspot, err
 }
 
+const (
+	retestAttemptTimeout = 2 * time.Second
+	retestFastPace       = 400 * time.Millisecond
+	readyInitialDelay    = 3 * time.Second
+	readyPollInterval    = 750 * time.Millisecond
+)
+
 func (c *Client) renewHotspot(ctx context.Context, via api.InterfaceRef) (api.HotspotRenewal, error) {
 	var r api.HotspotRenewal
 	s, err := c.hotspotFor(ctx, via)
@@ -82,33 +90,140 @@ func (c *Client) renewHotspot(ctx context.Context, via api.InterfaceRef) (api.Ho
 		return r, err
 	}
 	started := time.Now()
-	probe := func(ctx context.Context) (api.Probe, error) { return c.Probe(ctx, via.Name, "") }
 	if s.rmnet != nil {
-		probe = func(ctx context.Context) (api.Probe, error) { return c.rmnetProbe(ctx, s.ref) }
-	}
-	// Its public IP before, tested while the hotspot gets ready.
-	err = s.controller().Renew(ctx, func(ctx context.Context) (err error) {
-		r.Before, err = probe(ctx)
-		if s.rmnet != nil && err == nil && !r.Before.OK {
-			return &api.Error{Code: api.ErrInterfaceUnavailable, Detail: "RMNet public-address test before renewal: " + r.Before.Problem}
+		probe := func(ctx context.Context) (api.Probe, error) { return c.rmnetProbe(ctx, s.ref) }
+		err = s.rmnet.Renew(ctx, func(ctx context.Context) (err error) {
+			r.Before, err = probe(ctx)
+			if err == nil && !r.Before.OK {
+				return &api.Error{Code: api.ErrInterfaceUnavailable, Detail: "RMNet public-address test before renewal: " + r.Before.Problem}
+			}
+			if err == nil {
+				c.forgetExitAddresses(r.Before.Interface)
+			}
+			return err
+		})
+		if err != nil {
+			return r, err
 		}
+		r.After, err = c.retestPublic(ctx, r.Before, probe)
+		// A registered modem may not have a usable IP session yet.
+		r.Took = time.Since(started)
+		return r, err
+	}
+
+	dnsCache := &probeDNSCache{}
+	probeM2000 := func(pctx context.Context, opts probeOptions) (api.Probe, error) {
+		links, err := c.Interfaces(pctx)
+		if err != nil {
+			return api.Probe{Interface: via.Name, At: c.exitTime()}, err
+		}
+		return c.probeWith(pctx, via.Name, "", links, opts)
+	}
+	var resume func()
+	defer func() {
+		if resume != nil {
+			resume()
+		}
+	}()
+	var (
+		earlyMu    sync.Mutex
+		earlyAfter api.Probe
+	)
+	// Its public IP before, tested while the hotspot prepares its session.
+	before := func(bctx context.Context) (err error) {
+		r.Before, err = probeM2000(bctx, probeOptions{dnsCache: dnsCache})
 		if err == nil {
 			c.forgetExitAddresses(r.Before.Interface)
+			resume = c.suspendHotspotProxies(via)
 		}
 		return err
-	})
-	if err != nil {
+	}
+	ready := func(wctx context.Context) bool {
+		select {
+		case <-wctx.Done():
+			return false
+		case <-time.After(readyInitialDelay):
+		}
+		for attempt := 0; ; attempt++ {
+			earlyMu.Lock()
+			skipV4, skipV6 := earlyAfter.PublicIPv4 != "", earlyAfter.PublicIPv6 != ""
+			earlyMu.Unlock()
+			p, err := probeM2000(wctx, probeOptions{
+				timeout:        min(c.probeLimit(), 1500*time.Millisecond),
+				skipV4:         skipV4,
+				skipV6:         skipV6,
+				preferFallback: true,
+				dnsCache:       dnsCache,
+				cachedOnly:     attempt < 3,
+			})
+			if err == nil && p.OK {
+				earlyMu.Lock()
+				earlyAfter = mergeProbe(earlyAfter, p)
+				done := coversBefore(r.Before, earlyAfter) && changedFrom(r.Before, earlyAfter)
+				earlyMu.Unlock()
+				if done {
+					return true
+				}
+			}
+			select {
+			case <-wctx.Done():
+				return false
+			case <-time.After(readyPollInterval):
+			}
+		}
+	}
+	if err = s.device.RenewReady(ctx, before, ready); err != nil {
 		return r, err
 	}
 	r.Took = time.Since(started)
+	earlyMu.Lock()
+	seed := earlyAfter
+	earlyMu.Unlock()
 	// Connected again, a hotspot may still be setting up its addresses and
-	// its DNS: the M2000's refuses queries for some ten seconds more.
-	r.After, err = c.retestPublic(ctx, r.Before, probe)
-	if s.rmnet != nil {
-		// A registered modem may not have a usable IP session yet.
-		r.Took = time.Since(started)
+	// its DNS: the M2000's refuses queries for some ten seconds more, and in
+	// 5G SA its 464XLAT IPv4 finishes several seconds after IPv6.
+	if publicIPs(seed) > 0 && coversBefore(r.Before, seed) {
+		r.After = seed
+	} else {
+		r.After, err = c.retestPublicSeeded(ctx, r.Before, seed, func(pctx context.Context, skipV4, skipV6 bool, attempt int, timeout time.Duration) (api.Probe, error) {
+			return probeM2000(pctx, probeOptions{
+				timeout:        timeout,
+				skipV4:         skipV4,
+				skipV6:         skipV6,
+				preferFallback: true,
+				dnsCache:       dnsCache,
+				cachedOnly:     attempt < 4,
+			})
+		})
+	}
+	if err == nil {
+		c.publishExitProbe(via, r.After)
+	}
+	if resume != nil {
+		resume()
+		resume = nil
 	}
 	return r, err
+}
+
+func (c *Client) suspendHotspotProxies(via api.InterfaceRef) func() {
+	c.proxyMu.Lock()
+	manager := c.proxies
+	c.proxyMu.Unlock()
+	if manager == nil {
+		return func() {}
+	}
+	links, _ := c.Interfaces(c.lifetime)
+	target := via.Resolve(links)
+	match := func(ref api.InterfaceRef) bool {
+		if target != nil && ref.Resolve([]api.Interface{*target}) != nil {
+			return true
+		}
+		return via.Name != "" && ref.Name == via.Name && (via.HardwareAddr == "" || ref.HardwareAddr == "" || ref.HardwareAddr == via.HardwareAddr)
+	}
+	manager.Suspend(match)
+	var once sync.Once
+	return func() { once.Do(manager.Resume) }
 }
 
 func (c *Client) rmnetProbe(ctx context.Context, ref api.InterfaceRef) (api.Probe, error) {
@@ -142,43 +257,106 @@ func (c *Client) rmnetProbe(ctx context.Context, ref api.InterfaceRef) (api.Prob
 
 // retest tests the internet through an interface that just got new public
 // addresses, every pace until it finds as many as before did, for 25 paces at
-// most, and 3 more once a family works: one that doesn't come back with the
+// most, and 6 more once a family works: one that doesn't come back with the
 // other may not come back at all. It returns the test that found the most.
 func (c *Client) retest(ctx context.Context, iface string, before api.Probe) (api.Probe, error) {
 	return c.retestPublic(ctx, before, func(ctx context.Context) (api.Probe, error) { return c.Probe(ctx, iface, "") })
 }
 
 func (c *Client) retestPublic(ctx context.Context, before api.Probe, probe func(context.Context) (api.Probe, error)) (api.Probe, error) {
+	return c.retestPublicSeeded(ctx, before, api.Probe{}, func(pctx context.Context, _, _ bool, _ int, _ time.Duration) (api.Probe, error) {
+		return probe(pctx)
+	})
+}
+
+func (c *Client) retestPublicSeeded(ctx context.Context, before, seed api.Probe, probe func(ctx context.Context, skipV4, skipV6 bool, attempt int, timeout time.Duration) (api.Probe, error)) (api.Probe, error) {
 	pace := c.hotspotPace
+	wait := pace
 	if pace == 0 {
 		pace = time.Second
+		wait = retestFastPace
 	}
-	var after api.Probe
+	after := seed
 	deadline := time.Now().Add(25 * pace)
-	for {
-		p, err := probe(ctx)
+	if late := time.Now().Add(6 * pace); after.OK && late.Before(deadline) {
+		deadline = late
+	}
+	for attempt := 0; ; attempt++ {
+		timeout := min(c.probeLimit(), retestAttemptTimeout)
+		pctx := ctx
+		var cancel context.CancelFunc
+		if after.OK {
+			rem := time.Until(deadline)
+			if rem <= 0 {
+				return after, nil
+			}
+			if rem < timeout {
+				timeout = rem
+			}
+			pctx, cancel = context.WithDeadline(ctx, deadline)
+		}
+		p, err := probe(pctx, after.PublicIPv4 != "", after.PublicIPv6 != "", attempt, timeout)
+		if cancel != nil {
+			cancel()
+		}
 		if err != nil {
+			if ctx.Err() == nil && after.OK {
+				return after, nil
+			}
 			return after, err
 		}
-		coversBefore := (before.PublicIPv4 == "" || p.PublicIPv4 != "") && (before.PublicIPv6 == "" || p.PublicIPv6 != "")
-		if publicIPs(p) > 0 && coversBefore {
-			return p, nil
+		after = mergeProbe(after, p)
+		if publicIPs(after) > 0 && coversBefore(before, after) {
+			return after, nil
 		}
-		if publicIPs(p) >= publicIPs(after) {
-			after = p
-		}
-		if late := time.Now().Add(3 * pace); after.OK && late.Before(deadline) {
+		if late := time.Now().Add(6 * pace); after.OK && late.Before(deadline) {
 			deadline = late
 		}
-		if time.Now().Add(pace).After(deadline) {
+		if time.Now().Add(wait).After(deadline) {
 			return after, nil
 		}
 		select {
 		case <-ctx.Done():
 			return after, ctx.Err()
-		case <-time.After(pace):
+		case <-time.After(wait):
 		}
 	}
+}
+
+func coversBefore(before, after api.Probe) bool {
+	return (before.PublicIPv4 == "" || after.PublicIPv4 != "") && (before.PublicIPv6 == "" || after.PublicIPv6 != "")
+}
+
+func changedFrom(before, after api.Probe) bool {
+	return (after.PublicIPv4 != "" && after.PublicIPv4 != before.PublicIPv4) ||
+		(after.PublicIPv6 != "" && after.PublicIPv6 != before.PublicIPv6)
+}
+
+func mergeProbe(dst, src api.Probe) api.Probe {
+	if !src.OK {
+		if !dst.OK {
+			return src
+		}
+		return dst
+	}
+	if !dst.OK {
+		return src
+	}
+	out := dst
+	out.OK = true
+	out.Problem = ""
+	out.At = src.At
+	out.Latency = src.Latency
+	if src.Address != "" && out.Address == "" {
+		out.Address = src.Address
+	}
+	if src.PublicIPv4 != "" {
+		out.PublicIPv4 = src.PublicIPv4
+	}
+	if src.PublicIPv6 != "" {
+		out.PublicIPv6 = src.PublicIPv6
+	}
+	return out
 }
 
 // publicIPs counts the public addresses a probe found, one per family.

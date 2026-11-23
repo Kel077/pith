@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"slices"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -27,7 +29,39 @@ const (
 // hotspot that has just reconnected may be restarting its DNS, as the M2000
 // does for some ten seconds. Both are asked through the interface.
 type probeDNS struct {
-	own, fallback *net.Resolver // fallback nil when there is none
+	own, fallback  *net.Resolver // fallback nil when there is none
+	preferFallback bool
+	cache          *probeDNSCache
+	cachedOnly     bool
+}
+
+// probeDNSCache remembers host resolutions within a single renewal so that
+// post-reconnect probes do not stall on a hotspot whose local DNS is still
+// restarting or while only one address family is up.
+type probeDNSCache struct {
+	mu    sync.Mutex
+	addrs map[string][]netip.Addr
+}
+
+func (c *probeDNSCache) get(network, host string) []netip.Addr {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.addrs[network+"|"+host])
+}
+
+func (c *probeDNSCache) put(network, host string, addrs []netip.Addr) {
+	if c == nil || len(addrs) == 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.addrs == nil {
+		c.addrs = map[string][]netip.Addr{}
+	}
+	c.addrs[network+"|"+host] = slices.Clone(addrs)
 }
 
 // newProbeDNS asks servers on sockets dialer binds to the interface. With no
@@ -44,17 +78,76 @@ func newProbeDNS(dialer *net.Dialer, iface string, own []string, fallback []neti
 	return p
 }
 
-// dial connects to address through dialer, as net.Dialer does, with its
-// host found by the resolver it takes.
+// dial connects to address through dialer, resolving host once and dialing
+// the returned literal addresses directly without a second DNS round-trip.
 func (p probeDNS) dial(ctx context.Context, dialer *net.Dialer, network, address string) (net.Conn, error) {
 	d := *dialer
 	d.Resolver = p.own
-	if host, _, err := net.SplitHostPort(address); err == nil {
+	if host, port, err := net.SplitHostPort(address); err == nil {
 		if _, err := netip.ParseAddr(host); err != nil {
-			d.Resolver = p.resolver(ctx, network, host)
+			d.Resolver = nil
+			dialAddrs := func(addrs []netip.Addr) (net.Conn, error) {
+				var dialErr error
+				for _, addr := range addrs {
+					conn, err := d.DialContext(ctx, network, net.JoinHostPort(addr.String(), port))
+					if err == nil {
+						return conn, nil
+					}
+					dialErr = err
+					if ctx.Err() != nil {
+						break
+					}
+				}
+				return nil, dialErr
+			}
+			if cached := p.cache.get(network, host); len(cached) > 0 {
+				conn, err := dialAddrs(cached)
+				if err == nil || p.cachedOnly || ctx.Err() != nil {
+					return conn, err
+				}
+			}
+			addrs, err := p.lookup(ctx, network, host)
+			if err != nil {
+				return nil, err
+			}
+			p.cache.put(network, host, addrs)
+			return dialAddrs(addrs)
 		}
 	}
 	return d.DialContext(ctx, network, address)
+}
+
+func (p probeDNS) lookup(ctx context.Context, network, host string) ([]netip.Addr, error) {
+	family := map[string]string{"tcp4": "ip4", "tcp6": "ip6"}[network]
+	if family == "" {
+		family = "ip"
+	}
+	if p.fallback == nil {
+		return p.own.LookupNetIP(ctx, family, host)
+	}
+	if p.preferFallback {
+		fb, cancel := context.WithTimeout(ctx, dnsOwnTime)
+		addrs, err := p.fallback.LookupNetIP(fb, family, host)
+		cancel()
+		if err == nil && len(addrs) > 0 {
+			return addrs, nil
+		}
+		if ctx.Err() != nil {
+			return nil, err
+		}
+		return p.own.LookupNetIP(ctx, family, host)
+	}
+	own, cancel := context.WithTimeout(ctx, dnsOwnTime)
+	addrs, err := p.own.LookupNetIP(own, family, host)
+	cancel()
+	var dnsErr *net.DNSError
+	if err == nil && len(addrs) > 0 {
+		return addrs, nil
+	}
+	if ctx.Err() != nil || errors.As(err, &dnsErr) && dnsErr.IsNotFound {
+		return nil, err
+	}
+	return p.fallback.LookupNetIP(ctx, family, host)
 }
 
 // resolver is the one to find host with: the interface's own servers if they

@@ -109,6 +109,32 @@ func (c *Client) forgetExitAddresses(name string) {
 	}
 }
 
+func (c *Client) publishExitProbe(via api.InterfaceRef, p api.Probe) {
+	if publicIPs(p) == 0 || c.lifetime.Err() != nil {
+		return
+	}
+	links, err := c.Interfaces(c.lifetime)
+	if err != nil || c.lifetime.Err() != nil {
+		return
+	}
+	link := via.Resolve(links)
+	if link == nil || !link.Up {
+		return
+	}
+	c.exitMu.Lock()
+	defer c.exitMu.Unlock()
+	state := c.exits[link.Name]
+	if state == nil || !sameExitLink(state.link, *link) {
+		return
+	}
+	state.public = p
+	if !missingFamily(p, state.link) {
+		state.failed, state.backoff = time.Time{}, 0
+	} else {
+		state.failed, state.backoff = c.exitTime(), exitFailureAge
+	}
+}
+
 // publicProbe shares one test of a link. A nil maxAge always asks for a
 // fresh test, as the interface's Test button and renewals do.
 func (c *Client) publicProbe(ctx context.Context, link api.Interface, links []api.Interface, maxAge *time.Duration) (api.Probe, error) {

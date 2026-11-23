@@ -97,8 +97,8 @@ type Client struct {
 	exitChanges    map[string]*exitChange
 	exitAliases    atomic.Pointer[map[string]string]
 	exitJobs       sync.WaitGroup // public-address lookups and device identifications
-	exitNow        func() time.Time
-	probeTimeout   time.Duration // probeTimeout when zero
+	exitNow      func() time.Time
+	probeTimeout time.Duration // probeTimeout when zero
 }
 
 var _ api.Service = (*Client)(nil)
@@ -115,7 +115,7 @@ func New(opts Options) (*Client, error) {
 	if opts.Version == "" {
 		opts.Version = "dev"
 	}
-	c := &Client{opts: opts, configPath: filepath.Join(opts.ConfigDir, "config.json"), interfaces: netif.List, lookup: net.DefaultResolver.LookupNetIP, dialer: netif.Dialer, rmnet: hotspot.NewRMNet(),
+	c := &Client{opts: opts, configPath: filepath.Join(opts.ConfigDir, "config.json"), lookup: net.DefaultResolver.LookupNetIP, dialer: netif.Dialer, rmnet: hotspot.NewRMNet(),
 		probeURLs: [2]string{"https://api.ipify.org", "https://api6.ipify.org"}, speedURL: speedServer, secretGet: keychain.Get, secretSet: keychain.Set,
 		hotspotIndex: func(name string) (int, error) {
 			link, err := net.InterfaceByName(name)
@@ -132,7 +132,11 @@ func New(opts Options) (*Client, error) {
 }
 
 func (c *Client) Interfaces(ctx context.Context) ([]api.Interface, error) {
-	links, err := c.interfaces(ctx)
+	list := c.interfaces
+	if list == nil {
+		list = netif.List
+	}
+	links, err := list(ctx)
 	if err == nil {
 		c.observeExits(links)
 	}

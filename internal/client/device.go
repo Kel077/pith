@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/Kel077/pith/internal/api"
@@ -25,7 +27,30 @@ func (c *Client) deviceClient(name string, link api.Interface, index int, tlsCon
 	if err != nil {
 		return nil, nil, err
 	}
+	var (
+		idMu    sync.Mutex
+		checked time.Time
+	)
 	checkIdentity := func(ctx context.Context) error {
+		currentIndex, err := c.hotspotIndex(name)
+		if err != nil || currentIndex != index {
+			return errors.New("device interface index changed")
+		}
+		if c.interfaces == nil {
+			kern, err := net.InterfaceByName(name)
+			if err != nil || kern.Index != index || kern.Flags&net.FlagUp == 0 || !strings.EqualFold(kern.HardwareAddr.String(), link.HardwareAddr) {
+				idMu.Lock()
+				checked = time.Time{}
+				idMu.Unlock()
+				return errors.New("device interface identity changed")
+			}
+			idMu.Lock()
+			fresh := time.Since(checked) < 500*time.Millisecond
+			idMu.Unlock()
+			if fresh {
+				return nil
+			}
+		}
 		current, err := c.Interfaces(ctx)
 		if err != nil {
 			return err
@@ -34,9 +59,10 @@ func (c *Client) deviceClient(name string, link api.Interface, index int, tlsCon
 		if found == nil || found.Name != name || !found.Up || found.Router != link.Router {
 			return errors.New("device interface identity changed")
 		}
-		currentIndex, err := c.hotspotIndex(name)
-		if err != nil || currentIndex != index {
-			return errors.New("device interface index changed")
+		if c.interfaces == nil {
+			idMu.Lock()
+			checked = time.Now()
+			idMu.Unlock()
 		}
 		return nil
 	}
