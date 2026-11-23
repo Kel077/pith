@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Kel077/pith/internal/api"
@@ -37,14 +38,15 @@ type Inseego struct {
 	HTTP  *http.Client // through the hotspot's interface, keeping cookies
 	// Password returns the admin password Pith keeps, or "" when it has none.
 	Password func() (string, error)
-	// Poll is how long to wait between readings while renewing: half a
-	// second when zero.
+	// Poll is how long to wait between readings while renewing: 250 ms
+	// when zero.
 	Poll time.Duration
 
 	dropWait time.Duration // for its connection to drop once data is off: 10 s when zero
 
 	mu       sync.Mutex
 	loggedIn bool
+	token    string // gSecureToken of the current web session
 	refused  string // a hash of the password the hotspot refused: never tried again
 }
 
@@ -77,7 +79,7 @@ func (d *Inseego) Status(ctx context.Context) (api.Hotspot, error) {
 func (d *Inseego) TryPassword(ctx context.Context, password string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.loggedIn = false
+	d.loggedIn, d.token = false, ""
 	if password == "" || digest(password) == d.refused {
 		return &api.Error{Code: api.ErrWrongPassword, Detail: "the hotspot refused this admin password"}
 	}
@@ -87,35 +89,37 @@ func (d *Inseego) TryPassword(ctx context.Context, password string) error {
 // Renew has the hotspot reconnect to its carrier: it turns its cellular
 // data off and on, and waits until it is connected again, by a connection
 // made since data went off when the hotspot tells. before, if not
-// nil, runs while Renew reads the hotspot's network settings, which takes
-// it a second or so: Renew turns data off once before has returned, and
-// not at all if it failed.
-func (d *Inseego) Renew(ctx context.Context, before func(context.Context) error) (resultErr error) {
+// nil, runs while Renew prepares the session: Renew turns data off once
+// before has returned, and not at all if it failed.
+func (d *Inseego) Renew(ctx context.Context, before func(context.Context) error) error {
+	return d.RenewReady(ctx, before, nil)
+}
+
+// RenewReady is Renew with an optional readiness check that runs alongside
+// status polling once the previous connection has been seen to drop.
+func (d *Inseego) RenewReady(ctx context.Context, before func(context.Context) error, ready func(context.Context) bool) (resultErr error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	beforeCtx, stop := context.WithCancel(ctx)
 	defer stop()
-	ready := make(chan error, 1)
+	beforeDone := make(chan error, 1)
 	if before == nil {
-		ready <- nil
+		beforeDone <- nil
 	} else {
-		go func() { ready <- before(beforeCtx) }()
+		go func() { beforeDone <- before(beforeCtx) }()
 	}
-	page, err := d.adminPage(ctx, "/networks/", func(p string) bool { return strings.Contains(p, "/wwan/enablecellulardata/") })
+	cachedToken := d.loggedIn && d.token != ""
+	tok, err := d.sessionToken(ctx)
 	if err != nil {
 		stop()
 	}
-	if beforeErr := <-ready; err == nil {
+	if beforeErr := <-beforeDone; err == nil {
 		err = beforeErr
 	}
 	if err != nil {
 		return err
 	}
-	m := tokenScript.FindStringSubmatch(page)
-	if m == nil {
-		return errors.New("hotspot: no session token on its network settings")
-	}
-	form := url.Values{"gSecureToken": {m[1]}}
+	form := url.Values{"gSecureToken": {tok}}
 	// A canceled or failed disable request may still have reached the device.
 	// Always try to restore data with an independent bounded context in that case.
 	needsEnable := true
@@ -131,13 +135,30 @@ func (d *Inseego) Renew(ctx context.Context, before func(context.Context) error)
 			if restoreErr == nil || restoreCtx.Err() != nil {
 				break
 			}
+			if errors.Is(restoreErr, errSession) {
+				if fresh, tokErr := d.sessionToken(restoreCtx); tokErr == nil {
+					form = url.Values{"gSecureToken": {fresh}}
+				}
+			}
 		}
 		if restoreErr != nil {
 			resultErr = errors.Join(resultErr, fmt.Errorf("hotspot: restore cellular data: %w", restoreErr))
 		}
 	}()
 	off := time.Now()
-	if err := d.post(ctx, "/wwan/disablecellulardata/", "/networks/", form); err != nil {
+	err = d.post(ctx, "/wwan/disablecellulardata/", "/networks/", form)
+	if cachedToken && errors.Is(err, errSession) && ctx.Err() == nil {
+		// The cached session ended while idle; cellular data was not switched.
+		tok, err = d.sessionToken(ctx)
+		if err != nil {
+			needsEnable = false
+			return err
+		}
+		form = url.Values{"gSecureToken": {tok}}
+		off = time.Now()
+		err = d.post(ctx, "/wwan/disablecellulardata/", "/networks/", form)
+	}
+	if err != nil {
 		return fmt.Errorf("hotspot: turn cellular data off: %w", err)
 	}
 	// Let it drop its connection: some take a moment, and turning data on
@@ -146,9 +167,14 @@ func (d *Inseego) Renew(ctx context.Context, before func(context.Context) error)
 	if dropWait == 0 {
 		dropWait = 10 * time.Second
 	}
-	d.await(ctx, dropWait, func(h api.Hotspot, _ time.Duration) bool { return !h.Connected })
+	sawDrop := d.await(ctx, dropWait, func(h api.Hotspot, _ time.Duration) bool { return !h.Connected })
 	err = d.post(ctx, "/wwan/enablecellulardata/", "/networks/", form)
 	if err != nil && ctx.Err() == nil {
+		if errors.Is(err, errSession) {
+			if fresh, tokErr := d.sessionToken(ctx); tokErr == nil {
+				form = url.Values{"gSecureToken": {fresh}}
+			}
+		}
 		err = d.post(ctx, "/wwan/enablecellulardata/", "/networks/", form)
 	}
 	if err != nil {
@@ -159,12 +185,27 @@ func (d *Inseego) Renew(ctx context.Context, before func(context.Context) error)
 	// on the switch may still show the connection it had, through which a
 	// test would find the addresses from before, as if they hadn't changed.
 	// Its status tells in whole seconds how long its connection has lasted;
-	// one that doesn't is taken at its word.
+	// one that doesn't is taken at its word. Once a drop has been observed,
+	// ready can finish early when /srv/status lags behind actual traffic.
+	waitCtx, stopWait := context.WithCancel(ctx)
+	var readyHit atomic.Bool
+	var wg sync.WaitGroup
+	if sawDrop && ready != nil {
+		wg.Go(func() {
+			if ready(waitCtx) {
+				readyHit.Store(true)
+				stopWait()
+			}
+		})
+	}
 	stale := false
-	if !d.await(ctx, 90*time.Second, func(h api.Hotspot, lasted time.Duration) bool {
+	connected := d.await(waitCtx, 90*time.Second, func(h api.Hotspot, lasted time.Duration) bool {
 		stale = h.Connected && lasted > time.Since(off)+time.Second
 		return h.Connected && !stale
-	}) {
+	})
+	stopWait()
+	wg.Wait()
+	if !connected && !readyHit.Load() {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -176,12 +217,28 @@ func (d *Inseego) Renew(ctx context.Context, before func(context.Context) error)
 	return nil
 }
 
+func (d *Inseego) sessionToken(ctx context.Context) (string, error) {
+	if d.loggedIn && d.token != "" {
+		return d.token, nil
+	}
+	page, err := d.adminPage(ctx, "/networks/", func(p string) bool { return strings.Contains(p, "/wwan/enablecellulardata/") })
+	if err != nil {
+		return "", err
+	}
+	m := tokenScript.FindStringSubmatch(page)
+	if m == nil {
+		return "", errors.New("hotspot: no session token on its network settings")
+	}
+	d.token = m[1]
+	return d.token, nil
+}
+
 // await reads the status until ok, or until limit has passed. ok is given
 // how long the connection has lasted, or -1 when the hotspot doesn't say.
 func (d *Inseego) await(ctx context.Context, limit time.Duration, ok func(h api.Hotspot, lasted time.Duration) bool) bool {
 	poll := d.Poll
 	if poll == 0 {
-		poll = 500 * time.Millisecond
+		poll = 250 * time.Millisecond
 	}
 	deadline := time.Now().Add(limit)
 	for {
@@ -249,7 +306,7 @@ func (d *Inseego) adminPage(ctx context.Context, path string, ok func(string) bo
 		if page := string(body); ok(page) {
 			return page, nil
 		}
-		d.loggedIn = false
+		d.loggedIn, d.token = false, ""
 	}
 	return "", fmt.Errorf("hotspot: %s needs a session it doesn't keep", path)
 }
@@ -338,7 +395,7 @@ func (d *Inseego) post(ctx context.Context, path, from string, form url.Values) 
 		LoggedIn int `json:"gIsLoggedIn"`
 	}
 	if json.Unmarshal(body, &r) != nil || r.LoggedIn != 1 {
-		d.loggedIn = false
+		d.loggedIn, d.token = false, ""
 		return errSession
 	}
 	return nil

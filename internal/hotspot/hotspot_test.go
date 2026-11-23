@@ -208,6 +208,78 @@ func TestRenewWaitsForANewConnection(t *testing.T) {
 	})
 }
 
+func TestRenewCachesNetworkTokenAndRefreshesExpiredSession(t *testing.T) {
+	f := hotspottest.New()
+	d := device(t, f, hotspottest.Password)
+	var networkReads int
+	base := http.DefaultTransport
+	d.HTTP.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path == "/networks/" {
+			networkReads++
+		}
+		return base.RoundTrip(req)
+	})
+	if err := d.Renew(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Renew(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if networkReads != 1 || f.Logins != 1 {
+		t.Fatalf("networkReads = %d, logins = %d; want 1, 1", networkReads, f.Logins)
+	}
+	// Expire the web session via diagnostics, then verify Renew re-acquires a token cleanly.
+	f.Do(func(f *hotspottest.MiFi) { f.Expire = true })
+	if _, err := d.Status(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Renew(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if networkReads != 2 || f.Logins != 2 {
+		t.Fatalf("after expiry: networkReads = %d, logins = %d; want 2, 2", networkReads, f.Logins)
+	}
+}
+
+func TestRenewReadyFinishesEarlyOnlyAfterADrop(t *testing.T) {
+	f := hotspottest.New()
+	d := device(t, f, hotspottest.Password)
+	d.Poll = 50 * time.Millisecond
+	d.HTTP.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		res, err := http.DefaultTransport.RoundTrip(req)
+		if err == nil && req.URL.Path == "/wwan/enablecellulardata/" {
+			f.Do(func(f *hotspottest.MiFi) { f.Reconnect = 40 })
+		}
+		return res, err
+	})
+	start := time.Now()
+	if err := d.RenewReady(context.Background(), nil, func(context.Context) bool {
+		time.Sleep(10 * time.Millisecond)
+		return true
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(start); took > 500*time.Millisecond {
+		t.Fatalf("RenewReady waited %v for lagging /srv/status", took)
+	}
+
+	// Without an observed drop, ready must not cut past the old connection.
+	f2 := hotspottest.New()
+	f2.Lag = 10
+	d2 := device(t, f2, hotspottest.Password)
+	d2.dropWait = 5 * time.Millisecond
+	readyCalled := false
+	if err := d2.RenewReady(context.Background(), nil, func(context.Context) bool {
+		readyCalled = true
+		return true
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if readyCalled {
+		t.Fatal("ready ran even though the old connection had not dropped")
+	}
+}
+
 // How long the connection has lasted: a string on the M2000, and unknown
 // when the hotspot doesn't tell.
 func TestReadConnectionDuration(t *testing.T) {
