@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Kel077/pith/internal/api"
+	"github.com/Kel077/pith/internal/hotspot"
 )
 
 // tool is one tool: what an agent reads of it, and what it runs.
@@ -1393,9 +1394,9 @@ func changeIP(ctx context.Context, h Host, a struct {
 	if err != nil {
 		return nil, err
 	}
-	// RMNet is identified by its hardware port. Join a running renewal
-	// directly, even while it holds the modem's AT port.
-	isHotspot := strings.EqualFold(iface.HardwarePort, api.HotspotRM520N)
+	// RMNet is identified by its hardware port, and an M2000 by its label.
+	// Skip scraping /diagnostics/ before renewing a known hotspot.
+	isHotspot := strings.EqualFold(iface.HardwarePort, api.HotspotRM520N) || hotspot.Model(iface.Label) != ""
 	if !isHotspot {
 		hs, _, err := gateway(ctx, h, iface.Name)
 		if err != nil {

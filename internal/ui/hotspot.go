@@ -27,9 +27,10 @@ type hotspots struct {
 	renewals map[string]api.HotspotRenewal
 	unlock   unlockDialog
 
-	seen  atomic.Int64             // when a view last showed hotspots: Unix nanoseconds
-	names atomic.Pointer[[]string] // the interfaces to read, for the poller
-	kick  chan struct{}            // read them now
+	seen   atomic.Int64                    // when a view last showed hotspots: Unix nanoseconds
+	names  atomic.Pointer[[]string]        // the interfaces to read, for the poller
+	active atomic.Pointer[map[string]bool] // interfaces renewing now, skipped by the poller
+	kick   chan struct{}                   // read them now
 }
 
 // unlockDialog asks for the admin password of a hotspot, or of a router.
@@ -74,8 +75,12 @@ func (a *App) pollHotspots(ctx context.Context) {
 		if time.Since(time.Unix(0, a.hotspot.seen.Load())) > 2*hotspotPoll {
 			continue
 		}
+		active := a.hotspot.active.Load()
 		if names := a.hotspot.names.Load(); names != nil {
 			for _, name := range *names {
+				if active != nil && (*active)[name] {
+					continue
+				}
 				h, err := a.Service.Hotspot(ctx, name)
 				a.Post(func() { a.setHotspot(name, h, err) })
 			}
@@ -132,6 +137,22 @@ func (a *App) hotspotNames() {
 	a.hotspot.names.Store(&names)
 }
 
+func (a *App) setHotspotRenewing(name, key string, on bool) {
+	if on {
+		a.hotspot.renewing[key] = true
+	} else {
+		delete(a.hotspot.renewing, key)
+	}
+	snap := make(map[string]bool, len(a.hotspot.renewing)+1)
+	for k := range a.hotspot.renewing {
+		snap[k] = true
+	}
+	if on {
+		snap[name] = true
+	}
+	a.hotspot.active.Store(&snap)
+}
+
 // renewHotspot has the hotspot behind an interface reconnect to its
 // carrier, for new public addresses.
 func (a *App) renewHotspot(i *api.Interface) {
@@ -139,7 +160,7 @@ func (a *App) renewHotspot(i *api.Interface) {
 	if a.hotspot.renewing[key] {
 		return
 	}
-	a.hotspot.renewing[key] = true
+	a.setHotspotRenewing(name, key, true)
 	delete(a.hotspot.renewals, key)
 	delete(a.speeds, name) // of its old connection
 	var r api.HotspotRenewal
@@ -149,13 +170,13 @@ func (a *App) renewHotspot(i *api.Interface) {
 		r, err = a.Service.RenewHotspot(ctx, name)
 		return err
 	}, func() {
-		delete(a.hotspot.renewing, key)
+		a.setHotspotRenewing(name, key, false)
 		a.hotspot.renewals[key] = r
 		select { // read its new state
 		case a.hotspot.kick <- struct{}{}:
 		default:
 		}
-	}, func(error) { delete(a.hotspot.renewing, key) })
+	}, func(error) { a.setHotspotRenewing(name, key, false) })
 }
 
 func hotspotRenewalKey(i *api.Interface) string {
