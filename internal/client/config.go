@@ -61,10 +61,12 @@ func (c *Client) loadConfig(ctx context.Context) (api.Config, error) {
 	return cfg, nil
 }
 
-// keepExitAliases publishes a private copy for port status reads.
+// keepExitAliases publishes a private copy for port status reads and caches
+// client-side logging preferences from the saved configuration.
 func (c *Client) keepExitAliases(cfg api.Config) {
 	aliases := maps.Clone(cfg.Aliases)
 	c.exitAliases.Store(&aliases)
+	c.logDays.Store(int32(cfg.Settings.LogDays))
 }
 
 func (c *Client) SaveConfig(ctx context.Context, cfg api.Config) error {
@@ -123,6 +125,9 @@ func (c *Client) SaveConfig(ctx context.Context, cfg api.Config) error {
 		return err
 	}
 	c.keepExitAliases(cfg)
+	if cfg.Settings.LogDays == 0 {
+		c.pruneHotspotRenewalLogs(c.exitTime(), 0)
+	}
 	routingUnchanged := previousErr == nil && sameRoutingConfig(previous, cfg)
 	proxyOnly := routingUnchanged && !sameProxies(previous, cfg)
 	c.routingPending = c.routingPending || !routingUnchanged

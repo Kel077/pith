@@ -83,33 +83,93 @@ const (
 	readyPollInterval    = 750 * time.Millisecond
 )
 
-func (c *Client) renewHotspot(ctx context.Context, via api.InterfaceRef) (api.HotspotRenewal, error) {
-	var r api.HotspotRenewal
+func (c *Client) renewHotspot(ctx context.Context, via api.InterfaceRef) (r api.HotspotRenewal, resultErr error) {
+	started := time.Now()
+	logEntry := hotspotRenewalLog{
+		At:        c.exitTime(),
+		Interface: via.Name,
+	}
+	var stageMu sync.Mutex
+	addStage := func(st hotspotRenewalStageLog) {
+		stageMu.Lock()
+		if st.MobileData != "" {
+			if logEntry.InitialMobileData == "" {
+				logEntry.InitialMobileData = st.MobileData
+			}
+			logEntry.FinalMobileData = st.MobileData
+		}
+		logEntry.Stages = append(logEntry.Stages, st)
+		stageMu.Unlock()
+	}
+	defer func() {
+		stageMu.Lock()
+		logEntry.OK = resultErr == nil && r.After.OK
+		logEntry.TotalMS = time.Since(started).Milliseconds()
+		logEntry.BeforeIPv4 = r.Before.PublicIPv4
+		logEntry.BeforeIPv6 = r.Before.PublicIPv6
+		logEntry.AfterIPv4 = r.After.PublicIPv4
+		logEntry.AfterIPv6 = r.After.PublicIPv6
+		if resultErr != nil {
+			logEntry.Error = hotspot.SanitizeError(resultErr)
+		} else if !r.After.OK && r.After.Problem != "" {
+			logEntry.Error = hotspot.SanitizeError(errors.New(r.After.Problem))
+		}
+		entry := logEntry
+		stageMu.Unlock()
+		c.writeHotspotRenewalLog(entry)
+	}()
+
 	s, err := c.hotspotFor(ctx, via)
 	if err != nil {
 		return r, err
 	}
-	started := time.Now()
 	if s.rmnet != nil {
+		logEntry.Model = api.HotspotRM520N
 		probe := func(ctx context.Context) (api.Probe, error) { return c.rmnetProbe(ctx, s.ref) }
+		renewStart := time.Now()
 		err = s.rmnet.Renew(ctx, func(ctx context.Context) (err error) {
+			beforeStart := time.Now()
 			r.Before, err = probe(ctx)
 			if err == nil && !r.Before.OK {
-				return &api.Error{Code: api.ErrInterfaceUnavailable, Detail: "RMNet public-address test before renewal: " + r.Before.Problem}
+				err = &api.Error{Code: api.ErrInterfaceUnavailable, Detail: "RMNet public-address test before renewal: " + r.Before.Problem}
 			}
 			if err == nil {
 				c.forgetExitAddresses(r.Before.Interface)
 			}
+			addStage(hotspotRenewalStageLog{
+				Stage:      "before",
+				At:         beforeStart,
+				DurationMS: time.Since(beforeStart).Milliseconds(),
+				Error:      hotspot.SanitizeError(err),
+			})
 			return err
+		})
+		addStage(hotspotRenewalStageLog{
+			Stage:      "reconnect",
+			At:         renewStart,
+			DurationMS: time.Since(renewStart).Milliseconds(),
+			Error:      hotspot.SanitizeError(err),
 		})
 		if err != nil {
 			return r, err
 		}
+		retestStart := time.Now()
 		r.After, err = c.retestPublic(ctx, r.Before, probe)
+		retestErr := hotspot.SanitizeError(err)
+		if retestErr == "" && !r.After.OK {
+			retestErr = hotspot.SanitizeError(errors.New(r.After.Problem))
+		}
+		addStage(hotspotRenewalStageLog{
+			Stage:      "retest",
+			At:         retestStart,
+			DurationMS: time.Since(retestStart).Milliseconds(),
+			Error:      retestErr,
+		})
 		// A registered modem may not have a usable IP session yet.
 		r.Took = time.Since(started)
 		return r, err
 	}
+	logEntry.Model = s.device.Model
 
 	dnsCache := &probeDNSCache{}
 	probeM2000 := func(pctx context.Context, opts probeOptions) (api.Probe, error) {
@@ -172,7 +232,20 @@ func (c *Client) renewHotspot(ctx context.Context, via api.InterfaceRef) (api.Ho
 			}
 		}
 	}
-	if err = s.device.RenewReady(ctx, before, ready); err != nil {
+	onEvent := func(ev hotspot.RenewEvent) {
+		addStage(hotspotRenewalStageLog{
+			Stage:      ev.Stage,
+			At:         ev.At,
+			DurationMS: ev.Duration.Milliseconds(),
+			MobileData: ev.MobileData,
+			Connected:  ev.Connected,
+			Attempt:    ev.Attempt,
+			Skipped:    ev.Skipped,
+			Detail:     ev.Detail,
+			Error:      ev.Error,
+		})
+	}
+	if err = s.device.RenewReadyObserved(ctx, before, ready, onEvent); err != nil {
 		return r, err
 	}
 	r.Took = time.Since(started)
@@ -182,8 +255,11 @@ func (c *Client) renewHotspot(ctx context.Context, via api.InterfaceRef) (api.Ho
 	// Connected again, a hotspot may still be setting up its addresses and
 	// its DNS: the M2000's refuses queries for some ten seconds more, and in
 	// 5G SA its 464XLAT IPv4 finishes several seconds after IPv6.
+	retestStart := time.Now()
+	retestDetail := "retest-public"
 	if publicIPs(seed) > 0 && coversBefore(r.Before, seed) {
 		r.After = seed
+		retestDetail = "ready-seed"
 	} else {
 		r.After, err = c.retestPublicSeeded(ctx, r.Before, seed, func(pctx context.Context, skipV4, skipV6 bool, attempt int, timeout time.Duration) (api.Probe, error) {
 			return probeM2000(pctx, probeOptions{
@@ -196,6 +272,17 @@ func (c *Client) renewHotspot(ctx context.Context, via api.InterfaceRef) (api.Ho
 			})
 		})
 	}
+	retestErr := hotspot.SanitizeError(err)
+	if retestErr == "" && !r.After.OK {
+		retestErr = hotspot.SanitizeError(errors.New(r.After.Problem))
+	}
+	addStage(hotspotRenewalStageLog{
+		Stage:      "retest",
+		At:         retestStart,
+		DurationMS: time.Since(retestStart).Milliseconds(),
+		Detail:     retestDetail,
+		Error:      retestErr,
+	})
 	if err == nil {
 		c.publishExitProbe(via, r.After)
 	}

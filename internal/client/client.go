@@ -99,6 +99,8 @@ type Client struct {
 	exitJobs       sync.WaitGroup // public-address lookups and device identifications
 	exitNow      func() time.Time
 	probeTimeout time.Duration // probeTimeout when zero
+	hotspotLogMu sync.Mutex
+	logDays      atomic.Int32 // cached Settings.LogDays; -1 until config is loaded
 }
 
 var _ api.Service = (*Client)(nil)
@@ -124,6 +126,7 @@ func New(opts Options) (*Client, error) {
 			}
 			return link.Index, nil
 		}}
+	c.logDays.Store(-1)
 	c.initIdentity()
 	c.lifetime, c.closeLifetime = context.WithCancel(context.Background())
 	c.executePlan = func(ctx context.Context, plan helper.InstallPlan) error { return plan.Execute(ctx) }

@@ -2,11 +2,14 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -322,5 +325,86 @@ func TestHotspotRenewalGivesUpTesting(t *testing.T) {
 	r, err := c.RenewHotspot(context.Background(), "en9")
 	if err != nil || !r.Before.OK || r.After.OK || r.After.Problem == "" {
 		t.Fatalf("%+v %v", r, err)
+	}
+}
+
+func TestHotspotRenewalWritesSanitizedDiagnosticLogAndRespectsLogDays(t *testing.T) {
+	f := hotspottest.New()
+	c := renewalClient(t, f,
+		func(after int) string {
+			if after < 0 {
+				return "192.0.2.10"
+			}
+			return "192.0.2.20"
+		},
+		func(after int) string {
+			if after < 0 {
+				return "2001:db8::10"
+			}
+			return "2001:db8::20"
+		})
+	now := time.Date(2026, 11, 24, 22, 30, 0, 0, time.UTC)
+	c.exitNow = func() time.Time { return now }
+
+	// Seed an expired log file older than default LogDays (7) to verify pruning.
+	if err := os.MkdirAll(c.opts.ConfigDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	stalePath := filepath.Join(c.opts.ConfigDir, "hotspot-renewals-2026-11-01.jsonl")
+	if err := os.WriteFile(stalePath, []byte(`{"interface":"en9"}`+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := c.RenewHotspot(context.Background(), "en9"); err != nil {
+		t.Fatalf("RenewHotspot failed: %v", err)
+	}
+	if _, err := os.Stat(stalePath); !os.IsNotExist(err) {
+		t.Fatalf("expected expired hotspot renewal log to be pruned, stat err = %v", err)
+	}
+
+	logPath := filepath.Join(c.opts.ConfigDir, "hotspot-renewals-2026-11-24.jsonl")
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("expected diagnostic log at %s: %v", logPath, err)
+	}
+	text := string(raw)
+	for _, secret := range []string{hotspottest.Password, "1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222", "Cookie:", "mifisess"} {
+		if strings.Contains(text, secret) {
+			t.Fatalf("diagnostic log leaked secret %q: %s", secret, text)
+		}
+	}
+	var entry hotspotRenewalLog
+	if err := json.Unmarshal([]byte(strings.TrimSpace(text)), &entry); err != nil {
+		t.Fatalf("invalid JSONL record: %v\n%s", err, text)
+	}
+	if !entry.OK || entry.Interface != "en9" || entry.Model != "M2000" ||
+		entry.InitialMobileData != "enabled" || entry.FinalMobileData != "enabled" ||
+		entry.BeforeIPv4 != "192.0.2.10" || entry.AfterIPv4 != "192.0.2.20" ||
+		entry.BeforeIPv6 != "2001:db8::10" || entry.AfterIPv6 != "2001:db8::20" {
+		t.Fatalf("unexpected log entry: %+v", entry)
+	}
+	seen := map[string]bool{}
+	for _, st := range entry.Stages {
+		seen[st.Stage] = true
+	}
+	for _, wantStage := range []string{"status", "before", "token", "disable", "dropWait", "enable", "reconnect", "retest"} {
+		if !seen[wantStage] {
+			t.Fatalf("missing stage %q in diagnostic log stages: %+v", wantStage, entry.Stages)
+		}
+	}
+
+	// Setting LogDays = 0 removes existing logs and suppresses further disk writes.
+	cfg := api.DefaultConfig()
+	cfg.Settings.LogDays = 0
+	c.keepExitAliases(cfg)
+	c.pruneHotspotRenewalLogs(now, 0)
+	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
+		t.Fatalf("expected log file removed when LogDays=0, stat err = %v", err)
+	}
+	if _, err := c.RenewHotspot(context.Background(), "en9"); err != nil {
+		t.Fatalf("RenewHotspot with LogDays=0 failed: %v", err)
+	}
+	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
+		t.Fatalf("LogDays=0 should not write hotspot renewal log, stat err = %v", err)
 	}
 }
