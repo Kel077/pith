@@ -29,6 +29,11 @@ type MiFi struct {
 	Reconnect int  // readings of the status until connected again
 	Stuck     bool // never connected again
 	Expire    bool // the session ends after the next diagnostics page
+	// OmitMobileData omits statusBarMobileDataEnabled from /srv/status to
+	// simulate older firmware.
+	OmitMobileData bool
+	// MobileDataAsString encodes statusBarMobileDataEnabled as "0"/"1" instead of 0/1.
+	MobileDataAsString bool
 	// Lag is how many readings of the status still show the connection it
 	// had once data is turned off, as a hotspot slow to act on the switch.
 	Lag int
@@ -83,14 +88,32 @@ func (f *MiFi) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if f.loggedIn(r) {
 			login = 1
 		}
-		fmt.Fprintf(w, `{"loginStatus":%d,"statusData":{"statusBarConnectionState":%q,"statusBarConnectionDuration":"%d","statusBarTechnology":"5G","statusBarSignalBars":4}}`, login, state, lasted)
+		mobileDataField := ""
+		if !f.OmitMobileData {
+			v := 0
+			if f.DataOn {
+				v = 1
+			}
+			if f.MobileDataAsString {
+				mobileDataField = fmt.Sprintf(`,"statusBarMobileDataEnabled":"%d"`, v)
+			} else {
+				mobileDataField = fmt.Sprintf(`,"statusBarMobileDataEnabled":%d`, v)
+			}
+		}
+		fmt.Fprintf(w, `{"loginStatus":%d,"statusData":{"statusBarConnectionState":%q,"statusBarConnectionDuration":"%d","statusBarTechnology":"5G","statusBarSignalBars":4%s}}`, login, state, lasted, mobileDataField)
 	case "/login/":
 		fmt.Fprintf(w, `<form><input type="hidden" name="gSecureToken" id="gSecureToken" value="%s" /></form>`, loginToken)
 	case "/submitLogin/":
 		f.Logins++
+		if r.Header.Get("X-Requested-With") == "" || r.FormValue("gSecureToken") != loginToken {
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, `{"gIsLoggedIn":0,"gPageId":"login","authError":"login_invalid_token_status"}`)
+			return
+		}
 		sum := sha1.Sum([]byte(Password + loginToken))
-		if r.FormValue("gSecureToken") != loginToken || r.FormValue("shaPassword") != hex.EncodeToString(sum[:]) || r.Header.Get("X-Requested-With") == "" {
-			fmt.Fprint(w, `{"gIsLoggedIn":0,"gPageId":"login"}`)
+		if r.FormValue("shaPassword") != hex.EncodeToString(sum[:]) {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(w, `{"gIsLoggedIn":0,"gPageId":"login","authError":"login_invalid_password_status","noOfRemainingLoginAttempts":4}`)
 			return
 		}
 		id := fmt.Sprint("s", f.Logins)
@@ -127,11 +150,15 @@ func (f *MiFi) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		on := strings.Contains(r.URL.Path, "enable")
 		f.Calls = append(f.Calls, map[bool]string{true: "on", false: "off"}[on])
+		wasOn := f.DataOn
 		f.DataOn = on
 		if !on && f.Lag == 0 {
 			f.dropped = true
 		}
 		if on {
+			if !wasOn && f.Lag == 0 {
+				f.dropped = true
+			}
 			f.Reconnect = 2
 			if f.Stuck {
 				f.Reconnect = 1 << 30
