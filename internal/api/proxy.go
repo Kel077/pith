@@ -258,16 +258,17 @@ type ProxyInfo struct {
 }
 
 // ProxyIPChange tells what changing the public address of what a proxy
-// goes out through did: the addresses before, and the ones now. A router
-// changes its IPv4 address alone.
+// goes out through did: the addresses before, and the ones now. An OpenWrt
+// router can also report its own WAN rotation.
 type ProxyIPChange struct {
-	Port       int       `json:"port"`
-	BeforeIPv4 string    `json:"beforeIPv4,omitempty"`
-	BeforeIPv6 string    `json:"beforeIPv6,omitempty"`
-	PublicIPv4 string    `json:"publicIPv4,omitempty"`
-	PublicIPv6 string    `json:"publicIPv6,omitempty"`
-	At         time.Time `json:"at,omitzero"` // when the addresses now were found
-	Seconds    float64   `json:"seconds"`     // it took, until the internet worked through it again
+	Port       int          `json:"port"`
+	BeforeIPv4 string       `json:"beforeIPv4,omitempty"`
+	BeforeIPv6 string       `json:"beforeIPv6,omitempty"`
+	PublicIPv4 string       `json:"publicIPv4,omitempty"`
+	PublicIPv6 string       `json:"publicIPv6,omitempty"`
+	At         time.Time    `json:"at,omitzero"` // when the addresses now were found
+	Seconds    float64      `json:"seconds"`     // it took, until the internet worked through it again
+	WAN        *WANRotation `json:"wan,omitempty"`
 }
 
 // CanProxy reports supported exit type, not current availability. Down physical

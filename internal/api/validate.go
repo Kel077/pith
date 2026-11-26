@@ -236,6 +236,16 @@ func (c Config) Validate() error {
 		}
 		devices[prefix] = true
 	}
+	routers := make(map[string]bool, len(c.OpenWrt))
+	for _, router := range c.OpenWrt {
+		if err := router.Validate(); err != nil {
+			return err
+		}
+		if routers[router.Via.Name] {
+			return bad("OpenWrt: more than one router for interface %q", router.Via.Name)
+		}
+		routers[router.Via.Name] = true
+	}
 	return nil
 }
 

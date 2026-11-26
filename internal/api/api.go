@@ -77,19 +77,17 @@ type Service interface {
 	// changed.
 	RenewHotspot(ctx context.Context, iface string) (HotspotRenewal, error)
 
-	// Router reads the router behind a wired interface, by its Name:
+	// Router reads the router behind an Ethernet or Wi-Fi interface, by its Name:
 	// ErrUnsupported when Pith can't talk to it.
 	Router(ctx context.Context, iface string) (Router, error)
 	// SetRouterPassword tries the admin password of the router behind an
 	// interface, ErrWrongPassword when it refuses it, and keeps it in the
 	// keychain.
 	SetRouterPassword(ctx context.Context, iface, password string) error
-	// RenewRouter has the router behind an interface give up its public IPv4
-	// address and ask its provider for one again, until it gets another or
-	// gives up, and returns once the internet works through it again. While it
-	// is offline the interface counts as down: another connected interface
-	// becomes macOS's primary, rules skip it, and local proxies through it
-	// refuse connections. The router's other devices are offline meanwhile.
+	// RenewRouter has the router behind an interface renew its WAN addresses.
+	// During a Verizon router renewal another interface becomes macOS's primary,
+	// rules skip the renewing interface and its local proxies refuse connections.
+	// A configured OpenWrt router handles its own WAN rotation and failover.
 	// ErrBusy while another interface's address is being changed.
 	RenewRouter(ctx context.Context, iface string) (RouterRenewal, error)
 
@@ -149,6 +147,8 @@ type Config struct {
 	// Devices are the other devices that may use the proxies that are Shared.
 	// Empty, shared proxies still take this Mac's own connections alone.
 	Devices []Device `json:"devices,omitempty"`
+	// OpenWrt selects an SSH-managed router for each configured interface.
+	OpenWrt []OpenWrtRouter `json:"openWrt,omitempty"`
 }
 
 // Scene is a named, ordered list of rules. One scene routes at a time.
@@ -509,7 +509,7 @@ type HotspotRenewal struct {
 	Took   time.Duration `json:"took"` // until the hotspot was connected again
 }
 
-// Router is the router behind a wired interface, as its admin reports its
+// Router is the router behind an Ethernet or Wi-Fi interface, as its admin reports its
 // connection to the internet.
 type Router struct {
 	Interface  string `json:"interface"`
@@ -518,8 +518,9 @@ type Router struct {
 	PublicIPv4 string `json:"publicIPv4,omitempty"` // its address on the internet
 	// Locked: Pith needs the router's admin password, SetRouterPassword, to
 	// read its connection and to renew its address.
-	Locked bool      `json:"locked,omitempty"`
-	At     time.Time `json:"at"`
+	Locked  bool           `json:"locked,omitempty"`
+	At      time.Time      `json:"at"`
+	OpenWrt *OpenWrtStatus `json:"openWrt,omitempty"`
 }
 
 // RouterRenewal tells what renewing a router's address changed: Pith's
@@ -529,8 +530,9 @@ type RouterRenewal struct {
 	After  Probe `json:"after"`
 	// Standby is the interface that was macOS's primary meanwhile, by its Name.
 	Standby string        `json:"standby,omitempty"`
-	Tries   int           `json:"tries"` // times the router gave its address up
-	Took    time.Duration `json:"took"`  // until the internet worked through it again
+	Tries   int           `json:"tries"`         // times the router gave its address up
+	Took    time.Duration `json:"took"`          // until the internet worked through it again
+	WAN     *WANRotation  `json:"wan,omitempty"` // router-reported OpenWrt lease and MAC change
 }
 
 // ---- Connections and traffic ------------------------------------------------
