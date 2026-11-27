@@ -78,7 +78,7 @@ page has a large title and its actions on the right.
     gives the reason on hover. **Test All** runs the cards in
     sequence. **Reach a server** has its own host-and-port field, **Test**
     button and result row for each connected interface.
-  - The M2000 appears as a drawing of the hotspot without its maker's marks.
+  - The M2000 appears on USB and Wi-Fi as a drawing of the hotspot without its maker's marks.
     Its screen stays white in the dark, as the device's does. The bars take
     the interface's color, beside 5G or LTE. A lock opens the admin password
     sheet. Once unlocked, the screen shows the carrier, the band in large
@@ -93,6 +93,11 @@ page has a large title and its actions on the right.
     locked. **Change IP**, beside **Test speed**, opens the password sheet
     while locked and starts renewal when unlocked and connected. During the yield,
     the **Default** chip follows the network macOS selected.
+  - A terminal button on Ethernet and Wi-Fi opens the **OpenWrt over SSH**
+    sheet. A configured card shows the upstream host and the router's WAN
+    addresses and backup status alongside the Mac's network details.
+    **Change IP** asks OpenWrt to rotate the WAN and shows the observed
+    public addresses, delegated prefix and time through the retest.
   - The card shows when a renewal is in progress, then the addresses observed
     before and after. The display prefers IPv4 and compares like families. If IPv4 disappears and IPv6
     stays the same, it displays just the observed IPv6 address.

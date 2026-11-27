@@ -13,7 +13,7 @@ make build
 ```
 
 `make check` runs `go vet ./...` followed by `go test ./...`. With the live
-test variables unset, the suite exercises speed tests, both gateway drivers,
+test variables unset, the suite exercises speed tests, gateway drivers,
 proxy protocols and MCP with local fixtures. This ordinary run does not install
 the helper or activate routing. Live network tests have separate opt-ins, and
 privileged routing tests require a separately approved session. [Hardware test scope](ROOT-TEST.md#router-renewal-and-primary-yield)
@@ -62,6 +62,37 @@ real backend's explicit helper installation and verification. `make build`
 instead produces the complete app bundle. Running `go run ./cmd/pith` alone
 without the generated identity still opens the interface, but helper status is
 `helper_untrusted` and installation is refused before administrator approval.
+
+### App-only build with a verified helper
+
+The OpenWrt driver and Wi-Fi hotspot discovery run in the app. A standard
+build recompiles `pithd`, whose artifact can change when shared Go types
+change. When the helper's behavior and protocol still match, an app-only build
+can carry the exact signed helper from the trusted build already installed on
+the target Mac.
+
+In a clean build tree, retain these three files as a set from that build:
+
+- `resources/darwin-arm64/bin/pithd`
+- `resources/darwin-arm64/bin/pithd.identity.json`
+- `internal/client/helper_identity_generated.go`
+
+Package and verify the app with that identity:
+
+```sh
+export CGO_ENABLED=0
+export GOFLAGS="-mod=readonly -trimpath -buildvcs=false"
+go run ./scripts/licenses
+pith_version=$(/usr/bin/plutil -extract version raw mygo.json)
+MYGO_LDFLAGS="-X main.version=$pith_version" \
+  go run github.com/egoist/mygo/cmd/mygo@v0.7.4 build \
+  -platform darwin/arm64 -sign - -skip-notarize -skip-dmg -o build
+make verify
+```
+
+Before an app-only deployment, compare the bundled helper's SHA-256 with
+the target Mac's installed helper. The app will authenticate the same
+artifact and running peer. [Helper identity](HELPER-VERSIONING.md#build-identity)
 
 ## Mock interface and MCP
 

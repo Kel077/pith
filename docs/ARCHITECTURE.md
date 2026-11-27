@@ -13,7 +13,7 @@ applied by the UI.
 | `internal/client` | Interface inventory, rule checks, network tests, hardware sessions, proxy exits and authenticated helper IPC. Saves `config.json` atomically in the user's Pith Application Support directory. |
 | `internal/proxy` and `internal/proxy/egress` | App-owned TCP listeners, device access, proxy protocols and interface-bound dialing. These ports work while the helper is stopped or absent. |
 | `cmd/pithd`, `internal/helper`, `internal/engine` | Root launchd service, authenticated Unix socket and packet forwarding. The engine owns capture routes, flow attribution and routing telemetry. |
-| `internal/hotspot`, `internal/router`, `internal/primary` | The app controls cellular modems and the supported router. The helper temporarily yields an interface's primary rank for router renewal. |
+| `internal/hotspot`, `internal/router`, `internal/primary` | The app controls cellular modems and routers. The helper temporarily yields an interface's primary rank for Verizon router renewal. |
 | `internal/mcp` | The app serves tools on a per-user Unix socket. Another invocation of the same executable, `Pith mcp`, connects a stdio MCP client to it. |
 
 ## Network tests
@@ -58,9 +58,14 @@ address record used by proxy ports.
 
 ## Renewing a hotspot's address
 
-The unprivileged client recognizes the Inseego 5G MiFi M2000 by its system
-interface label (case-insensitive `m2000`). The Network page checks connected
-cellular interfaces and shows signal bars and the network type before login.
+The unprivileged client recognizes the USB Inseego 5G MiFi M2000 by its system
+interface label (case-insensitive `m2000`). On a connected Wi-Fi interface with
+a private IPv4 gateway, it checks for the Inseego status protocol at
+`/srv/status` through that interface. Discovery shares one anonymous request
+across readers. The cache follows the adapter, kernel index, local IPv4
+addresses, gateway and its ARP entry. A definite negative stays cached for
+that snapshot, and transient errors can be retried after one minute. The
+Network page shows signal bars and the network type before login.
 The authenticated diagnostics page adds carrier, band, signal strength and SNR.
 
 Device requests use the selected interface, refresh the binding for every new
@@ -69,8 +74,10 @@ and reject redirects outside the original origin. The client also rechecks the
 bound interface's kernel index. Cached sessions have at most two idle
 connections and a 30-second idle timeout. The hotspot uses its local HTTP admin
 page, the router HTTPS. Credentials require a hardware identity and live under
-the app's keychain service, `io.github.kel077.pith.hotspot` keyed by the
-adapter's hardware address for an M2000. Writing an item uses one quoted command
+the app's keychain service, `io.github.kel077.pith.hotspot`. USB uses the
+adapter's hardware address. On Wi-Fi the account includes both the adapter
+and the gateway hardware addresses, and requests recheck the gateway's ARP
+entry before using that session. Writing an item uses one quoted command
 on `security -i` stdin; no password appears in the process arguments,
 diagnostics, or application files. The command-input format is bounded and
 rejects embedded line breaks/NULs.
@@ -125,6 +132,8 @@ renewal time includes the public-address test after reconnection.
 [Modem driver](../internal/hotspot/rmnet.go) · [Renewal tests](../internal/client/rmnet_test.go)
 
 ## Renewing a router's address
+
+### Verizon Router CHR30A-R
 
 A router's admin also stays in the client, over the same interface-bound HTTP
 client as a hotspot's. The client identifies the router behind an Ethernet or
@@ -204,6 +213,65 @@ Pith leaves the router's delegated IPv6 prefix alone.
 [Client and cleanup](../internal/client/router.go) ·
 [Primary election](../internal/primary/primary.go) ·
 [Hardware results and timings](ROOT-TEST.md#router-renewal-and-primary-yield)
+
+### Upstream OpenWrt routers
+
+The Network card's terminal button and MCP's `set_openwrt_router` edit the
+same saved settings. An explicit configuration selects that upstream router
+for the interface, including when the immediate LAN gateway is another device.
+The optional `openWrt` entry in `config.json` has this form:
+
+```json
+{
+  "openWrt": [
+    {
+      "via": {"name": "eth-demo"},
+      "host": "router.example.com",
+      "user": "root",
+      "identityFile": "~/.ssh/example_openwrt",
+      "command": "/usr/sbin/wan-rotate-ip"
+    }
+  ]
+}
+```
+
+Here `via.name` is the interface's BSD name. Pith can also save its hardware
+address, so it follows the same adapter after a rename. The host can be an
+OpenSSH alias. Empty `user` and `identityFile` use OpenSSH's settings and keys.
+An empty `command` selects the path shown above. The app uses the system
+OpenSSH client in batch mode with a previously trusted host key and key
+authentication. Its direct connection uses a source address from the selected
+interface. Standard SSH aliases can provide the hostname, port and key file.
+[OpenSSH client configuration](https://man.openbsd.org/ssh_config)
+
+The router's script supplies one JSON object on stdout per invocation.
+
+| Argument | Reply fields |
+| --- | --- |
+| `--status` | `ok`, `router`, `wan_up`, `ipv4`, and optional `ipv6_prefix`, `mwan3_wan`, `mwan3_usbwan`. |
+| `--rotate` | `ok`, `old_mac`, `new_mac`, `mac_changed`, `old_ipv4`, `new_ipv4`, and optional `old_ipv6_prefix`, `new_ipv6_prefix`, `mwan3_wan`, `mwan3_usbwan`, `elapsed_sec`. |
+
+A successful rotation confirms a different locally administered unicast MAC
+and a WAN IPv4 lease. IPv6 delegation can be reported as the prefix address
+alone or in CIDR form. An error reply sets `ok: false` and an `error` message.
+The script owns mutual exclusion, changing the WAN MAC, lease release and
+reacquisition, and WAN recovery. A configured router can maintain LAN service
+through its WAN backup. This path leaves primary-interface selection to macOS
+and keeps Pith's proxy listeners active. Traffic continuity depends on the
+router's failover and individual connections.
+
+Pith checks for an active WAN lease before the rotation. It runs `--rotate`
+once per request with a 90-second SSH deadline. If the reply reports a lease
+with the monitored WAN still offline, Pith checks its status for up to ten more
+seconds before retesting the Mac's exit. A lost SSH reply can follow a change
+that already happened. The next status read and public probe can report the
+current state. Pith invalidates old port addresses across the operation, and a
+bounded public-address retest fills the cache with the addresses that reply
+through the interface. The `wan` result records the router's lease and prefix
+changes, MAC change confirmation, failover state and script time. Port and MCP
+results also include the public addresses observed from the Mac and overall
+elapsed time.
+[SSH driver](../internal/router/openwrt.go) · [Client integration](../internal/client/openwrt.go)
 
 ## Local proxy listeners
 
@@ -460,12 +528,12 @@ served on the connection.
 | Request | Success (`200`) |
 | --- | --- |
 | `GET /` | `pith` (currently 1), `port`, `exit` (`interface`, `scene` or `upstream`), `online` and `canChangeIP`. Optional fields include `interface`, `publicIPv4`, `publicIPv6`, `at`, `changing` and nested `upstream`. Online describes the exit's availability. A scene is online while its port listens and has no single public address. |
-| `POST /change-ip` | `port`, `seconds` and any observed `beforeIPv4`, `beforeIPv6`, `publicIPv4`, `publicIPv6` and `at`. An unchanged or missing address is possible. The optional body is discarded, up to 4 KiB. |
+| `POST /change-ip` | `port`, `seconds`, any observed `beforeIPv4`, `beforeIPv6`, `publicIPv4`, `publicIPv6` and `at`, and an optional OpenWrt `wan` result. An unchanged or missing address is possible. The optional body is discarded, up to 4 KiB. |
 
 Any admitted client may read status. A POST requires `Proxy.ChangeIP` on each
 port in the chain. Scene ports cannot enable it. `canChangeIP` means that a
 request would be attempted. Device credentials and a working standby for a
-router are checked during the operation. The app's own `ChangeProxyIP` action
+Verizon router are checked during the operation. The app's own `ChangeProxyIP` action
 calls `Manager.ChangeIP` directly and needs only the upstream's permission, if
 any.
 
@@ -584,12 +652,12 @@ starts its own. When the record has changed since a caller read the interfaces,
 because another reader saw them otherwise meanwhile, an explicit address probe,
 including a renewal's, tests the interface it read without filling the new
 record. For a port, whether its address can be changed and what its addresses
-are are found at once, not in turn. Whether an interface's address can be
-changed is found once for an interface as it is: a hotspot by the interface's
-label, a router by asking its admin which model it is. A device Pith doesn't
-know stays unknown until the interface changes; a transient identification error
-can be retried after a minute. A refusal to connect from a gateway is classified
-as unsupported for that session.
+are are found at once, not in turn. Identification uses the USB hotspot's
+interface label, the interface-bound Wi-Fi hotspot discovery cache, the
+configured OpenWrt status command or the Verizon web admin's model. A
+definitive negative stays cached for its interface snapshot. Transient
+identification errors can be retried after a minute. A saved OpenWrt change
+invalidates the cached capability.
 
 #### Shared address changes
 
@@ -597,7 +665,7 @@ One change of an interface's address runs at a time, whoever asked: a port's
 request, `RenewHotspot` or `RenewRouter`. The others wait for it and get what it
 did, each in its own form. One runs at a time across interfaces too: while one
 is under way, a change of another interface is refused with `busy`, which a port
-answers `503`. A router's renewal leaves the Mac to another interface, which
+answers `503`. A Verizon router's renewal leaves the Mac to another interface, which
 macOS picks only once the router yields, so no one interface can be set aside
 beforehand; and a renewal must not yield to a hotspot about to reconnect. A
 change a port asked for runs under the client's lifetime, three minutes at most
@@ -663,6 +731,7 @@ Everything else goes straight to the `api.Service`.
 | Edit rules | `add_rule`, `update_rule` (including `position`), `remove_rule` |
 | Manage scenes | `add_scene` (optionally with `copy_of`), `rename_scene`, `remove_scene` |
 | Configure ports and devices | `set_proxy`, `remove_proxy`, `allow_device`, `remove_device` |
+| Configure an upstream router | `set_openwrt_router` with an interface and SSH host |
 | Renew an exit | `change_ip` with either `interface` or `port` |
 
 `list_interfaces` shows connected links and named inactive non-VPN services.
@@ -674,7 +743,8 @@ scenes by ID or name. Unknown arguments fail. The tool definitions supply
 have distinct annotations. Public-address changes call `RenewHotspot`,
 `RenewRouter` or `ChangeProxyIP`. The app handles helper installation and
 removal, entering gateway passwords, editing general settings and clearing the
-connection log. [Tool definitions](../internal/mcp/tools.go) ·
+connection log. To remove the SSH router configuration, pass an empty `host`
+to `set_openwrt_router`. [Tool definitions](../internal/mcp/tools.go) ·
 [Tool tests](../internal/mcp/tools_test.go)
 
 `change_ip` reports the addresses it observed before and after. Its `changed`

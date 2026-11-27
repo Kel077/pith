@@ -8,6 +8,8 @@ The next release updates the helper, so macOS asks for your password once when y
 
 ### Added
 
+- Configure an upstream OpenWrt router over SSH on any Ethernet or Wi-Fi card. **Change IP**, MCP and local proxies can rotate its WAN MAC and renew its leases while OpenWrt manages failover.
+- Inseego M2000 discovery on Wi-Fi provides the same signal, carrier, keychain unlock and address renewal as USB.
 - The Quectel RM520N-GL with RMNet in QMI mode shows its cellular signal and carrier aggregation and can renew its public addresses from the Network page, MCP or a local proxy.
 
 - **Share with devices** on a local proxy lets the devices listed under **Devices** use it at the Mac's address: another computer, or a phone or tablet whose Wi-Fi settings take an HTTP proxy. A device is listed by its IPv4 address or a range of them; one that isn't listed is refused, and appears under **Devices** with **Allow** beside it. Each device shows how many connections it has open and what it has moved across the shared ports. Sharing asks for no password: share on networks you trust.

@@ -13,7 +13,7 @@ helper alone. Call `Close` when the app quits.
 | `LoadConfig`, `SaveConfig` | Read or atomically replace validated JSON in `config.json`. A missing file yields `api.DefaultConfig`. Loading a corrupt or incompatible file reports the error and leaves the file in place. Saving syncs the private temporary file, renames it, and syncs the directory. Loading activates enabled local proxy ports and checks for an interrupted router renewal. Saving updates affected listeners and applies a changed running scene. |
 | `Interfaces`, `Check` | Read native links, their kind, system service labels, addresses, primary routes, routers and DNS. Aliases come from the configuration. `Check` explains each rule in the supplied scene (the selected scene by default), including block priority and the order in which interfaces would be tried. |
 | `Probe`, `SpeedTest` | A `host:port` target makes a TCP connection. An empty target tests the IPv4 and IPv6 HTTPS endpoints provided by [ipify](https://www.ipify.org/). DNS and transport sockets bind to the selected interface. Either family succeeding sets `OK`. A network failure returns `OK=false` and `Problem`. Cancellation and malformed inputs can return errors. The independent Cloudflare test measures latency and download/upload speed. [Network tests](../../docs/ARCHITECTURE.md#network-tests) |
-| `Hotspot`, `Router` and their password/renewal methods | Use the selected interface to talk to the M2000 or CHR30A-R. Credentials go in the user's keychain. Router renewal additionally needs the verified helper and a working standby interface. [Router renewal](../../docs/ARCHITECTURE.md#renewing-a-routers-address) |
+| `Hotspot`, `Router` and their password/renewal methods | Use the selected interface to reach the M2000 over USB or Wi-Fi, or the CHR30A-R. Device passwords go in the user's keychain. A Verizon router renewal needs the verified helper and a working standby. A configured OpenWrt router uses SSH and manages its own failover. [Router renewal](../../docs/ARCHITECTURE.md#renewing-a-routers-address) |
 | Local proxies and `ChangeProxyIP` | The app owns forwarding, port replies, upstream status and device counters. Scene exits use the compiled destination rules. The Network page and ports share address renewals. [Local proxy listeners](../../docs/ARCHITECTURE.md#local-proxy-listeners) |
 
 Interface discovery reads SystemConfiguration and the routing table. `netif.Watch`
@@ -29,8 +29,9 @@ interfaces. Only the real connection tests reachability. A reference with a
 hardware address cannot use a different adapter that reuses its BSD name.
 
 A failed helper reload after saving returns an error indicating that the file
-was saved. Removing a running scene stops routing. A change limited to proxies
-or devices can be applied locally unless an earlier routing update is pending.
+was saved. Removing a running scene stops routing. A change limited to proxies,
+devices or OpenWrt settings can be applied locally unless an earlier routing
+update is pending.
 
 ## Services in the helper
 

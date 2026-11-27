@@ -121,22 +121,25 @@ Each connected interface shows its addresses, router and DNS. A **Default** chip
 
 **Reach a server** lets you compare the networks against a destination of your own. Enter a host and port, such as `example.com:443`, and see which interfaces can connect and how long each took. If an interface's DNS servers don't answer, tests and local proxies through it can ask the Mac's public DNS servers, still through that interface.
 
-Some hotspots also show their signal and can change their public IP. Only these, each tested on the device itself:
+Supported hotspots also show their signal and can change their public IP:
 
 | Hotspot | Connection and signal | Change hotspot IP |
 | :-- | :-- | :-- |
 | Inseego 5G MiFi M2000 | Signal bars and 5G or LTE. Its admin password unlocks the band, signal measurements and carrier | Reconnects cellular data through the hotspot's web admin |
 | Quectel RM520N-GL | With RMNet in QMI mode, the operator, network type, bands, component-carrier bandwidths and available RSRP, RSRQ and SINR | Uses RMNet to cycle the radio. The card compares public IPv4 and IPv6 separately and shows elapsed time |
 
-The carrier assigns the addresses when the hotspot reconnects and may return the same ones. Pith keeps the M2000's password in your keychain. For the RM520N-GL, install RMNet in Applications and connect one modem. On an IPv6-only carrier that provides NAT64, the IPv4 result is the public address seen through the Mac's CLAT. Other hotspots can still be used as ordinary routing interfaces.
+The carrier assigns the addresses when the hotspot reconnects and may return the same ones. Pith discovers the M2000 over Wi-Fi as well as USB and keeps its admin password in your keychain. For the RM520N-GL, install RMNet in Applications and connect one modem. On an IPv6-only carrier that provides NAT64, the IPv4 result is the public address seen through the Mac's CLAT. Other hotspots can still be used as ordinary routing interfaces.
 
-A router can change its public IP too, when Pith has its admin password. Only this one, tested on the device itself:
+Supported routers can change their public IP from the Network page.
 
 | Router | On its Network card |
 | :-- | :-- |
 | Verizon Router CHR30A-R (Fios) | Its model beside its address on the Ethernet or Wi-Fi it serves. **Change IP** asks for the admin password while locked and renews the address once unlocked |
+| OpenWrt with an SSH WAN rotation script | Its upstream host, WAN addresses and backup status when available. **Change IP** rotates the WAN MAC and renews its leases |
 
-**Change IP** has the router give its public IPv4 address up and ask Verizon for another, waiting longer each time Verizon gives the same one back, three times at most; it took 34 seconds in a test. Before it gives up the address, Pith tests the other connected networks and waits for macOS to switch to one that can reach the internet. Rules with other interfaces try those, and local proxies through the router's interface close their streams and refuse new connections. Everything else on the router's network is offline meanwhile, for 5 seconds on the first try, 20 on the second and a minute on the third, plus the time the router takes to connect again, and connections through the old address end. The renewal leaves IPv6 alone. Pith needs its routing helper to make the router's interface give way to the other network.
+On a Verizon router, **Change IP** gives up the public IPv4 address and asks for another, waiting longer each time Verizon gives the same one back, three times at most. It took 34 seconds in a test. Before it gives up the address, Pith tests the other connected networks and waits for macOS to switch to one that can reach the internet. Rules with other interfaces try those, and local proxies through the router's interface close their streams and refuse new connections. Everything else on the router's network is offline meanwhile, for 5 seconds on the first try, 20 on the second and a minute on the third, plus the time the router takes to connect again, and connections through the old address end. The renewal leaves IPv6 alone. Pith needs its routing helper to make the router's interface give way to the other network.
+
+For an upstream OpenWrt router, click the terminal icon on the Ethernet or Wi-Fi card and enter an SSH host or alias with an already trusted host key and key-based login. The router runs `/usr/sbin/wan-rotate-ip` by default and manages any failover itself, including `mwan3` when configured. Pith keeps the interface and its proxy ports available and retests their public addresses after rotation. [OpenWrt configuration and command contract](docs/ARCHITECTURE.md#upstream-openwrt-routers)
 
 ### Local proxies
 
@@ -174,7 +177,7 @@ curl --noproxy '*' -X POST http://127.0.0.1:1081/change-ip
 
 Use your own port number in place of `1081`. Whatever can use the port can ask `GET /`. A port that follows a scene's rules has no single IP to report or change. Pith looks the addresses up once and keeps them until the network changes; `GET /?max-age=60` has them looked up again when they are older than a minute. When a lookup fails, or finds only an IPv4 or only an IPv6 address where the network has both, a plain `GET /` can use what Pith already knows. Another GET after 30 seconds makes it try again. After each failed or incomplete lookup the wait doubles, up to ten minutes.
 
-`POST /change-ip` is refused until you turn on **Let apps and devices change its IP**, the button with two arrows on the proxy's row. Then every app on your Mac, and every device the proxy is shared with, can change that IP. A router that changes its IP takes everything on its network offline, from seconds to over a minute: think of who else is on it.
+`POST /change-ip` is refused until you turn on **Let apps and devices change its IP**, the button with two arrows on the proxy's row. Then every app on your Mac, and every device the proxy is shared with, can change that IP. A Verizon renewal temporarily takes its network offline. An OpenWrt renewal follows the router's own failover policy and includes its WAN result as `wan` in the response.
 
 Pith changes one network's IP at a time, so that the network carrying your Mac while a router renews stays up: while another network's IP is being changed, `POST /change-ip` is answered `503`. Try again once that is done. Two requests for the same interface wait for the same change.
 
@@ -196,7 +199,7 @@ An agent that takes its servers as JSON takes `{"command": "/Applications/Pith.a
 | The agent can | |
 | :-- | :-- |
 | **Read** | Whether routing is on, the scenes and their rules, the interfaces, the installed apps, the connections and the traffic; test an interface and its speed; check which rule a connection would match |
-| **Change** | Add, change, move and remove rules. Create, copy, rename or remove a scene. Turn routing on or off, or to another scene; add, change and remove local proxies, and the devices that may use the shared ones |
+| **Change** | Add, change, move and remove rules. Create, copy, rename or remove a scene. Turn routing on or off, or to another scene. Configure local proxies, devices and upstream OpenWrt routers |
 | **Change IP** | Of the hotspot or the router behind an interface, or of what a local proxy goes out through |
 
 What an agent changes shows in Pith at once, and applies as your own changes do. It works the Pith that is open: while Pith is closed, the tools answer that it isn't running. Some things stay yours: installing the helper, which takes your password, the admin passwords of hotspots and routers, and changing Pith's settings.
@@ -205,14 +208,14 @@ Only programs that run as you on this Mac reach the tools: Pith opens no network
 
 Changing an IP can take over a minute, longer than some agents wait for a tool. Codex waits as long as `tool_timeout_sec = 180` says, under `[mcp_servers.pith]` in its configuration.
 
-The tools do what you could do in Pith, without asking you again. An agent that also reads web pages or other people's files can be talked into things by what it reads: allow it the tools that change something as far as you trust it. Pith tells the agent which tools only read, so that it can ask you before the others. [All 23 tools](docs/ARCHITECTURE.md#tools-for-agents)
+The tools do what you could do in Pith, without asking you again. An agent that also reads web pages or other people's files can be talked into things by what it reads: allow it the tools that change something as far as you trust it. Pith tells the agent which tools only read, so that it can ask you before the others. [Tool reference](docs/ARCHITECTURE.md#tools-for-agents)
 
 ### Settings
 
 - **Safe start**, on by default: if the Mac loses the internet right after routing starts, Pith undoes it.
 - **Resume routing on launch**, **Keep routing after quitting**, **Open at login**, and the download speed in the menu bar.
 - Turn domain recognition and IPv6 routing on or off, and choose how long to keep the connection log.
-- **Back up everything** saves scenes and their rules, interface names, local proxies, allowed devices and settings in one file. Import it in Settings to put them back.
+- **Back up everything** saves scenes and their rules, interface names, local proxies, allowed devices, OpenWrt SSH configuration and settings in one file. Import it in Settings to put them back.
 - **English and Simplified Chinese**, light and dark.
 
 ## With a VPN or iCloud Private Relay
