@@ -17,8 +17,8 @@ import (
 	"github.com/Kel077/pith/internal/netif"
 )
 
-// hotspotKeychain is the keychain service of the hotspots' admin passwords;
-// the account is the hardware address of the interface a hotspot serves.
+// hotspotKeychain is the keychain service of the hotspots' admin passwords.
+// USB keeps its adapter-MAC account. Wi-Fi also identifies the gateway.
 const hotspotKeychain = "io.github.kel077.pith.hotspot"
 
 type hotspotController interface {
@@ -487,12 +487,19 @@ func (c *Client) hotspotFor(ctx context.Context, ref api.InterfaceRef) (*hotspot
 	}
 	model := hotspot.Model(link.Label)
 	router, err := netip.ParseAddr(link.Router)
-	if !link.Up || model == "" || err != nil {
+	if !link.Up || err != nil {
+		return nil, unsupported
+	}
+	discover := link.Kind == api.KindWiFi && router.Is4() && (router.IsPrivate() || c.hotspotPort != "" && router.IsLoopback())
+	if link.Kind == api.KindWiFi && !discover || link.Kind != api.KindWiFi && model == "" {
 		return nil, unsupported
 	}
 	index, err := c.hotspotIndex(name)
 	if err != nil || index <= 0 {
 		return nil, unsupported
+	}
+	if discover {
+		return c.wifiHotspotFor(ctx, *link, router, index)
 	}
 	key := name + "|" + link.HardwareAddr + "|" + link.Router + "|" + strconv.Itoa(index)
 	c.mu.Lock()
@@ -500,28 +507,11 @@ func (c *Client) hotspotFor(ctx context.Context, ref api.InterfaceRef) (*hotspot
 	if s := c.hotspots[key]; s != nil {
 		return s, nil
 	}
-	port := c.hotspotPort
-	if port == "" {
-		port = "80"
-	}
-	base := "http://" + net.JoinHostPort(router.String(), port)
-	account := link.HardwareAddr
-	client, transport, err := c.deviceClient(name, *link, index, nil)
+	s, err := c.inseegoSession(*link, index, c.hotspotBase(router), model, link.HardwareAddr, nil)
 	if err != nil {
 		return nil, err
 	}
-	s := &hotspotSession{key: key, account: account, transport: transport, device: &hotspot.Inseego{
-		Base: base, Model: model, HTTP: client,
-		Password: func() (string, error) {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			secret, err := c.secretGet(ctx, hotspotKeychain, account)
-			if errors.Is(err, keychain.ErrNotFound) {
-				return "", nil
-			}
-			return secret, err
-		},
-	}}
+	s.key = key
 	if c.hotspots == nil {
 		c.hotspots = map[string]*hotspotSession{}
 	}
@@ -533,4 +523,31 @@ func (c *Client) hotspotFor(ctx context.Context, ref api.InterfaceRef) (*hotspot
 	}
 	c.hotspots[key] = s
 	return s, nil
+}
+
+func (c *Client) hotspotBase(gateway netip.Addr) string {
+	port := c.hotspotPort
+	if port == "" {
+		port = "80"
+	}
+	return "http://" + net.JoinHostPort(gateway.String(), port)
+}
+
+func (c *Client) inseegoSession(link api.Interface, index int, base, model, account string, checkDevice func(context.Context) error) (*hotspotSession, error) {
+	client, transport, err := c.deviceClient(link.Name, link, index, nil, checkDevice)
+	if err != nil {
+		return nil, err
+	}
+	return &hotspotSession{account: account, transport: transport, device: &hotspot.Inseego{
+		Base: base, Model: model, HTTP: client,
+		Password: func() (string, error) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			secret, err := c.secretGet(ctx, hotspotKeychain, account)
+			if errors.Is(err, keychain.ErrNotFound) {
+				return "", nil
+			}
+			return secret, err
+		},
+	}}, nil
 }

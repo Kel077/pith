@@ -73,6 +73,11 @@ func (c *Client) observeExits(links []api.Interface) {
 	if c.exits == nil {
 		c.exits = map[string]*exitState{}
 	}
+	for name, old := range c.wifiHotspots {
+		if !slices.ContainsFunc(links, func(link api.Interface) bool { return sameWiFiHotspotLink(old.link, link) }) {
+			c.dropWiFiHotspot(name, old)
+		}
+	}
 	for name, old := range c.exits {
 		found := false
 		for _, link := range links {
@@ -292,6 +297,15 @@ func (c *Client) exitCanChange(ctx context.Context, link api.Interface) bool {
 	if ctx.Err() != nil {
 		return false
 	}
+	// Wi-Fi can roam to another gateway with the same IP settings. Check
+	// the neighbor through the shared discovery cache before reusing any
+	// address-change capability.
+	if link.Kind == api.KindWiFi {
+		via := api.InterfaceRef{Name: link.Name, HardwareAddr: link.HardwareAddr}
+		if _, err := c.hotspotFor(ctx, via); api.Code(err) != api.ErrUnsupported {
+			return err == nil
+		}
+	}
 	c.proxyMu.Lock()
 	if c.closed {
 		c.proxyMu.Unlock()
@@ -340,8 +354,11 @@ func (c *Client) runExitIdentification(state *exitState, pending *exitCapability
 	defer c.exitJobs.Done()
 	ctx, cancel := context.WithTimeout(c.lifetime, 5*time.Second)
 	defer cancel()
-	_, err := c.hotspot(ctx, state.link.Name)
-	if api.Code(err) == api.ErrUnsupported {
+	var err error
+	if state.link.Kind != api.KindWiFi {
+		_, err = c.hotspot(ctx, state.link.Name)
+	}
+	if state.link.Kind == api.KindWiFi || api.Code(err) == api.ErrUnsupported {
 		via := api.InterfaceRef{Name: state.link.Name, HardwareAddr: state.link.HardwareAddr}
 		var upstream *openWrtExit
 		upstream, err = c.openWrtFor(ctx, via)

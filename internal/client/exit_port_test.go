@@ -69,6 +69,11 @@ func installExitPort(t *testing.T, c *Client, peer string) *exitPortHooks {
 
 func exitPortHotspot(t *testing.T, gate <-chan struct{}) (*Client, *exitNetwork, *hotspottest.MiFi, <-chan struct{}) {
 	t.Helper()
+	return exitPortHotspotOn(t, gate, api.KindCellular)
+}
+
+func exitPortHotspotOn(t *testing.T, gate <-chan struct{}, kind api.InterfaceKind) (*Client, *exitNetwork, *hotspottest.MiFi, <-chan struct{}) {
+	t.Helper()
 	c, n := exitClient(t)
 	n.links[0].Kind, n.links[0].Label, n.links[0].Router = api.KindCellular, "M2000", "127.0.0.1"
 	n.public = [2]string{"198.51.100.10", "2001:db8::10"}
@@ -89,6 +94,9 @@ func exitPortHotspot(t *testing.T, gate <-chan struct{}) (*Client, *exitNetwork,
 	}))
 	t.Cleanup(srv.Close)
 	_, c.hotspotPort, _ = net.SplitHostPort(srv.Listener.Addr().String())
+	if kind == api.KindWiFi {
+		useWiFiHotspot(t, c, &n.links[0], srv)
+	}
 	c.secretGet = func(context.Context, string, string) (string, error) { return hotspottest.Password, nil }
 	c.hotspotPace = time.Millisecond
 	s, err := c.hotspot(context.Background(), "example0")

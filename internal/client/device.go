@@ -22,7 +22,7 @@ import (
 // new socket binds the interface's current index, and pooled ones are checked
 // again before each request, so that no session cookie or form reaches a
 // device that replaced it.
-func (c *Client) deviceClient(name string, link api.Interface, index int, tlsConfig *tls.Config) (*http.Client, *http.Transport, error) {
+func (c *Client) deviceClient(name string, link api.Interface, index int, tlsConfig *tls.Config, checkDevice func(context.Context) error) (*http.Client, *http.Transport, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		return nil, nil, err
@@ -31,7 +31,7 @@ func (c *Client) deviceClient(name string, link api.Interface, index int, tlsCon
 		idMu    sync.Mutex
 		checked time.Time
 	)
-	checkIdentity := func(ctx context.Context) error {
+	checkLink := func(ctx context.Context) error {
 		currentIndex, err := c.hotspotIndex(name)
 		if err != nil || currentIndex != index {
 			return errors.New("device interface index changed")
@@ -65,6 +65,13 @@ func (c *Client) deviceClient(name string, link api.Interface, index int, tlsCon
 			idMu.Unlock()
 		}
 		return nil
+	}
+	checkIdentity := func(ctx context.Context) error {
+		err := checkLink(ctx)
+		if err == nil && checkDevice != nil {
+			err = checkDevice(ctx)
+		}
+		return err
 	}
 	transport := &http.Transport{Proxy: nil, MaxIdleConns: 2, IdleConnTimeout: 30 * time.Second, TLSClientConfig: tlsConfig, DialContext: func(ctx context.Context, network, target string) (net.Conn, error) {
 		if err := checkIdentity(ctx); err != nil {

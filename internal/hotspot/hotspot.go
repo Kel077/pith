@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/Kel077/pith/internal/api"
@@ -104,6 +105,25 @@ type statusReading struct {
 	lasted     time.Duration
 	login      int // 0, 1, or -1 when omitted/unparsed
 	mobileData mobileDataState
+	identified bool
+}
+
+var errStatusFormat = errors.New("invalid status JSON")
+
+// Identify checks the public Inseego status protocol without logging in.
+// Other gateways can also serve /srv/status, so a successful HTTP request
+// alone does not identify an M2000-compatible admin.
+func (d *Inseego) Identify(ctx context.Context) error {
+	r, err := d.readStatus(ctx)
+	var status httpStatusError
+	switch {
+	case err == nil && r.identified:
+		return nil
+	case err == nil, errors.Is(err, errStatusFormat), errors.Is(err, syscall.ECONNREFUSED), errors.As(err, &status) && status.code < 500:
+		return &api.Error{Code: api.ErrUnsupported, Detail: "the gateway does not speak the Inseego M2000 status protocol"}
+	default:
+		return err
+	}
 }
 
 // Status reads the hotspot: its connection, and its cell when Pith has its
@@ -710,18 +730,20 @@ func (d *Inseego) readStatus(ctx context.Context) (statusReading, error) {
 		LoginStatus json.RawMessage `json:"loginStatus"`
 		StatusData  struct {
 			Connection string          `json:"statusBarConnectionState"`
-			Technology string          `json:"statusBarTechnology"`
+			Technology *string         `json:"statusBarTechnology"`
 			Bars       json.RawMessage `json:"statusBarSignalBars"`
 			Lasted     json.RawMessage `json:"statusBarConnectionDuration"` // seconds, as a string on the M2000
 			MobileData json.RawMessage `json:"statusBarMobileDataEnabled"`  // 0/1 or "0"/"1" on the M2000
 		} `json:"statusData"`
 	}
 	if err := json.Unmarshal(body, &s); err != nil {
-		return r, fmt.Errorf("hotspot: read its status: %w", err)
+		return r, fmt.Errorf("hotspot: %w: %w", errStatusFormat, err)
 	}
 	r.hotspot.Connected = s.StatusData.Connection == "Connected"
-	r.hotspot.Technology = strings.TrimSpace(s.StatusData.Technology)
-	bars, _ := strconv.Atoi(strings.Trim(string(s.StatusData.Bars), `" `))
+	if s.StatusData.Technology != nil {
+		r.hotspot.Technology = strings.TrimSpace(*s.StatusData.Technology)
+	}
+	bars, barsErr := strconv.Atoi(strings.Trim(string(s.StatusData.Bars), `" `))
 	r.hotspot.Bars = min(max(bars, 0), 5)
 	if seconds, err := strconv.Atoi(strings.Trim(string(s.StatusData.Lasted), `" `)); err == nil && seconds >= 0 {
 		r.lasted = time.Duration(seconds) * time.Second
@@ -730,6 +752,8 @@ func (d *Inseego) readStatus(ctx context.Context) (statusReading, error) {
 		r.login = ls
 	}
 	r.mobileData = parseMobileDataState(s.StatusData.MobileData)
+	r.identified = (r.login == 0 || r.login == 1) && strings.TrimSpace(s.StatusData.Connection) != "" &&
+		barsErr == nil && bars >= 0 && bars <= 5 && (s.StatusData.Technology != nil || r.lasted >= 0 || r.mobileData != mobileDataUnknown)
 	return r, nil
 }
 

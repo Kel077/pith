@@ -31,6 +31,11 @@ func (c *Client) Close() error {
 	case <-renewed:
 	case <-time.After(25 * time.Second):
 	}
+	c.exitMu.Lock()
+	for name, entry := range c.wifiHotspots {
+		c.dropWiFiHotspot(name, entry)
+	}
+	c.exitMu.Unlock()
 	var err error
 	if manager != nil {
 		err = manager.Close()

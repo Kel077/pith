@@ -142,7 +142,7 @@ func (c *Client) router(ctx context.Context, name string) (*routerSession, error
 	}
 	base := "https://" + net.JoinHostPort(gateway.String(), port)
 	s = &routerSession{key: key}
-	client, transport, err := c.deviceClient(name, *link, index, &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12, VerifyConnection: s.verify})
+	client, transport, err := c.deviceClient(name, *link, index, &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12, VerifyConnection: s.verify}, nil)
 	if err != nil {
 		return nil, err
 	}

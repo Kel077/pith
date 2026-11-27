@@ -71,6 +71,8 @@ type Client struct {
 	hotspotPort    string        // of the hotspots' web admin: 80 when empty
 	hotspotPace    time.Duration // between tests after a renewal: a second when zero
 	hotspotIndex   func(string) (int, error)
+	wifiGatewayMAC func(context.Context, int, netip.Addr) string
+	wifiHotspots   map[string]*wifiHotspot // guarded by exitMu
 	routers        map[string]*routerSession
 	routerPort     string          // of the routers' web admin: 443 when empty
 	routerPauses   []time.Duration // a renewing router's pauses: routerPauses when nil
@@ -121,6 +123,7 @@ func New(opts Options) (*Client, error) {
 	}
 	c := &Client{opts: opts, configPath: filepath.Join(opts.ConfigDir, "config.json"), lookup: net.DefaultResolver.LookupNetIP, dialer: netif.Dialer, rmnet: hotspot.NewRMNet(),
 		probeURLs: [2]string{"https://api.ipify.org", "https://api6.ipify.org"}, speedURL: speedServer, secretGet: keychain.Get, secretSet: keychain.Set,
+		wifiGatewayMAC: gatewayHardwareAddr,
 		hotspotIndex: func(name string) (int, error) {
 			link, err := net.InterfaceByName(name)
 			if err != nil {
