@@ -104,7 +104,7 @@ var tools = []tool{
 	},
 	{
 		name: "get_config", title: "Configuration", kind: reads, input: noArguments,
-		about: "Returns Pith's configuration as JSON: the scenes with their rules in order (and the IDs the other tools take), the selected scene, the local proxies, the devices that may use shared proxies, the user's names for interfaces, and the settings.",
+		about: "Returns Pith's configuration as JSON: the scenes with their rules in order (and the IDs the other tools take), the selected scene, the local proxies, the devices that may use shared proxies, the OpenWrt SSH settings, the user's names for interfaces, and the settings.",
 		does:  with(func(ctx context.Context, h Host, _ none) (any, error) { return h.LoadConfig(ctx) }),
 	},
 	{
@@ -174,8 +174,20 @@ var tools = []tool{
 		input: `{"type": "object", "properties": {
 	` + interfaceProperty + `
 }, "required": ["interface"], "additionalProperties": false}`,
-		about: "Reads the mobile hotspot or the router behind an interface, when it is a model Pith talks to: its model, whether it is connected, and a hotspot's signal and cell or a router's public IPv4 address. Locked means Pith needs the device's admin password, which the user enters on Pith's Network page. Whatever this can read, change_ip can change the address of.",
+		about: "Reads the gateway for an interface: its model, connection and hotspot signal or router WAN address. A configured OpenWrt router also reports its delegated IPv6 prefix and failover state. Locked means the user enters the device's admin password on Pith's Network page.",
 		does:  with(gatewayStatus),
+	},
+	{
+		name: "set_openwrt_router", title: "Configure an OpenWrt router", kind: changes,
+		input: `{"type": "object", "properties": {
+	` + interfaceProperty + `,
+	"host": {"type": "string", "description": "SSH alias, IP address or DNS name. An empty string removes the OpenWrt configuration."},
+	"user": {"type": "string", "description": "SSH user. Empty uses the SSH configuration."},
+	"identity_file": {"type": "string", "description": "Local key file, as an absolute path or beginning with ~/. Empty uses the SSH configuration."},
+	"command": {"type": "string", "description": "Absolute path to the script on the router. Empty uses /usr/sbin/wan-rotate-ip."}
+}, "required": ["interface", "host"], "additionalProperties": false}`,
+		about: "Sets the SSH-managed upstream OpenWrt router for an Ethernet or Wi-Fi interface. Optional fields left out keep their saved values. This updates Pith's configuration. gateway_status checks SSH and change_ip requests a WAN rotation.",
+		does:  with(setOpenWrtRouter),
 	},
 	{
 		name: "start_routing", title: "Start routing", kind: changes,
@@ -285,7 +297,7 @@ var tools = []tool{
 	"interface": {"type": "string", "description": "The interface whose hotspot or router gets a new address, by BSD name, the user's name for it or its label."},
 	"port": {"type": "integer", "description": "Instead of an interface: the port of a local proxy, to change the address of whatever it goes out through, another Mac's Pith included."}
 }, "additionalProperties": false}`,
-		about: "Reconnects a mobile hotspot or renews a router's IPv4 lease. Give an interface or a local proxy's port. Returns the public addresses before and after and the elapsed seconds. ipv4Changed and ipv6Changed compare each family when both addresses were observed. changed is true when either family changed. Connections through that network end. A router also takes other devices behind it offline and needs another connected network to carry the Mac. The provider may return the same address. Use only when the user asks for a new IP and allow time for reconnection.",
+		about: "Reconnects a mobile hotspot, renews a Verizon router's IPv4 lease, or rotates an OpenWrt WAN MAC and its leases over SSH. Give an interface or a local proxy's port. Returns observed public addresses before and after, elapsed seconds and any OpenWrt WAN result. ipv4Changed and ipv6Changed compare addresses observed both times. The provider may return the same address. A Verizon renewal needs another connected network to carry the Mac. OpenWrt manages its own WAN failover. Use only when the user asks for a new IP.",
 		does:  with(changeIP),
 	},
 }
@@ -825,6 +837,65 @@ func gatewayStatus(ctx context.Context, h Host, a struct {
 	return map[string]any{"router": r}, nil
 }
 
+func setOpenWrtRouter(ctx context.Context, h Host, a struct {
+	Interface    string  `json:"interface"`
+	Host         *string `json:"host"`
+	User         *string `json:"user"`
+	IdentityFile *string `json:"identity_file"`
+	Command      *string `json:"command"`
+}) (any, error) {
+	if a.Host == nil {
+		return nil, errors.New("host is required; give an empty host to remove the router")
+	}
+	n, err := readNetwork(ctx, h)
+	if err != nil {
+		return nil, err
+	}
+	link, err := n.find(a.Interface)
+	if err != nil {
+		return nil, err
+	}
+	if !link.CanProxy() || link.Kind != api.KindEthernet && link.Kind != api.KindWiFi {
+		return nil, &api.Error{Code: api.ErrInvalidConfig, Detail: "OpenWrt requires an Ethernet or Wi-Fi interface"}
+	}
+	var out any
+	_, err = h.Edit(ctx, func(cfg *api.Config) error {
+		index := api.OpenWrtIndex(cfg.OpenWrt, n.ifaces, link.Name)
+		host := strings.TrimSpace(*a.Host)
+		if host == "" {
+			if index < 0 {
+				return &api.Error{Code: api.ErrInvalidConfig, Detail: "this interface has no configured OpenWrt router"}
+			}
+			out = map[string]any{"removed": cfg.OpenWrt[index]}
+			cfg.OpenWrt = slices.Delete(cfg.OpenWrt, index, index+1)
+			return nil
+		}
+		r := api.OpenWrtRouter{}
+		if index >= 0 {
+			r = cfg.OpenWrt[index]
+		}
+		r.Via, r.Host = refOf(link), host
+		for _, field := range []struct{ to, from *string }{
+			{&r.User, a.User}, {&r.IdentityFile, a.IdentityFile}, {&r.Command, a.Command},
+		} {
+			if field.from != nil {
+				*field.to = strings.TrimSpace(*field.from)
+			}
+		}
+		if err := r.Validate(); err != nil {
+			return err
+		}
+		if index >= 0 {
+			cfg.OpenWrt[index] = r
+		} else {
+			cfg.OpenWrt = append(cfg.OpenWrt, r)
+		}
+		out = r
+		return nil
+	})
+	return out, err
+}
+
 // ---- routing ----------------------------------------------------------------
 
 type routingView struct {
@@ -1336,21 +1407,22 @@ func removeDevice(ctx context.Context, h Host, a struct {
 // ---- public addresses -------------------------------------------------------
 
 type ipChangeView struct {
-	Interface   string  `json:"interface,omitempty"`
-	Port        int     `json:"port,omitempty"`
-	Device      string  `json:"device,omitempty"` // "hotspot" or "router"
-	BeforeIPv4  string  `json:"beforeIPv4,omitempty"`
-	BeforeIPv6  string  `json:"beforeIPv6,omitempty"`
-	PublicIPv4  string  `json:"publicIPv4,omitempty"`
-	PublicIPv6  string  `json:"publicIPv6,omitempty"`
-	Changed     bool    `json:"changed"` // an address differs from the one of its family before
-	IPv4Changed *bool   `json:"ipv4Changed,omitempty"`
-	IPv6Changed *bool   `json:"ipv6Changed,omitempty"`
-	Online      bool    `json:"online"` // the internet answers through it now
-	Seconds     float64 `json:"seconds"`
-	Standby     string  `json:"standby,omitempty"` // the interface that carried the Mac meanwhile
-	Tries       int     `json:"tries,omitempty"`   // times a router gave its address up
-	Problem     string  `json:"problem,omitempty"`
+	Interface   string           `json:"interface,omitempty"`
+	Port        int              `json:"port,omitempty"`
+	Device      string           `json:"device,omitempty"` // "hotspot" or "router"
+	BeforeIPv4  string           `json:"beforeIPv4,omitempty"`
+	BeforeIPv6  string           `json:"beforeIPv6,omitempty"`
+	PublicIPv4  string           `json:"publicIPv4,omitempty"`
+	PublicIPv6  string           `json:"publicIPv6,omitempty"`
+	Changed     bool             `json:"changed"` // an address differs from the one of its family before
+	IPv4Changed *bool            `json:"ipv4Changed,omitempty"`
+	IPv6Changed *bool            `json:"ipv6Changed,omitempty"`
+	Online      bool             `json:"online"` // the internet answers through it now
+	Seconds     float64          `json:"seconds"`
+	Standby     string           `json:"standby,omitempty"` // the interface that carried the Mac meanwhile
+	Tries       int              `json:"tries,omitempty"`   // times a router gave its address up
+	Problem     string           `json:"problem,omitempty"`
+	WAN         *api.WANRotation `json:"wan,omitempty"`
 }
 
 // A missing measurement leaves that family's comparison unknown.
@@ -1388,15 +1460,16 @@ func changeIP(ctx context.Context, h Host, a struct {
 		}
 		online := c.PublicIPv4 != "" || c.PublicIPv6 != ""
 		return ipChangeView{Port: c.Port, BeforeIPv4: c.BeforeIPv4, BeforeIPv6: c.BeforeIPv6, PublicIPv4: c.PublicIPv4, PublicIPv6: c.PublicIPv6,
-			Online: online, Seconds: c.Seconds}.compared(), nil
+			Online: online, Seconds: c.Seconds, WAN: c.WAN}.compared(), nil
 	}
 	iface, err := interfaceNamed(ctx, h, a.Interface)
 	if err != nil {
 		return nil, err
 	}
-	// RMNet is identified by its hardware port, and an M2000 by its label.
-	// Skip scraping /diagnostics/ before renewing a known hotspot.
-	isHotspot := strings.EqualFold(iface.HardwarePort, api.HotspotRM520N) || hotspot.Model(iface.Label) != ""
+	// Wired and Wi-Fi gateways can be explicitly configured. For known
+	// cellular links skip scraping diagnostics before the renewal.
+	isHotspot := strings.EqualFold(iface.HardwarePort, api.HotspotRM520N) ||
+		iface.Kind != api.KindEthernet && iface.Kind != api.KindWiFi && hotspot.Model(iface.Label) != ""
 	if !isHotspot {
 		hs, _, err := gateway(ctx, h, iface.Name)
 		if err != nil {
@@ -1419,5 +1492,5 @@ func changeIP(ctx context.Context, h Host, a struct {
 	if err != nil {
 		return nil, err
 	}
-	return viewRenewal(ipChangeView{Interface: iface.Name, Device: "router", Standby: r.Standby, Tries: r.Tries}, r.Before, r.After, r.Took), nil
+	return viewRenewal(ipChangeView{Interface: iface.Name, Device: "router", Standby: r.Standby, Tries: r.Tries, WAN: r.WAN}, r.Before, r.After, r.Took), nil
 }

@@ -125,6 +125,9 @@ func (s *Service) changeProxyIP(ctx context.Context, p api.Proxy) (api.ProxyIPCh
 	change := api.ProxyIPChange{Port: p.Port}
 	var before, after api.Probe
 	var took time.Duration
+	s.mu.Lock()
+	hotspot := s.isMiFiLocked(p.Via.Name) || p.Via.Name == rmnetIface
+	s.mu.Unlock()
 	switch {
 	case p.Upstream != "":
 		// The other Mac's hotspot reconnects to its carrier.
@@ -144,7 +147,7 @@ func (s *Service) changeProxyIP(ctx context.Context, p api.Proxy) (api.ProxyIPCh
 		s.mu.Unlock()
 		before = api.Probe{PublicIPv4: was.PublicIPv4, PublicIPv6: was.PublicIPv6}
 		after, took = api.Probe{PublicIPv4: now.PublicIPv4, PublicIPv6: now.PublicIPv6, At: s.now()}, 14*time.Second
-	case p.Via.Name == hotspotIface || p.Via.Name == rmnetIface:
+	case hotspot:
 		r, err := s.RenewHotspot(ctx, p.Via.Name)
 		if err != nil {
 			return change, err
@@ -156,6 +159,7 @@ func (s *Service) changeProxyIP(ctx context.Context, p api.Proxy) (api.ProxyIPCh
 			return change, err
 		}
 		before, after, took = r.Before, r.After, r.Took
+		change.WAN = r.WAN
 	}
 	change.BeforeIPv4, change.BeforeIPv6 = before.PublicIPv4, before.PublicIPv6
 	change.PublicIPv4, change.PublicIPv6, change.At, change.Seconds = after.PublicIPv4, after.PublicIPv6, after.At, took.Seconds()

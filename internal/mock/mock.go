@@ -30,6 +30,7 @@ type Options struct {
 	Now             time.Time // the clock's start; zero: the real clock
 	Live            bool      // simulate on a ticker; off, only Simulate advances it
 	ProxyPortInUse  int       // a local proxy port another program holds
+	WiFiHotspot     bool      // connect the sample Wi-Fi interface to an M2000
 }
 
 // Service is the mock backend.
@@ -51,10 +52,13 @@ type Service struct {
 	born   time.Time // when the mock started: traffic before it is made up
 	series []api.TrafficSample
 
-	hotspotLocked  bool           // Pith has no admin password for the hotspot
-	renewals       map[string]int // public address changes per hotspot
-	routerLocked   bool           // Pith has no admin password for Ethernet's router
-	routerRenewals int            // how often the router was renewed: its public IPv4 address
+	hotspotLocked   bool // Pith has no admin password for the hotspot
+	wifiHotspot     bool
+	wifiLocked      bool
+	renewals        map[string]int // public address changes per hotspot
+	routerLocked    bool           // Pith has no admin password for Ethernet's router
+	routerRenewals  int            // how often the router was renewed: its public IPv4 address
+	openWrtRenewals map[string]int
 
 	proxies   map[int]*api.ProxyStatus     // the counters of listening proxies, by port
 	portInUse int                          // Options.ProxyPortInUse
@@ -78,20 +82,21 @@ type flow struct {
 // New returns a mock backend.
 func New(o Options) *Service {
 	s := &Service{
-		cfg:       api.DefaultConfig(),
-		open:      map[uint64]*flow{},
-		subs:      map[chan api.Event]struct{}{},
-		rnd:       rand.New(rand.NewPCG(o.Seed, o.Seed^0x9e3779b97f4a7c15)),
-		clock:     o.Now,
-		live:      o.Live,
-		ifaces:    sampleInterfaces(),
-		proxies:   map[int]*api.ProxyStatus{},
-		portInUse: o.ProxyPortInUse,
-		devices:   map[string]*api.DeviceStatus{},
-		changes:   map[int]*proxyChange{},
-		renewing:  map[string]int{},
-		renewals:  map[string]int{},
-		stranger:  o.Sample,
+		cfg:             api.DefaultConfig(),
+		open:            map[uint64]*flow{},
+		subs:            map[chan api.Event]struct{}{},
+		rnd:             rand.New(rand.NewPCG(o.Seed, o.Seed^0x9e3779b97f4a7c15)),
+		clock:           o.Now,
+		live:            o.Live,
+		ifaces:          sampleInterfaces(),
+		proxies:         map[int]*api.ProxyStatus{},
+		portInUse:       o.ProxyPortInUse,
+		devices:         map[string]*api.DeviceStatus{},
+		changes:         map[int]*proxyChange{},
+		renewing:        map[string]int{},
+		renewals:        map[string]int{},
+		openWrtRenewals: map[string]int{},
+		stranger:        o.Sample,
 	}
 	if s.clock.IsZero() && !o.Live {
 		s.clock = time.Date(2026, 11, 4, 9, 30, 0, 0, time.Local)
@@ -99,6 +104,12 @@ func New(o Options) *Service {
 	s.born = s.now()
 	if o.Sample {
 		s.cfg = SampleConfig()
+	}
+	if o.WiFiHotspot {
+		s.wifiHotspot = true
+		i := s.iface(wifiHotspotIface)
+		i.Up, i.Router = true, "198.51.100.1"
+		i.IPv4, i.IPv6 = []string{"198.51.100.20"}, []string{"2001:db8:91::20"}
 	}
 	s.status = api.Status{State: api.Stopped, Helper: api.HelperStatus{Installed: o.HelperInstalled, Running: o.HelperInstalled, Version: "0.1.0"}}
 	if o.HelperUntrusted && o.HelperInstalled {
@@ -349,7 +360,9 @@ func (s *Service) Probe(ctx context.Context, iface, target string) (api.Probe, e
 		lat := base + time.Duration(s.rnd.IntN(25))*time.Millisecond
 		p = api.Probe{Interface: iface, Target: target, At: s.now(), OK: true, Latency: lat}
 		if target == "" {
-			if i.Name == hotspotIface {
+			if s.openWrtLocked(iface) {
+				p.PublicIPv4, p.PublicIPv6, _ = s.openWrtAddressesLocked(iface)
+			} else if s.isMiFiLocked(iface) {
 				p.PublicIPv4, p.PublicIPv6 = fmt.Sprintf("198.51.100.%d", 80+s.renewals[iface]%100), fmt.Sprintf("2001:db8:%x::1", 0x90+s.renewals[iface])
 			} else if i.Name == rmnetIface {
 				p.PublicIPv4, p.PublicIPv6 = "192.0.2.60", fmt.Sprintf("2001:db8:%x::2", 0x520+s.renewals[iface])
@@ -1005,6 +1018,7 @@ func clone(c api.Config) api.Config {
 	}
 	out.Proxies = slices.Clone(c.Proxies)
 	out.Devices = slices.Clone(c.Devices)
+	out.OpenWrt = slices.Clone(c.OpenWrt)
 	return out
 }
 

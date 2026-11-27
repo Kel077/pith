@@ -10,6 +10,18 @@ import (
 // hotspotIface leads to a mobile hotspot the mock pretends to control.
 const hotspotIface = "en9"
 const rmnetIface = "cell-demo"
+const wifiHotspotIface = "en1"
+
+func (s *Service) isMiFiLocked(iface string) bool {
+	return (iface == hotspotIface || iface == wifiHotspotIface && s.wifiHotspot) && !s.openWrtLocked(iface)
+}
+
+func (s *Service) mifiPasswordLocked(iface string) *bool {
+	if iface == wifiHotspotIface {
+		return &s.wifiLocked
+	}
+	return &s.hotspotLocked
+}
 
 func (s *Service) Hotspot(ctx context.Context, iface string) (api.Hotspot, error) {
 	s.mu.Lock()
@@ -26,10 +38,10 @@ func (s *Service) Hotspot(ctx context.Context, iface string) (api.Hotspot, error
 		}
 		return h, nil
 	}
-	if iface != hotspotIface {
+	if !s.isMiFiLocked(iface) || !s.iface(iface).Up {
 		return api.Hotspot{Interface: iface}, &api.Error{Code: api.ErrUnsupported, Detail: iface + " leads to no hotspot Pith knows"}
 	}
-	h := api.Hotspot{Interface: iface, Model: "M2000", Connected: true, Technology: "5G", Bars: 4, Locked: s.hotspotLocked, At: s.now()}
+	h := api.Hotspot{Interface: iface, Model: "M2000", Connected: true, Technology: "5G", Bars: 4, Locked: *s.mifiPasswordLocked(iface), At: s.now()}
 	if !h.Locked {
 		h.Cell = &api.HotspotCell{Operator: "T-Mobile", Band: "n41", Signal: -92, SNR: 17}
 	}
@@ -42,24 +54,24 @@ func (s *Service) SetHotspotPassword(ctx context.Context, iface, password string
 	switch {
 	case iface == rmnetIface:
 		return &api.Error{Code: api.ErrUnsupported, Detail: "RMNet does not use a hotspot admin password"}
-	case iface != hotspotIface:
+	case !s.isMiFiLocked(iface):
 		return &api.Error{Code: api.ErrUnsupported, Detail: iface + " leads to no hotspot Pith knows"}
 	case password == "" || password == "wrong":
 		return &api.Error{Code: api.ErrWrongPassword, Detail: "the hotspot refused the admin password"}
 	}
-	s.hotspotLocked = false
+	*s.mifiPasswordLocked(iface) = false
 	return nil
 }
 
 func (s *Service) RenewHotspot(ctx context.Context, iface string) (api.HotspotRenewal, error) {
 	var r api.HotspotRenewal
 	s.mu.Lock()
-	locked := s.hotspotLocked
+	mifi, locked := s.isMiFiLocked(iface), *s.mifiPasswordLocked(iface)
 	s.mu.Unlock()
 	switch {
-	case iface != hotspotIface && iface != rmnetIface:
+	case !mifi && iface != rmnetIface:
 		return r, &api.Error{Code: api.ErrUnsupported, Detail: iface + " leads to no hotspot Pith knows"}
-	case iface == hotspotIface && locked:
+	case mifi && locked:
 		return r, &api.Error{Code: api.ErrWrongPassword, Detail: "no admin password"}
 	}
 	if err := s.beginRenewal(iface); err != nil {
@@ -117,5 +129,6 @@ func (s *Service) endRenewal(iface string) {
 func (s *Service) LockHotspot() {
 	s.mu.Lock()
 	s.hotspotLocked = true
+	s.wifiLocked = true
 	s.mu.Unlock()
 }

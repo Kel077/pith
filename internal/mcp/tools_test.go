@@ -537,6 +537,58 @@ func TestChangeIP(t *testing.T) {
 	fails(t, h, "change_ip", `{"interface": "en9"}`, "wrong_password", "Network page")
 }
 
+func TestOpenWrtAndWiFiHotspotTools(t *testing.T) {
+	h := newHost(t, mock.Options{WiFiHotspot: true})
+	var gateway struct {
+		Hotspot *api.Hotspot
+		Router  *api.Router
+	}
+	run(t, h, "gateway_status", `{"interface":"Wi-Fi"}`, &gateway)
+	if gateway.Hotspot == nil || gateway.Hotspot.Model != "M2000" || gateway.Hotspot.Interface != "en1" {
+		t.Fatalf("Wi-Fi gateway = %+v", gateway.Hotspot)
+	}
+	var change ipChangeView
+	run(t, h, "change_ip", `{"interface":"Wi-Fi"}`, &change)
+	if change.Device != "hotspot" || change.Interface != "en1" || !change.Changed || change.WAN != nil {
+		t.Fatalf("Wi-Fi IP change = %+v", change)
+	}
+
+	fails(t, h, "set_openwrt_router", `{"interface":"Wi-Fi"}`, "host is required")
+	fails(t, h, "set_openwrt_router", `{"interface":"Wi-Fi","host":"-oProxyCommand"}`, "invalid_config")
+	fails(t, h, "set_openwrt_router", `{"interface":"M2000","host":"openwrt-demo"}`, "Ethernet or Wi-Fi")
+	var router api.OpenWrtRouter
+	run(t, h, "set_openwrt_router", `{"interface":"Wi-Fi","host":"openwrt-demo","user":"operator","identity_file":"~/.ssh/example","command":"/opt/rotate-ip"}`, &router)
+	if router.Via.Name != "en1" || router.Host != "openwrt-demo" || router.IdentityFile != "~/.ssh/example" ||
+		len(config(t, h).OpenWrt) != 1 || config(t, h).OpenWrt[0] != router {
+		t.Fatalf("saved OpenWrt = %+v", router)
+	}
+	run(t, h, "set_openwrt_router", `{"interface":"en1","host":"router.example.com","command":""}`, &router)
+	if router.User != "operator" || router.Command != "" || router.Host != "router.example.com" {
+		t.Fatalf("updated OpenWrt = %+v", router)
+	}
+	gateway.Hotspot = nil
+	run(t, h, "gateway_status", `{"interface":"Wi-Fi"}`, &gateway)
+	if gateway.Hotspot != nil || gateway.Router == nil || gateway.Router.Model != "OpenWrt" || gateway.Router.OpenWrt.BackupState != "online" {
+		t.Fatalf("configured gateway = %+v", gateway)
+	}
+	run(t, h, "set_proxy", `{"port":1081,"via":"Wi-Fi","change_ip":true}`, nil)
+	for _, args := range []string{`{"interface":"Wi-Fi"}`, `{"port":1081}`} {
+		run(t, h, "change_ip", args, &change)
+		if !change.Online || !change.Changed || change.Standby != "" || change.WAN == nil || !change.WAN.MACChanged ||
+			change.WAN.BeforeIPv6Prefix == change.WAN.IPv6Prefix || change.WAN.Seconds <= 0 {
+			t.Fatalf("OpenWrt IP change %s = %+v", args, change)
+		}
+	}
+	run(t, h, "set_openwrt_router", `{"interface":"Wi-Fi","host":""}`, nil)
+	if len(config(t, h).OpenWrt) != 0 {
+		t.Fatal("OpenWrt configuration was not removed")
+	}
+	run(t, h, "change_ip", `{"port":1081}`, &change)
+	if change.WAN != nil || !change.Changed {
+		t.Fatalf("hotspot IP change after removing OpenWrt = %+v", change)
+	}
+}
+
 func TestIPChanged(t *testing.T) {
 	const (
 		old4, new4 = "203.0.113.10", "203.0.113.20"
