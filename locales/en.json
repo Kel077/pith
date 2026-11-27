@@ -725,6 +725,35 @@
   "@routerPassword": {
     "description": "Title of the sheet that asks for a router's admin password, and tooltip of Change IP while Pith has none."
   },
+  "openWrtOverSsh": "OpenWrt over SSH",
+  "@openWrtOverSsh": { "description": "Title of the sheet and label of a configured OpenWrt router on a network card." },
+  "openWrtRouterSettings": "OpenWrt router settings",
+  "@openWrtRouterSettings": { "description": "Label and tooltip of the SSH settings button on an interface." },
+  "sshHost": "SSH host or alias",
+  "@sshHost": { "description": "Label of the router host field, required." },
+  "sshUser": "SSH user",
+  "@sshUser": { "description": "Label of the optional SSH user field." },
+  "sshIdentityFile": "SSH identity file",
+  "@sshIdentityFile": { "description": "Label of the optional local SSH key path field." },
+  "wanRotationCommand": "WAN rotation command",
+  "@wanRotationCommand": { "description": "Label of the executable path on the router." },
+  "useSshConfig": "From SSH configuration",
+  "@useSshConfig": { "description": "Placeholder for an optional field supplied by the user's SSH configuration." },
+  "openWrtStatusUnavailable": "OpenWrt status unavailable",
+  "@openWrtStatusUnavailable": { "description": "Status when Pith cannot read the WAN state over SSH." },
+  "rotateOpenWrtWan": "Rotate the WAN MAC and leases. OpenWrt manages failover.",
+  "@rotateOpenWrtWan": { "description": "Tooltip for the Change IP action on an SSH-managed OpenWrt router." },
+  "openWrtBackupOnline": "Backup online",
+  "@openWrtBackupOnline": { "description": "Status when OpenWrt reports its backup WAN is online." },
+  "wanIpv4": "WAN IPv4",
+  "@wanIpv4": { "description": "The IPv4 lease reported by a router." },
+  "wanIpv6Prefix": "IPv6 prefix",
+  "@wanIpv6Prefix": { "description": "The delegated IPv6 prefix reported by a router." },
+  "openWrtWanMacChanged": "WAN MAC changed · {seconds} s",
+  "@openWrtWanMacChanged": {
+    "description": "Result of a router's WAN MAC rotation and elapsed time including the public-address check.",
+    "placeholders": { "seconds": { "type": "String" } }
+  },
   "noOtherNetworkCanCarryThisMac": "No other network has internet to carry this Mac meanwhile.",
   "@noOtherNetworkCanCarryThisMac": {
     "description": "Error when changing a router's IP: no other connected interface works, so Pith doesn't take the router offline."

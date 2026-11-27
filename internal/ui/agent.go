@@ -87,7 +87,7 @@ func (g *Agent) Edit(ctx context.Context, fn func(cfg *api.Config) error) (api.C
 		if err := cfg.Validate(); err != nil {
 			return edit{}, err
 		}
-		a.setConfig(cloneConfig(cfg))
+		a.setDraftConfig(cloneConfig(cfg))
 		a.gen++
 		return edit{cfg: cfg, saved: a.saveWait(a.gen, cloneConfig(cfg))}, nil
 	})

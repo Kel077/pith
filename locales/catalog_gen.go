@@ -3306,6 +3306,196 @@ func (msgs Messages) RouterPassword() string {
 	return Catalog.Format(msgs.locale, "routerPassword", nil)
 }
 
+// OpenWrtOverSsh says "OpenWrt over SSH"
+// in the language the app shows.
+//
+// Title of the sheet and label of a configured OpenWrt router on a network
+// card.
+func OpenWrtOverSsh() string { return In(i18n.Locale()).OpenWrtOverSsh() }
+
+// OpenWrtOverSsh says "OpenWrt over SSH"
+// in the language of msgs.
+//
+// Title of the sheet and label of a configured OpenWrt router on a network
+// card.
+func (msgs Messages) OpenWrtOverSsh() string {
+	return Catalog.Format(msgs.locale, "openWrtOverSsh", nil)
+}
+
+// OpenWrtRouterSettings says "OpenWrt router settings"
+// in the language the app shows.
+//
+// Label and tooltip of the SSH settings button on an interface.
+func OpenWrtRouterSettings() string { return In(i18n.Locale()).OpenWrtRouterSettings() }
+
+// OpenWrtRouterSettings says "OpenWrt router settings"
+// in the language of msgs.
+//
+// Label and tooltip of the SSH settings button on an interface.
+func (msgs Messages) OpenWrtRouterSettings() string {
+	return Catalog.Format(msgs.locale, "openWrtRouterSettings", nil)
+}
+
+// SshHost says "SSH host or alias"
+// in the language the app shows.
+//
+// Label of the router host field, required.
+func SshHost() string { return In(i18n.Locale()).SshHost() }
+
+// SshHost says "SSH host or alias"
+// in the language of msgs.
+//
+// Label of the router host field, required.
+func (msgs Messages) SshHost() string {
+	return Catalog.Format(msgs.locale, "sshHost", nil)
+}
+
+// SshUser says "SSH user"
+// in the language the app shows.
+//
+// Label of the optional SSH user field.
+func SshUser() string { return In(i18n.Locale()).SshUser() }
+
+// SshUser says "SSH user"
+// in the language of msgs.
+//
+// Label of the optional SSH user field.
+func (msgs Messages) SshUser() string {
+	return Catalog.Format(msgs.locale, "sshUser", nil)
+}
+
+// SshIdentityFile says "SSH identity file"
+// in the language the app shows.
+//
+// Label of the optional local SSH key path field.
+func SshIdentityFile() string { return In(i18n.Locale()).SshIdentityFile() }
+
+// SshIdentityFile says "SSH identity file"
+// in the language of msgs.
+//
+// Label of the optional local SSH key path field.
+func (msgs Messages) SshIdentityFile() string {
+	return Catalog.Format(msgs.locale, "sshIdentityFile", nil)
+}
+
+// WanRotationCommand says "WAN rotation command"
+// in the language the app shows.
+//
+// Label of the executable path on the router.
+func WanRotationCommand() string { return In(i18n.Locale()).WanRotationCommand() }
+
+// WanRotationCommand says "WAN rotation command"
+// in the language of msgs.
+//
+// Label of the executable path on the router.
+func (msgs Messages) WanRotationCommand() string {
+	return Catalog.Format(msgs.locale, "wanRotationCommand", nil)
+}
+
+// UseSshConfig says "From SSH configuration"
+// in the language the app shows.
+//
+// Placeholder for an optional field supplied by the user's SSH
+// configuration.
+func UseSshConfig() string { return In(i18n.Locale()).UseSshConfig() }
+
+// UseSshConfig says "From SSH configuration"
+// in the language of msgs.
+//
+// Placeholder for an optional field supplied by the user's SSH
+// configuration.
+func (msgs Messages) UseSshConfig() string {
+	return Catalog.Format(msgs.locale, "useSshConfig", nil)
+}
+
+// OpenWrtStatusUnavailable says "OpenWrt status unavailable"
+// in the language the app shows.
+//
+// Status when Pith cannot read the WAN state over SSH.
+func OpenWrtStatusUnavailable() string { return In(i18n.Locale()).OpenWrtStatusUnavailable() }
+
+// OpenWrtStatusUnavailable says "OpenWrt status unavailable"
+// in the language of msgs.
+//
+// Status when Pith cannot read the WAN state over SSH.
+func (msgs Messages) OpenWrtStatusUnavailable() string {
+	return Catalog.Format(msgs.locale, "openWrtStatusUnavailable", nil)
+}
+
+// RotateOpenWrtWan says "Rotate the WAN MAC and leases. OpenWrt manages failover."
+// in the language the app shows.
+//
+// Tooltip for the Change IP action on an SSH-managed OpenWrt router.
+func RotateOpenWrtWan() string { return In(i18n.Locale()).RotateOpenWrtWan() }
+
+// RotateOpenWrtWan says "Rotate the WAN MAC and leases. OpenWrt manages failover."
+// in the language of msgs.
+//
+// Tooltip for the Change IP action on an SSH-managed OpenWrt router.
+func (msgs Messages) RotateOpenWrtWan() string {
+	return Catalog.Format(msgs.locale, "rotateOpenWrtWan", nil)
+}
+
+// OpenWrtBackupOnline says "Backup online"
+// in the language the app shows.
+//
+// Status when OpenWrt reports its backup WAN is online.
+func OpenWrtBackupOnline() string { return In(i18n.Locale()).OpenWrtBackupOnline() }
+
+// OpenWrtBackupOnline says "Backup online"
+// in the language of msgs.
+//
+// Status when OpenWrt reports its backup WAN is online.
+func (msgs Messages) OpenWrtBackupOnline() string {
+	return Catalog.Format(msgs.locale, "openWrtBackupOnline", nil)
+}
+
+// WanIpv4 says "WAN IPv4"
+// in the language the app shows.
+//
+// The IPv4 lease reported by a router.
+func WanIpv4() string { return In(i18n.Locale()).WanIpv4() }
+
+// WanIpv4 says "WAN IPv4"
+// in the language of msgs.
+//
+// The IPv4 lease reported by a router.
+func (msgs Messages) WanIpv4() string {
+	return Catalog.Format(msgs.locale, "wanIpv4", nil)
+}
+
+// WanIpv6Prefix says "IPv6 prefix"
+// in the language the app shows.
+//
+// The delegated IPv6 prefix reported by a router.
+func WanIpv6Prefix() string { return In(i18n.Locale()).WanIpv6Prefix() }
+
+// WanIpv6Prefix says "IPv6 prefix"
+// in the language of msgs.
+//
+// The delegated IPv6 prefix reported by a router.
+func (msgs Messages) WanIpv6Prefix() string {
+	return Catalog.Format(msgs.locale, "wanIpv6Prefix", nil)
+}
+
+// OpenWrtWanMacChanged says "WAN MAC changed · {seconds} s"
+// in the language the app shows.
+//
+// Result of a router's WAN MAC rotation and elapsed time including the
+// public-address check.
+func OpenWrtWanMacChanged(seconds string) string {
+	return In(i18n.Locale()).OpenWrtWanMacChanged(seconds)
+}
+
+// OpenWrtWanMacChanged says "WAN MAC changed · {seconds} s"
+// in the language of msgs.
+//
+// Result of a router's WAN MAC rotation and elapsed time including the
+// public-address check.
+func (msgs Messages) OpenWrtWanMacChanged(seconds string) string {
+	return Catalog.Format(msgs.locale, "openWrtWanMacChanged", map[string]any{"seconds": seconds})
+}
+
 // NoOtherNetworkCanCarryThisMac says "No other network has internet to carry this Mac meanwhile."
 // in the language the app shows.
 //

@@ -28,7 +28,7 @@ type hotspots struct {
 	unlock   unlockDialog
 
 	seen   atomic.Int64                    // when a view last showed hotspots: Unix nanoseconds
-	names  atomic.Pointer[[]string]        // the interfaces to read, for the poller
+	links  atomic.Pointer[[]api.Interface] // the interfaces to read, for the poller
 	active atomic.Pointer[map[string]bool] // interfaces renewing now, skipped by the poller
 	kick   chan struct{}                   // read them now
 }
@@ -53,10 +53,14 @@ func newHotspots() hotspots {
 func (a *App) watchHotspots() {
 	prev := a.hotspot.seen.Swap(time.Now().UnixNano())
 	if time.Since(time.Unix(0, prev)) > 2*hotspotPoll {
-		select {
-		case a.hotspot.kick <- struct{}{}:
-		default:
-		}
+		a.kickGateways()
+	}
+}
+
+func (a *App) kickGateways() {
+	select {
+	case a.hotspot.kick <- struct{}{}:
+	default:
 	}
 }
 
@@ -76,19 +80,19 @@ func (a *App) pollHotspots(ctx context.Context) {
 			continue
 		}
 		active := a.hotspot.active.Load()
-		if names := a.hotspot.names.Load(); names != nil {
-			for _, name := range *names {
-				if active != nil && (*active)[name] {
+		if links := a.hotspot.links.Load(); links != nil {
+			for _, link := range *links {
+				if active != nil && (*active)[link.Name] {
 					continue
 				}
-				h, err := a.Service.Hotspot(ctx, name)
-				a.Post(func() { a.setHotspot(name, h, err) })
+				h, err := a.Service.Hotspot(ctx, link.Name)
+				a.Post(func() { a.setHotspot(link, h, err) })
 			}
 		}
-		if names := a.router.names.Load(); names != nil {
-			for _, name := range *names {
-				r, err := a.Service.Router(ctx, name)
-				a.Post(func() { a.setRouter(name, r, err) })
+		if targets := a.router.targets.Load(); targets != nil {
+			for _, target := range *targets {
+				r, err := a.Service.Router(ctx, target.link.Name)
+				a.Post(func() { a.setRouter(target, r, err) })
 			}
 		}
 	}
@@ -96,24 +100,30 @@ func (a *App) pollHotspots(ctx context.Context) {
 
 // readHotspots reads them at once, for tests.
 func (a *App) readHotspots(ctx context.Context) {
-	if names := a.hotspot.names.Load(); names != nil {
-		for _, name := range *names {
-			h, err := a.Service.Hotspot(ctx, name)
-			a.setHotspot(name, h, err)
+	if links := a.hotspot.links.Load(); links != nil {
+		for _, link := range *links {
+			h, err := a.Service.Hotspot(ctx, link.Name)
+			a.setHotspot(link, h, err)
 		}
 	}
 }
 
-func (a *App) setHotspot(name string, h api.Hotspot, err error) {
+func (a *App) setHotspot(link api.Interface, h api.Hotspot, err error) {
+	name := link.Name
 	i := a.ifaceByName(name)
-	if i == nil || !i.Up || i.Kind != api.KindCellular || h.Model == api.HotspotRM520N && !strings.EqualFold(i.HardwarePort, h.Model) {
+	if !sameGatewayLink(link, i) || a.openWrtConfig(name).Host != "" || a.openWrtPending(name) ||
+		h.Model == api.HotspotRM520N && !strings.EqualFold(i.HardwarePort, h.Model) {
 		return
 	}
 	switch {
 	case api.Code(err) == api.ErrUnsupported:
-		a.hotspot.none[name] = true
 		delete(a.hotspot.info, name)
-		a.hotspotNames()
+		if i.Kind == api.KindCellular {
+			a.hotspot.none[name] = true
+			a.hotspotNames()
+		}
+	case i.Kind == api.KindWiFi && api.Code(err) == api.ErrInterfaceUnavailable:
+		delete(a.hotspot.info, name)
 	case err == nil:
 		a.hotspot.info[name] = h
 	case h.Model == api.HotspotRM520N && a.hotspot.info[name].Model == "":
@@ -124,17 +134,19 @@ func (a *App) setHotspot(name string, h api.Hotspot, err error) {
 }
 
 // hotspotNames tells the poller which interfaces may lead to hotspots: the
-// connected cellular ones, but those found to lead to none.
+// connected cellular and unconfigured Wi-Fi links. Wi-Fi stays in the poll
+// list when unsupported so the client's cache can notice a changed neighbor.
 func (a *App) hotspotNames() {
-	var names []string
+	var links []api.Interface
 	for _, i := range a.ifaces {
-		if i.Up && i.Kind == api.KindCellular && !a.hotspot.none[i.Name] {
-			names = append(names, i.Name)
+		if i.Up && (i.Kind == api.KindCellular && !a.hotspot.none[i.Name] ||
+			i.Kind == api.KindWiFi && a.openWrtConfig(i.Name).Host == "" && !a.openWrtPending(i.Name)) {
+			links = append(links, i)
 		} else if !i.Up {
 			delete(a.hotspot.info, i.Name)
 		}
 	}
-	a.hotspot.names.Store(&names)
+	a.hotspot.links.Store(&links)
 }
 
 func (a *App) setHotspotRenewing(name, key string, on bool) {

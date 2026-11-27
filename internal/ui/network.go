@@ -147,6 +147,7 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 			if i.Primary {
 				tagChip(c, nil, locales.SystemDefault(), t.Accent).Tooltip(locales.MacosSendsConnectionsNoRuleMatches())
 			}
+			a.openWrtSettings(c, i)
 		})
 		if !i.Up {
 			return
@@ -160,13 +161,15 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 			}
 		}
 		rt, isRouter := a.router.info[i.Name]
+		ssh := a.openWrtConfig(i.Name)
+		isOpenWrt := ssh.Host != ""
 		// The details, as rows of their own inside the pane.
 		ui.Column(c).Radius(12).Background(subtle(t, 0.03)).Dividers(1, hairline(t)).Children(func() {
 			kv(c, "IPv4", strings.Join(i.IPv4, ", "))
 			if len(i.IPv6) > 0 {
 				kv(c, "IPv6", i.IPv6[0])
 			}
-			if isRouter && i.Router != "" {
+			if isRouter && !isOpenWrt && i.Router != "" {
 				kv(c, locales.Router(), i.Router+" · "+rt.Model)
 			} else {
 				kv(c, locales.Router(), i.Router)
@@ -174,6 +177,23 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 			kv(c, "DNS", strings.Join(i.DNS, ", "))
 			if i.HardwareAddr != "" {
 				kv(c, locales.Hardware(), i.HardwareAddr)
+			}
+			if isOpenWrt {
+				label := ssh.Host
+				if rt.Model != "" && rt.Model != "OpenWrt" {
+					label = rt.Model + " · " + label
+				}
+				kv(c, locales.OpenWrtOverSsh(), label)
+				if rt.OpenWrt != nil {
+					kv(c, locales.WanIpv4(), rt.PublicIPv4)
+					kv(c, locales.WanIpv6Prefix(), rt.OpenWrt.IPv6Prefix)
+					if rt.OpenWrt.BackupState == "online" {
+						muted(c, locales.OpenWrtBackupOnline()).Padding(6, 12).FontSize(12)
+					}
+				}
+				if problem := a.router.problems[i.Name]; problem != "" {
+					muted(c, locales.OpenWrtStatusUnavailable()).Padding(6, 12).FontSize(12).Tooltip(problem)
+				}
 			}
 		})
 		// The speed test, at the foot of the pane however tall its row makes
@@ -194,6 +214,8 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 		busy := renewing || asked || a.speeding[i.Name]
 		ui.Column(c).Gap(8).Margin(ui.Auto, 0, 0, 0).Children(func() {
 			switch {
+			case isOpenWrt && rr.WAN != nil:
+				openWrtRenewal(c, rr)
 			case rmnetResult:
 				rmnetRenewal(c, hr)
 			case renewal != "":
@@ -217,7 +239,11 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 					ui.Spinner(c)
 					muted(c, locales.ChangingHotspotIp())
 				case a.router.renewing[i.Name]:
-					ui.Row(c).Gap(10).Tooltip(locales.AnotherNetworkCarriesThisMacMeanwhile()).Children(func() {
+					tip := locales.AnotherNetworkCarriesThisMacMeanwhile()
+					if isOpenWrt {
+						tip = locales.RotateOpenWrtWan()
+					}
+					ui.Row(c).Gap(10).Tooltip(tip).Children(func() {
 						ui.Spinner(c)
 						muted(c, locales.ChangingIp())
 					})
@@ -227,7 +253,7 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 				case a.speeding[i.Name]:
 					ui.Spinner(c)
 					muted(c, locales.Testing())
-				case renewal != "" || rmnetResult:
+				case renewal != "" || rmnetResult || isOpenWrt && rr.WAN != nil:
 					// The line above says the addresses.
 				case tested && s.OK:
 					speedFigures(c, s)
@@ -238,7 +264,9 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 						ui.Text(c, s.Problem).FontSize(12).TextColor(t.TextMuted).SingleLine().Shrink(1)
 					}
 				default:
-					muted(c, locales.TestToSeeItsSpeedAndPublicIp()).SingleLine().Shrink(1)
+					if !isHotspot && !isOpenWrt {
+						muted(c, locales.TestToSeeItsSpeedAndPublicIp()).SingleLine().Shrink(1)
+					}
 				}
 				ui.Spacer(c)
 				if isHotspot {
@@ -250,14 +278,17 @@ func (a *App) ifaceCard(c *ui.Context, i *api.Interface) {
 						a.renewHotspot(i)
 					}
 				}
-				if isRouter {
+				if isRouter || isOpenWrt {
 					// Locked, it asks for the router's password.
 					icon, tip := icSwap, locales.GetsTheRouterANewPublicIpv4()
-					if rt.Locked {
+					if isOpenWrt {
+						tip = locales.RotateOpenWrtWan()
+					} else if rt.Locked {
 						icon, tip = icLock, locales.RouterPassword()
 					}
-					renew := glassCapsuleButton(c, "renew-router", icon, locales.ChangeIp()).Focusable().Shrink(0).Tooltip(tip).Disabled(busy || !rt.Locked && !rt.Connected)
-					if renew.Clicked() && !busy {
+					unavailable := busy || a.openWrtPending(i.Name) || !rt.Locked && !rt.Connected
+					renew := glassCapsuleButton(c, "renew-router", icon, locales.ChangeIp()).Focusable().Shrink(0).Tooltip(tip).Disabled(unavailable)
+					if renew.Clicked() && !unavailable {
 						switch {
 						case rt.Locked:
 							a.hotspot.unlock = unlockDialog{open: true, iface: i.Name, router: true}
@@ -308,6 +339,7 @@ func (a *App) downRow(c *ui.Context, i *api.Interface) {
 		}
 		dot(c, t.TextMuted, 7, true)
 		ui.Text(c, locales.NotConnected()).FontSize(12).TextColor(t.TextMuted).SingleLine().Shrink(0)
+		a.openWrtSettings(c, i)
 	})
 }
 

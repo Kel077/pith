@@ -68,6 +68,9 @@ func (a *App) dialogs(c *ui.Context) {
 	if a.hotspot.unlock.open {
 		a.unlockView(c)
 	}
+	if a.router.openWrt.open {
+		a.openWrtView(c)
+	}
 	if a.settings.upstream.open {
 		a.upstreamView(c)
 	}

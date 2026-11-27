@@ -240,6 +240,25 @@ func TestSnapshots(t *testing.T) {
 			save(t, tt.Image(), "router-"+state+"-"+mode)
 		}
 
+		a, svc = testApp(t, mock.Options{Sample: true, WiFiHotspot: true})
+		svc.SetInterfaceUp("en9", false)
+		svc.SetInterfaceUp("en7", false)
+		svc.SetInterfaceUp("cell-demo", false)
+		a.page = "network"
+		ssh := api.OpenWrtRouter{Via: refOf(a.ifaceByName("en0")), Host: "router.example.com"}
+		a.editOpenWrt(ssh, false)
+		a.Sync(context.Background())
+		a.renewRouter("en0")
+		a.readRouters(context.Background())
+		tt = ui.NewTester(a.WindowView, 1040, 860)
+		tt.SetDark(dark)
+		tt.SetScale(2)
+		tt.Frame()
+		save(t, tt.Image(), "openwrt-wifi-"+mode)
+		a.router.openWrt = openWrtDialog{open: true, settings: ssh}
+		tt.Frame()
+		save(t, tt.Image(), "openwrt-settings-"+mode)
+
 		// Local proxies: one shared with a laptop, which may change its IP,
 		// one by a scene's rules, one through a port of another Mac's Pith,
 		// whose IP a button changes, and a device that was refused; then the

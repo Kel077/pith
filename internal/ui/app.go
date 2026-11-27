@@ -364,8 +364,8 @@ func (a *App) setStatus(st api.Status) {
 func (a *App) setIfaces(ifs []api.Interface) {
 	for _, old := range a.ifaces {
 		next := refOf(&old).Resolve(ifs)
-		if next == nil || next.Name != old.Name || next.HardwarePort != old.HardwarePort {
-			delete(a.hotspot.info, old.Name)
+		if !sameGatewayLink(old, next) {
+			a.clearGatewayStatus(old.Name)
 		}
 	}
 	a.allIfaces = ifs
@@ -388,6 +388,12 @@ func (a *App) setConnections(conns []api.Connection) {
 }
 
 func (a *App) setConfig(cfg api.Config) {
+	a.setDraftConfig(cfg)
+	a.savedOpenWrt(cfg.OpenWrt)
+}
+
+func (a *App) setDraftConfig(cfg api.Config) {
+	previous := a.cfg.OpenWrt
 	a.cfg = cfg
 	a.loaded, a.loadErr = true, nil
 	// What was being edited in the settings' lists may be gone, or elsewhere.
@@ -399,6 +405,7 @@ func (a *App) setConfig(cfg api.Config) {
 		a.langSet = tag
 		a.Desktop.SetLanguage(tag)
 	}
+	a.openWrtConfigChanged(previous)
 	a.updateTray()
 }
 
@@ -431,7 +438,9 @@ func (a *App) change(fn func(cfg *api.Config)) {
 	if !a.loaded {
 		return // never save over a configuration that could not be read
 	}
+	previous := a.cfg.OpenWrt
 	fn(&a.cfg)
+	a.openWrtConfigChanged(previous)
 	a.gen++
 	a.save(a.gen, cloneConfig(a.cfg))
 }
@@ -441,6 +450,9 @@ func (a *App) change(fn func(cfg *api.Config)) {
 func (a *App) save(gen uint64, cfg api.Config) {
 	if a.syncIcons { // tests save at once
 		err := a.Service.SaveConfig(a.ctx, cfg)
+		if err == nil {
+			a.savedOpenWrt(cfg.OpenWrt)
+		}
 		a.saves.settle(gen, err)
 		if err != nil {
 			saved, lerr := a.Service.LoadConfig(a.ctx)
@@ -472,6 +484,8 @@ func (a *App) save(gen uint64, cfg api.Config) {
 			if err != nil {
 				saved, lerr := a.Service.LoadConfig(a.ctx)
 				a.Post(func() { a.saveFailed(gen, err, saved, lerr) })
+			} else {
+				a.Post(func() { a.savedOpenWrt(next.OpenWrt) })
 			}
 			s.settle(gen, err)
 		}
@@ -892,6 +906,7 @@ func cloneConfig(c api.Config) api.Config {
 	}
 	out.Proxies = slices.Clone(c.Proxies)
 	out.Devices = slices.Clone(c.Devices)
+	out.OpenWrt = slices.Clone(c.OpenWrt)
 	return out
 }
 

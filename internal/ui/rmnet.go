@@ -97,18 +97,22 @@ func rmnetRenewal(c *ui.Context, r api.HotspotRenewal) {
 	for _, f := range []struct{ family, before, after string }{
 		{"IPv4", r.Before.PublicIPv4, r.After.PublicIPv4}, {"IPv6", r.Before.PublicIPv6, r.After.PublicIPv6},
 	} {
-		s := locales.AddressNotObserved()
-		switch {
-		case f.before != "" && f.before == f.after:
-			s = locales.IpUnchanged(f.after)
-		case f.before != "" && f.after != "":
-			s = f.before + " → " + f.after
-		case f.before != "":
-			s = f.before + " → " + s
-		case f.after != "":
-			s += " → " + f.after
-		}
-		renewalLine(c, f.family+"  "+s).FontSize(12)
+		renewalLine(c, f.family+"  "+observedAddressChange(f.before, f.after)).FontSize(12)
 	}
 	muted(c, locales.HotspotRenewalTime(strconv.FormatFloat(r.Took.Seconds(), 'f', 1, 64))).FontSize(12)
+}
+
+func observedAddressChange(before, after string) string {
+	switch {
+	case before != "" && before == after:
+		return locales.IpUnchanged(after)
+	case before != "" && after != "":
+		return before + " → " + after
+	case before != "":
+		return before + " → " + locales.AddressNotObserved()
+	case after != "":
+		return locales.AddressNotObserved() + " → " + after
+	default:
+		return locales.AddressNotObserved()
+	}
 }
