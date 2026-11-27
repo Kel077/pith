@@ -324,15 +324,16 @@ func (c *Client) exitCanChange(ctx context.Context, link api.Interface) bool {
 	c.proxyMu.Unlock()
 	select {
 	case <-pending.done:
-		return pending.can
 	default:
+		select {
+		case <-ctx.Done():
+			return false
+		case <-pending.done:
+		}
 	}
-	select {
-	case <-ctx.Done():
-		return false
-	case <-pending.done:
-		return pending.can
-	}
+	c.exitMu.Lock()
+	defer c.exitMu.Unlock()
+	return c.exits[link.Name] == state && state.capability == pending && pending.can
 }
 
 func (c *Client) runExitIdentification(state *exitState, pending *exitCapability) {
@@ -341,7 +342,16 @@ func (c *Client) runExitIdentification(state *exitState, pending *exitCapability
 	defer cancel()
 	_, err := c.hotspot(ctx, state.link.Name)
 	if api.Code(err) == api.ErrUnsupported {
-		_, err = c.router(ctx, state.link.Name)
+		via := api.InterfaceRef{Name: state.link.Name, HardwareAddr: state.link.HardwareAddr}
+		var upstream *openWrtExit
+		upstream, err = c.openWrtFor(ctx, via)
+		switch {
+		case err != nil:
+		case upstream != nil:
+			_, err = upstream.ssh.Status(ctx)
+		default:
+			_, err = c.router(ctx, state.link.Name)
+		}
 	}
 	c.exitMu.Lock()
 	pending.can, pending.err, pending.at = err == nil, err, c.exitTime()
@@ -585,13 +595,14 @@ func (c *Client) runExitChange(parent context.Context, pending *exitChange, devi
 			before, after = pending.hotspot.Before, pending.hotspot.After
 			pending.router = api.RouterRenewal{Before: before, After: after, Took: time.Since(started)}
 		} else {
-			pending.router, pending.err = c.renewRouter(ctx, iface)
+			pending.router, pending.err = c.renewRouter(ctx, via)
 			before, after = pending.router.Before, pending.router.After
 			pending.hotspot = api.HotspotRenewal{Before: before, After: after, Took: pending.router.Took}
 		}
 	}
 	pending.public = api.ProxyIPChange{BeforeIPv4: before.PublicIPv4, BeforeIPv6: before.PublicIPv6,
-		PublicIPv4: after.PublicIPv4, PublicIPv6: after.PublicIPv6, At: after.At, Seconds: time.Since(started).Seconds()}
+		PublicIPv4: after.PublicIPv4, PublicIPv6: after.PublicIPv6, At: after.At, Seconds: time.Since(started).Seconds(),
+		WAN: pending.router.WAN}
 	c.exitMu.Lock()
 	delete(c.exitChanges, iface)
 	close(pending.done)

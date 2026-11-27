@@ -396,7 +396,7 @@ func TestHotspotRenewalWritesSanitizedDiagnosticLogAndRespectsLogDays(t *testing
 	// Setting LogDays = 0 removes existing logs and suppresses further disk writes.
 	cfg := api.DefaultConfig()
 	cfg.Settings.LogDays = 0
-	c.keepExitAliases(cfg)
+	c.keepExitConfig(cfg)
 	c.pruneHotspotRenewalLogs(now, 0)
 	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
 		t.Fatalf("expected log file removed when LogDays=0, stat err = %v", err)

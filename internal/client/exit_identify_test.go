@@ -155,7 +155,7 @@ func TestExitInfoIdentifiesAndLooksUpInParallel(t *testing.T) {
 		}
 	}), "127.0.0.1:0")
 	_, c.routerPort, _ = net.SplitHostPort(srv.Listener.Addr().String())
-	c.keepExitAliases(api.Config{Aliases: map[string]string{exampleExit.HardwareAddr: "Desk"}})
+	c.keepExitConfig(api.Config{Aliases: map[string]string{exampleExit.HardwareAddr: "Desk"}})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan struct{})
@@ -198,7 +198,7 @@ func TestExitInfoReturnsKnownStateWithErrors(t *testing.T) {
 			c, n := exitClient(t)
 			n.links[0].Up = up
 			ref := api.InterfaceRef{Name: "example0", HardwareAddr: exampleExit.HardwareAddr}
-			c.keepExitAliases(api.Config{Aliases: map[string]string{ref.Key(): "Desk"}})
+			c.keepExitConfig(api.Config{Aliases: map[string]string{ref.Key(): "Desk"}})
 			c.exitChanges = map[string]*exitChange{ref.Name: {link: n.links[0], done: make(chan struct{})}}
 			defer delete(c.exitChanges, ref.Name)
 			ctx, cancel := context.WithCancel(context.Background())
@@ -219,7 +219,7 @@ func TestExitInfoReturnsKnownStateWithErrors(t *testing.T) {
 			t.Fatal(err)
 		}
 		ref := api.InterfaceRef{Name: "example0", HardwareAddr: exampleExit.HardwareAddr}
-		c.keepExitAliases(api.Config{Aliases: map[string]string{ref.Key(): "Desk"}})
+		c.keepExitConfig(api.Config{Aliases: map[string]string{ref.Key(): "Desk"}})
 		c.exitChanges = map[string]*exitChange{ref.Name: {link: links[0], done: make(chan struct{})}}
 		defer delete(c.exitChanges, ref.Name)
 		failure := errors.New("synthetic inventory failure")

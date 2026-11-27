@@ -62,6 +62,11 @@ func (s *routerSession) verify(cs tls.ConnectionState) error {
 }
 
 func (c *Client) Router(ctx context.Context, iface string) (api.Router, error) {
+	if upstream, err := c.openWrtFor(ctx, api.InterfaceRef{Name: iface}); err != nil {
+		return api.Router{Interface: iface}, err
+	} else if upstream != nil {
+		return upstream.ssh.Status(ctx)
+	}
 	for range 2 {
 		s, err := c.router(ctx, iface)
 		if err != nil {
@@ -79,6 +84,11 @@ func (c *Client) Router(ctx context.Context, iface string) (api.Router, error) {
 }
 
 func (c *Client) SetRouterPassword(ctx context.Context, iface, password string) error {
+	if upstream, err := c.openWrtFor(ctx, api.InterfaceRef{Name: iface}); err != nil {
+		return err
+	} else if upstream != nil {
+		return &api.Error{Code: api.ErrUnsupported, Detail: "OpenWrt uses SSH authentication"}
+	}
 	s, err := c.router(ctx, iface)
 	if err != nil {
 		return err
@@ -208,7 +218,13 @@ func (c *Client) RenewRouter(ctx context.Context, iface string) (api.RouterRenew
 	return change.router, err
 }
 
-func (c *Client) renewRouter(ctx context.Context, iface string) (r api.RouterRenewal, err error) {
+func (c *Client) renewRouter(ctx context.Context, via api.InterfaceRef) (r api.RouterRenewal, err error) {
+	if upstream, err := c.openWrtFor(ctx, via); err != nil {
+		return r, err
+	} else if upstream != nil {
+		return c.renewOpenWrt(ctx, upstream)
+	}
+	iface := via.Name
 	s, err := c.router(ctx, iface)
 	if err != nil {
 		return r, err

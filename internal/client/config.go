@@ -8,6 +8,7 @@ import (
 	"io"
 	"maps"
 	"os"
+	"slices"
 
 	"github.com/Kel077/pith/internal/api"
 )
@@ -33,7 +34,7 @@ func (c *Client) loadConfig(ctx context.Context) (api.Config, error) {
 	f, err := os.Open(c.configPath)
 	if errors.Is(err, os.ErrNotExist) {
 		cfg := api.DefaultConfig()
-		c.keepExitAliases(cfg)
+		c.keepExitConfig(cfg)
 		return cfg, nil
 	}
 	if err != nil {
@@ -57,16 +58,23 @@ func (c *Client) loadConfig(ctx context.Context) (api.Config, error) {
 	if err := ctx.Err(); err != nil {
 		return cfg, err
 	}
-	c.keepExitAliases(cfg)
+	c.keepExitConfig(cfg)
 	return cfg, nil
 }
 
-// keepExitAliases publishes a private copy for port status reads and caches
-// client-side logging preferences from the saved configuration.
-func (c *Client) keepExitAliases(cfg api.Config) {
+// keepExitConfig publishes app-owned settings for port and device operations.
+func (c *Client) keepExitConfig(cfg api.Config) {
 	aliases := maps.Clone(cfg.Aliases)
 	c.exitAliases.Store(&aliases)
 	c.logDays.Store(int32(cfg.Settings.LogDays))
+	c.exitMu.Lock()
+	defer c.exitMu.Unlock()
+	if !slices.Equal(c.openWrt, cfg.OpenWrt) {
+		c.openWrt = slices.Clone(cfg.OpenWrt)
+		for _, state := range c.exits {
+			state.capability = nil
+		}
+	}
 }
 
 func (c *Client) SaveConfig(ctx context.Context, cfg api.Config) error {
@@ -124,12 +132,12 @@ func (c *Client) SaveConfig(ctx context.Context, cfg api.Config) error {
 	if err := os.Rename(tmp, c.configPath); err != nil {
 		return err
 	}
-	c.keepExitAliases(cfg)
+	c.keepExitConfig(cfg)
 	if cfg.Settings.LogDays == 0 {
 		c.pruneHotspotRenewalLogs(c.exitTime(), 0)
 	}
 	routingUnchanged := previousErr == nil && sameRoutingConfig(previous, cfg)
-	proxyOnly := routingUnchanged && !sameProxies(previous, cfg)
+	localOnly := routingUnchanged && (!sameProxies(previous, cfg) || !slices.Equal(previous.OpenWrt, cfg.OpenWrt))
 	c.routingPending = c.routingPending || !routingUnchanged
 	if err := c.syncProxies(ctx, cfg, false); err != nil {
 		return fmt.Errorf("configuration saved; local proxy update failed: %w", err)
@@ -142,12 +150,12 @@ func (c *Client) SaveConfig(ctx context.Context, cfg api.Config) error {
 	if err := dir.Sync(); err != nil {
 		return err
 	}
-	if proxyOnly && !c.routingPending {
+	if localOnly && !c.routingPending {
 		return nil
 	}
 	// Disk equality is not proof that an earlier helper update succeeded.
 	// An identical explicit Save still retries; a pending routing failure also
-	// cannot be hidden by a later edit limited to local proxy settings.
+	// cannot be hidden by a later edit limited to app-owned settings.
 	err = c.applyConfig(ctx, cfg)
 	c.routingPending = err != nil
 	return err

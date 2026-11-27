@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"net/netip"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/Kel077/pith/internal/api"
@@ -47,7 +48,29 @@ func validateUpstreamChange(changed *api.ProxyIPChange) bool {
 	changed.PublicIPv4 = upstreamIP(changed.PublicIPv4, true)
 	changed.PublicIPv6 = upstreamIP(changed.PublicIPv6, false)
 	changed.At = changed.At.UTC()
+	if w := changed.WAN; w != nil {
+		w.BeforeIPv4, w.IPv4 = upstreamIP(w.BeforeIPv4, true), upstreamIP(w.IPv4, true)
+		w.BeforeIPv6Prefix, w.IPv6Prefix = upstreamPrefix(w.BeforeIPv6Prefix), upstreamPrefix(w.IPv6Prefix)
+		w.WANState, w.BackupState = upstreamWANState(w.WANState), upstreamWANState(w.BackupState)
+		if !w.MACChanged || w.IPv4 == "" || w.Seconds < 0 {
+			changed.WAN = nil
+		}
+	}
 	return true
+}
+
+func upstreamPrefix(s string) string {
+	if p, err := netip.ParsePrefix(s); err == nil && upstreamIP(p.Addr().String(), false) != "" {
+		return p.Masked().String()
+	}
+	return upstreamIP(s, false)
+}
+
+func upstreamWANState(s string) string {
+	if len(s) > 32 || strings.IndexFunc(s, func(r rune) bool { return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_') }) >= 0 {
+		return ""
+	}
+	return s
 }
 
 func upstreamIP(text string, ipv4 bool) string {

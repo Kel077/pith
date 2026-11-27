@@ -96,11 +96,13 @@ type Client struct {
 	exits          map[string]*exitState
 	exitChanges    map[string]*exitChange
 	exitAliases    atomic.Pointer[map[string]string]
+	openWrt        []api.OpenWrtRouter // guarded by exitMu
+	openWrtSSH     func(context.Context, ...string) ([]byte, error)
 	exitJobs       sync.WaitGroup // public-address lookups and device identifications
-	exitNow      func() time.Time
-	probeTimeout time.Duration // probeTimeout when zero
-	hotspotLogMu sync.Mutex
-	logDays      atomic.Int32 // cached Settings.LogDays; -1 until config is loaded
+	exitNow        func() time.Time
+	probeTimeout   time.Duration // probeTimeout when zero
+	hotspotLogMu   sync.Mutex
+	logDays        atomic.Int32 // cached Settings.LogDays; -1 until config is loaded
 }
 
 var _ api.Service = (*Client)(nil)

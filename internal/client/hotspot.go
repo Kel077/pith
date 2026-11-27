@@ -479,6 +479,9 @@ func (c *Client) hotspotFor(ctx context.Context, ref api.InterfaceRef) (*hotspot
 		return nil, unsupported
 	}
 	name := link.Name
+	if _, configured := c.openWrtConfig(ifaces, name); configured {
+		return nil, unsupported
+	}
 	if strings.EqualFold(link.HardwarePort, api.HotspotRM520N) {
 		return &hotspotSession{rmnet: c.rmnet, ref: api.InterfaceRef{Name: name, HardwareAddr: link.HardwareAddr}}, nil
 	}
